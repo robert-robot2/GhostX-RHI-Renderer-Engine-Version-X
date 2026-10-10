@@ -12,67 +12,75 @@ using Microsoft::WRL::ComPtr;
 
 static GhostVertex CubeVertices[] =
 {
-    { -0.5f,  0.5f, -0.5f,  1,0,0,1 }, {  0.5f,  0.5f, -0.5f,  1,0,0,1 },
-    {  0.5f, -0.5f, -0.5f,  1,0,0,1 }, { -0.5f, -0.5f, -0.5f,  1,0,0,1 },
-    {  0.5f,  0.5f,  0.5f,  0,1,0,1 }, { -0.5f,  0.5f,  0.5f,  0,1,0,1 },
-    { -0.5f, -0.5f,  0.5f,  0,1,0,1 }, {  0.5f, -0.5f,  0.5f,  0,1,0,1 },
-    { -0.5f,  0.5f,  0.5f,  0,0,1,1 }, {  0.5f,  0.5f,  0.5f,  0,0,1,1 },
-    {  0.5f,  0.5f, -0.5f,  0,0,1,1 }, { -0.5f,  0.5f, -0.5f,  0,0,1,1 },
-    { -0.5f, -0.5f, -0.5f,  1,1,0,1 }, {  0.5f, -0.5f, -0.5f,  1,1,0,1 },
-    {  0.5f, -0.5f,  0.5f,  1,1,0,1 }, { -0.5f, -0.5f,  0.5f,  1,1,0,1 },
-    { -0.5f,  0.5f,  0.5f,  0,1,1,1 }, { -0.5f,  0.5f, -0.5f,  0,1,1,1 },
-    { -0.5f, -0.5f, -0.5f,  0,1,1,1 }, { -0.5f, -0.5f,  0.5f,  0,1,1,1 },
-    {  0.5f,  0.5f, -0.5f,  1,0,1,1 }, {  0.5f,  0.5f,  0.5f,  1,0,1,1 },
-    {  0.5f, -0.5f,  0.5f,  1,0,1,1 }, {  0.5f, -0.5f, -0.5f,  1,0,1,1 },
+    // Front face (normal 0,0,-1)
+    { -0.5f,  0.5f, -0.5f,  1,0,0,1,  0, 0,-1,  0,0 },
+    {  0.5f,  0.5f, -0.5f,  1,0,0,1,  0, 0,-1,  1,0 },
+    {  0.5f, -0.5f, -0.5f,  1,0,0,1,  0, 0,-1,  1,1 },
+    { -0.5f, -0.5f, -0.5f,  1,0,0,1,  0, 0,-1,  0,1 },
+    // Back face (normal 0,0,1)
+    {  0.5f,  0.5f,  0.5f,  0,1,0,1,  0, 0, 1,  0,0 },
+    { -0.5f,  0.5f,  0.5f,  0,1,0,1,  0, 0, 1,  1,0 },
+    { -0.5f, -0.5f,  0.5f,  0,1,0,1,  0, 0, 1,  1,1 },
+    {  0.5f, -0.5f,  0.5f,  0,1,0,1,  0, 0, 1,  0,1 },
+    // Top face (normal 0,1,0)
+    { -0.5f,  0.5f,  0.5f,  0,0,1,1,  0, 1, 0,  0,0 },
+    {  0.5f,  0.5f,  0.5f,  0,0,1,1,  0, 1, 0,  1,0 },
+    {  0.5f,  0.5f, -0.5f,  0,0,1,1,  0, 1, 0,  1,1 },
+    { -0.5f,  0.5f, -0.5f,  0,0,1,1,  0, 1, 0,  0,1 },
+    // Bottom face (normal 0,-1,0)
+    { -0.5f, -0.5f, -0.5f,  1,1,0,1,  0,-1, 0,  0,0 },
+    {  0.5f, -0.5f, -0.5f,  1,1,0,1,  0,-1, 0,  1,0 },
+    {  0.5f, -0.5f,  0.5f,  1,1,0,1,  0,-1, 0,  1,1 },
+    { -0.5f, -0.5f,  0.5f,  1,1,0,1,  0,-1, 0,  0,1 },
+    // Left face (normal -1,0,0)
+    { -0.5f,  0.5f,  0.5f,  0,1,1,1, -1, 0, 0,  0,0 },
+    { -0.5f,  0.5f, -0.5f,  0,1,1,1, -1, 0, 0,  1,0 },
+    { -0.5f, -0.5f, -0.5f,  0,1,1,1, -1, 0, 0,  1,1 },
+    { -0.5f, -0.5f,  0.5f,  0,1,1,1, -1, 0, 0,  0,1 },
+    // Right face (normal 1,0,0)
+    {  0.5f,  0.5f, -0.5f,  1,0,1,1,  1, 0, 0,  0,0 },
+    {  0.5f,  0.5f,  0.5f,  1,0,1,1,  1, 0, 0,  1,0 },
+    {  0.5f, -0.5f,  0.5f,  1,0,1,1,  1, 0, 0,  1,1 },
+    {  0.5f, -0.5f, -0.5f,  1,0,1,1,  1, 0, 0,  0,1 },
 };
 
 static unsigned short CubeIndices[] =
 {
-     0, 1, 2,   0, 2, 3,
-     4, 5, 6,   4, 6, 7,
-     8, 9,10,   8,10,11,
-    12,13,14,  12,14,15,
-    16,17,18,  16,18,19,
-    20,21,22,  20,22,23,
+     0, 1, 2,   0, 2, 3,   // front
+     4, 5, 6,   4, 6, 7,   // back
+     8, 9,10,   8,10,11,   // top
+    12,13,14,  12,14,15,   // bottom
+    16,17,18,  16,18,19,   // left
+    20,21,22,  20,22,23,   // right
 };
 
 static GhostVertex TriangleVertices[] =
 {
-    {  0.0f,  1.0f,  0.0f,   1,1,1,1 },
-    { -0.5f,  0.0f,  0.0f,   1,0,1,1 },
-    {  0.5f,  0.0f,  0.0f,   0,1,1,1 },
+    {  0.0f,  1.0f,  0.0f,  1,1,1,1,  0,0,1,  0.5f, 0.0f },
+    { -0.5f,  0.0f,  0.0f,  1,0,1,1,  0,0,1,  0.0f, 1.0f },
+    {  0.5f,  0.0f,  0.0f,  0,1,1,1,  0,0,1,  1.0f, 1.0f },
 };
 static unsigned short TriangleIndices[] = { 0, 1, 2 };
 
-static GhostVertex Triangle2Vertices[] =
-{
-    {  0.0f,  1.0f,  0.0f,   1,1,0,1 },
-    { -0.5f,  0.0f,  0.0f,   0,1,0,1 },
-    {  0.5f,  0.0f,  0.0f,   1,0,0,1 },
-};
-static unsigned short Triangle2Indices[] = { 0, 1, 2 };
 
 static GhostVertex ShipVertices[] =
 {
-    {  3.0f,  0.0f,  0.0f,   0.0f, 1.0f, 0.0f, 1.0f },
-    {  0.0f,  3.0f, -3.0f,   0.0f, 0.0f, 1.0f, 1.0f },
-    {  0.0f,  0.0f, 10.0f,   1.0f, 0.0f, 0.0f, 1.0f },
-    { -3.0f,  0.0f,  0.0f,   0.0f, 1.0f, 1.0f, 1.0f },
-    {  3.2f, -1.0f, -3.0f,   0.0f, 0.0f, 1.0f, 1.0f },
-    {  3.2f, -1.0f, 11.0f,   0.0f, 1.0f, 0.0f, 1.0f },
-    {  2.0f,  1.0f,  2.0f,   1.0f, 0.0f, 0.0f, 1.0f },
-    { -3.2f, -1.0f, -3.0f,   0.0f, 0.0f, 1.0f, 1.0f },
-    { -3.2f, -1.0f, 11.0f,   0.0f, 1.0f, 0.0f, 1.0f },
-    { -2.0f,  1.0f,  2.0f,   1.0f, 0.0f, 0.0f, 1.0f },
+    {  3.0f,  0.0f,  0.0f,  0,1,0,1,   0.6f, 0.0f,-0.8f,  1.0f,0.5f },
+    {  0.0f,  3.0f, -3.0f,  0,0,1,1,   0.0f, 0.8f,-0.6f,  0.5f,0.0f },
+    {  0.0f,  0.0f, 10.0f,  1,0,0,1,   0.0f, 0.4f, 0.9f,  0.5f,1.0f },
+    { -3.0f,  0.0f,  0.0f,  0,1,1,1,  -0.6f, 0.0f,-0.8f,  0.0f,0.5f },
+    {  3.2f, -1.0f, -3.0f,  0,0,1,1,   0.7f,-0.3f,-0.6f,  1.0f,0.0f },
+    {  3.2f, -1.0f, 11.0f,  0,1,0,1,   0.7f,-0.3f, 0.6f,  1.0f,1.0f },
+    {  2.0f,  1.0f,  2.0f,  1,0,0,1,   0.6f, 0.6f, 0.4f,  0.8f,0.3f },
+    { -3.2f, -1.0f, -3.0f,  0,0,1,1,  -0.7f,-0.3f,-0.6f,  0.0f,0.0f },
+    { -3.2f, -1.0f, 11.0f,  0,1,0,1,  -0.7f,-0.3f, 0.6f,  0.0f,1.0f },
+    { -2.0f,  1.0f,  2.0f,  1,0,0,1,  -0.6f, 0.6f, 0.4f,  0.2f,0.3f },
 };
+
 static unsigned short ShipIndices[] =
 {
-    0, 1, 2,
-    2, 1, 3,
-    3, 1, 0,
-    0, 2, 3,
-    4, 5, 6,
-    7, 8, 9,
+    0,1,2,  2,1,3,  3,1,0,  0,2,3,
+    4,5,6,  7,8,9,
 };
 
 // ============================================================
@@ -160,6 +168,28 @@ static GhostResult CreateUploadBuffer(ID3D12Device* device,
     return FAILED(hr) ? GHOST_FAIL : GHOST_OK;
 }
 
+static GhostResult UploadMesh(ID3D12Device* device, GhostMesh& m,
+    const void* verts, unsigned int vbSize,
+    const unsigned short* idx, unsigned int ibSize)
+{
+    D3D12_RANGE rr = { 0, 0 };
+    void* p = nullptr;
+
+    if (CreateUploadBuffer(device, vbSize, &m.vb) != GHOST_OK) return GHOST_FAIL;
+    m.vb->Map(0, &rr, &p);
+    memcpy(p, verts, vbSize);
+    m.vb->Unmap(0, nullptr);
+    m.vbView = { m.vb->GetGPUVirtualAddress(), vbSize, sizeof(GhostVertex) };
+
+    if (CreateUploadBuffer(device, ibSize, &m.ib) != GHOST_OK) return GHOST_FAIL;
+    m.ib->Map(0, &rr, &p);
+    memcpy(p, idx, ibSize);
+    m.ib->Unmap(0, nullptr);
+    m.ibView = { m.ib->GetGPUVirtualAddress(), ibSize, DXGI_FORMAT_R16_UINT };
+    m.indexCount = ibSize / sizeof(unsigned short);
+    return GHOST_OK;
+}
+
 // ============================================================
 //  GhostPipelineCreate
 // ============================================================
@@ -174,16 +204,24 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
     p->viewport = { 0, 0, (float)desc->width, (float)desc->height, 0.0f, 1.0f };
     p->scissorRect = { 0, 0, (long)desc->width,  (long)desc->height };
 
-    // ---- Root Signature ----
-    D3D12_ROOT_PARAMETER rp = {};
-    rp.ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
-    rp.Descriptor.ShaderRegister = 0;
-    rp.Descriptor.RegisterSpace = 0;
-    rp.ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+    // ---- Root Signature — b0 (per-object MVP + color) ----
+    D3D12_ROOT_PARAMETER rp[2] = {};
+
+    // b0 — per-object CB, vertex shader only
+    rp[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    rp[0].Descriptor.ShaderRegister = 0;
+    rp[0].Descriptor.RegisterSpace = 0;
+    rp[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+
+    // b1 — scene CB (ambient + lights), pixel shader only
+    rp[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    rp[1].Descriptor.ShaderRegister = 1;
+    rp[1].Descriptor.RegisterSpace = 0;
+    rp[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
     D3D12_ROOT_SIGNATURE_DESC rsd = {};
-    rsd.NumParameters = 1;
-    rsd.pParameters = &rp;
+    rsd.NumParameters = 2;
+    rsd.pParameters = rp;
     rsd.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 
     ComPtr<ID3DBlob> rsBlob, rsErr;
@@ -216,13 +254,15 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
     {
         { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT,    0,  0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
         { "COLOR",    0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "NORMAL",   0, DXGI_FORMAT_R32G32B32_FLOAT,    0, 28, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,       0, 40, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
     };
-
+ 
     D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
     psoDesc.pRootSignature = p->rootSignature.Get();
     psoDesc.VS = { vs->GetBufferPointer(), vs->GetBufferSize() };
     psoDesc.PS = { ps->GetBufferPointer(), ps->GetBufferSize() };
-    psoDesc.InputLayout = { layout, 2 };
+    psoDesc.InputLayout = { layout, 4 }; 
     psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     psoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
     psoDesc.NumRenderTargets = 1;
@@ -244,14 +284,27 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
         delete p; return GHOST_FAIL;
     }
 
-    // ---- Constant Buffer ----
-    const unsigned long long cbSizeSingle = (sizeof(GhostMVP) + 255) & ~255ULL;
-    const unsigned long long cbSizeTotal = cbSizeSingle * 4;
+    // ---- Icon PSO: unlit billboard quads, no vertex buffer, drawn on top ----
+    ComPtr<ID3DBlob> ivs, ips;
+    if (CompileShaderFromFile(L"shaders/GhostVS.hlsl", "IconVS", "vs_5_0", &ivs) != GHOST_OK ||
+        CompileShaderFromFile(L"shaders/GhostPS.hlsl", "IconPS", "ps_5_0", &ips) != GHOST_OK)
+    {
+        delete p; return GHOST_FAIL;
+    }
 
-    p->cbOffsetCube = 0;
-    p->cbOffsetTriangle = cbSizeSingle;
-    p->cbOffsetTriangle2 = cbSizeSingle * 2;
-    p->cbOffsetShip = cbSizeSingle * 3;
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC iconDesc = psoDesc;
+    iconDesc.VS = { ivs->GetBufferPointer(), ivs->GetBufferSize() };
+    iconDesc.PS = { ips->GetBufferPointer(), ips->GetBufferSize() };
+    iconDesc.InputLayout = { nullptr, 0 };
+    iconDesc.DepthStencilState.DepthEnable = FALSE;
+    iconDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+
+    if (FAILED(device->CreateGraphicsPipelineState(&iconDesc, IID_PPV_ARGS(&p->iconPso))))
+    {
+        delete p; return GHOST_FAIL;
+    }
+     // ---- Constant Buffer ----
+    const unsigned long long cbSizeTotal = GHOST_OBJECT_CB_STRIDE * GHOST_MAX_OBJECTS;
 
     if (CreateUploadBuffer(device, cbSizeTotal, &p->constantBuffer) != GHOST_OK)
     {
@@ -260,6 +313,13 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
 
     D3D12_RANGE rr = { 0, 0 };
     p->constantBuffer->Map(0, &rr, &p->cbvMappedData);
+
+    if (CreateUploadBuffer(device, GHOST_SCENE_CB_SIZE, &p->sceneBuffer) != GHOST_OK)
+    {
+        delete p; return GHOST_FAIL;
+    }
+    p->sceneBuffer->Map(0, &rr, &p->sceneMappedData);
+    memset(p->sceneMappedData, 0, (size_t)GHOST_SCENE_CB_SIZE);
 
     // ---- CBV Heap ----
     D3D12_DESCRIPTOR_HEAP_DESC hd = {};
@@ -280,247 +340,70 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
     *outPipeline = p;
     return GHOST_OK;
 }
-
-// ============================================================
-//  MVP updates  (pipeline-only, no RHI)
-// ============================================================
-
-void GhostUpdateMVP(GhostPipeline* pipeline, const GhostMVP* mvp)
+void GhostUpdateSceneCB(GhostPipeline* p, const GhostSceneCB* cb)
 {
-    memcpy(pipeline->cbvMappedData, mvp, sizeof(GhostMVP));
+    memcpy(p->sceneMappedData, cb, sizeof(GhostSceneCB));
 }
-void GhostUpdateCubeMVP(GhostPipeline* pipeline, const GhostMVP* mvp)
+void GhostUpdateObjectCB(GhostPipeline* p, unsigned int slot, const GhostObjectCB* cb)
 {
-    memcpy((char*)pipeline->cbvMappedData + pipeline->cbOffsetCube, mvp, sizeof(GhostMVP));
-}
-void GhostUpdateTriangleMVP(GhostPipeline* pipeline, const GhostMVP* mvp)
-{
-    memcpy((char*)pipeline->cbvMappedData + pipeline->cbOffsetTriangle, mvp, sizeof(GhostMVP));
-}
-void GhostUpdateTriangle2MVP(GhostPipeline* pipeline, const GhostMVP* mvp)
-{
-    memcpy((char*)pipeline->cbvMappedData + pipeline->cbOffsetTriangle2, mvp, sizeof(GhostMVP));
-}
-void GhostUpdateShipMVP(GhostPipeline* pipeline, const GhostMVP* mvp)
-{
-    memcpy((char*)pipeline->cbvMappedData + pipeline->cbOffsetShip, mvp, sizeof(GhostMVP));
+    if (slot >= GHOST_MAX_OBJECTS) return;
+    memcpy((char*)p->cbvMappedData + slot * GHOST_OBJECT_CB_STRIDE, cb, sizeof(GhostObjectCB));
 }
 
-// ============================================================
-//  Geometry upload
-// ============================================================
-
-GhostResult GhostUploadCubeGeometry(IGhostRHI* rhi, GhostPipeline* pipeline)
+GhostResult GhostUploadMeshes(IGhostRHI* rhi, GhostPipeline* p)
 {
-    ID3D12Device* device = rhi->GetDevice();
-    D3D12_RANGE rr = { 0, 0 };
-
-    const unsigned long long vbSize = sizeof(CubeVertices);
-    if (CreateUploadBuffer(device, vbSize, &pipeline->vertexBuffer) != GHOST_OK) return GHOST_FAIL;
-    void* vb = nullptr;
-    pipeline->vertexBuffer->Map(0, &rr, &vb);
-    memcpy(vb, CubeVertices, vbSize);
-    pipeline->vertexBuffer->Unmap(0, nullptr);
-    pipeline->vertexBufferView.BufferLocation = pipeline->vertexBuffer->GetGPUVirtualAddress();
-    pipeline->vertexBufferView.SizeInBytes = (unsigned int)vbSize;
-    pipeline->vertexBufferView.StrideInBytes = sizeof(GhostVertex);
-
-    const unsigned long long ibSize = sizeof(CubeIndices);
-    if (CreateUploadBuffer(device, ibSize, &pipeline->indexBuffer) != GHOST_OK) return GHOST_FAIL;
-    void* ib = nullptr;
-    pipeline->indexBuffer->Map(0, &rr, &ib);
-    memcpy(ib, CubeIndices, ibSize);
-    pipeline->indexBuffer->Unmap(0, nullptr);
-    pipeline->indexBufferView.BufferLocation = pipeline->indexBuffer->GetGPUVirtualAddress();
-    pipeline->indexBufferView.SizeInBytes = (unsigned int)ibSize;
-    pipeline->indexBufferView.Format = DXGI_FORMAT_R16_UINT;
-    pipeline->indexCount = sizeof(CubeIndices) / sizeof(CubeIndices[0]);
-
+    ID3D12Device* d = rhi->GetDevice();
+    if (UploadMesh(d, p->meshes[GHOST_MESH_CUBE],
+        CubeVertices, sizeof(CubeVertices), CubeIndices, sizeof(CubeIndices)) != GHOST_OK) return GHOST_FAIL;
+    if (UploadMesh(d, p->meshes[GHOST_MESH_TRIANGLE],
+        TriangleVertices, sizeof(TriangleVertices), TriangleIndices, sizeof(TriangleIndices)) != GHOST_OK) return GHOST_FAIL;
+    if (UploadMesh(d, p->meshes[GHOST_MESH_SHIP],
+        ShipVertices, sizeof(ShipVertices), ShipIndices, sizeof(ShipIndices)) != GHOST_OK) return GHOST_FAIL;
     return GHOST_OK;
 }
-
-GhostResult GhostUploadTriangleGeometry(IGhostRHI* rhi, GhostPipeline* pipeline)
+void GhostDrawIcon(IGhostRHI* rhi, GhostPipeline* p, unsigned int slot)
 {
-    ID3D12Device* device = rhi->GetDevice();
-    D3D12_RANGE rr = { 0, 0 };
-
-    const unsigned long long vbSize = sizeof(TriangleVertices);
-    ComPtr<ID3D12Resource> triangleVB;
-    if (CreateUploadBuffer(device, vbSize, &triangleVB) != GHOST_OK) return GHOST_FAIL;
-    void* vb = nullptr;
-    triangleVB->Map(0, &rr, &vb);
-    memcpy(vb, TriangleVertices, vbSize);
-    triangleVB->Unmap(0, nullptr);
-    pipeline->triangleVB = triangleVB;
-    pipeline->triangleVBView.BufferLocation = triangleVB->GetGPUVirtualAddress();
-    pipeline->triangleVBView.SizeInBytes = (unsigned int)vbSize;
-    pipeline->triangleVBView.StrideInBytes = sizeof(GhostVertex);
-
-    const unsigned long long ibSize = sizeof(TriangleIndices);
-    ComPtr<ID3D12Resource> triangleIB;
-    if (CreateUploadBuffer(device, ibSize, &triangleIB) != GHOST_OK) return GHOST_FAIL;
-    void* ib = nullptr;
-    triangleIB->Map(0, &rr, &ib);
-    memcpy(ib, TriangleIndices, ibSize);
-    triangleIB->Unmap(0, nullptr);
-    pipeline->triangleIB = triangleIB;
-    pipeline->triangleIBView.BufferLocation = triangleIB->GetGPUVirtualAddress();
-    pipeline->triangleIBView.SizeInBytes = (unsigned int)ibSize;
-    pipeline->triangleIBView.Format = DXGI_FORMAT_R16_UINT;
-    pipeline->triangleIndexCount = sizeof(TriangleIndices) / sizeof(TriangleIndices[0]);
-
-    return GHOST_OK;
-}
-
-GhostResult GhostUploadTriangle2Geometry(IGhostRHI* rhi, GhostPipeline* pipeline)
-{
-    ID3D12Device* device = rhi->GetDevice();
-    D3D12_RANGE rr = { 0, 0 };
-
-    const unsigned long long vbSize = sizeof(Triangle2Vertices);
-    ComPtr<ID3D12Resource> tri2VB;
-    if (CreateUploadBuffer(device, vbSize, &tri2VB) != GHOST_OK) return GHOST_FAIL;
-    void* vb = nullptr;
-    tri2VB->Map(0, &rr, &vb);
-    memcpy(vb, Triangle2Vertices, vbSize);
-    tri2VB->Unmap(0, nullptr);
-    pipeline->triangle2VB = tri2VB;
-    pipeline->triangle2VBView.BufferLocation = tri2VB->GetGPUVirtualAddress();
-    pipeline->triangle2VBView.SizeInBytes = (unsigned int)vbSize;
-    pipeline->triangle2VBView.StrideInBytes = sizeof(GhostVertex);
-
-    const unsigned long long ibSize = sizeof(Triangle2Indices);
-    ComPtr<ID3D12Resource> tri2IB;
-    if (CreateUploadBuffer(device, ibSize, &tri2IB) != GHOST_OK) return GHOST_FAIL;
-    void* ib = nullptr;
-    tri2IB->Map(0, &rr, &ib);
-    memcpy(ib, Triangle2Indices, ibSize);
-    tri2IB->Unmap(0, nullptr);
-    pipeline->triangle2IB = tri2IB;
-    pipeline->triangle2IBView.BufferLocation = tri2IB->GetGPUVirtualAddress();
-    pipeline->triangle2IBView.SizeInBytes = (unsigned int)ibSize;
-    pipeline->triangle2IBView.Format = DXGI_FORMAT_R16_UINT;
-    pipeline->triangle2IndexCount = sizeof(Triangle2Indices) / sizeof(Triangle2Indices[0]);
-
-    return GHOST_OK;
-}
-
-GhostResult GhostUploadShipGeometry(IGhostRHI* rhi, GhostPipeline* pipeline)
-{
-    ID3D12Device* device = rhi->GetDevice();
-    D3D12_RANGE rr = { 0, 0 };
-
-    const unsigned long long vbSize = sizeof(ShipVertices);
-    ComPtr<ID3D12Resource> shipVB;
-    if (CreateUploadBuffer(device, vbSize, &shipVB) != GHOST_OK) return GHOST_FAIL;
-    void* vb = nullptr;
-    shipVB->Map(0, &rr, &vb);
-    memcpy(vb, ShipVertices, vbSize);
-    shipVB->Unmap(0, nullptr);
-    pipeline->shipVB = shipVB;
-    pipeline->shipVBView.BufferLocation = shipVB->GetGPUVirtualAddress();
-    pipeline->shipVBView.SizeInBytes = (unsigned int)vbSize;
-    pipeline->shipVBView.StrideInBytes = sizeof(GhostVertex);
-
-    const unsigned long long ibSize = sizeof(ShipIndices);
-    ComPtr<ID3D12Resource> shipIB;
-    if (CreateUploadBuffer(device, ibSize, &shipIB) != GHOST_OK) return GHOST_FAIL;
-    void* ib = nullptr;
-    shipIB->Map(0, &rr, &ib);
-    memcpy(ib, ShipIndices, ibSize);
-    shipIB->Unmap(0, nullptr);
-    pipeline->shipIB = shipIB;
-    pipeline->shipIBView.BufferLocation = shipIB->GetGPUVirtualAddress();
-    pipeline->shipIBView.SizeInBytes = (unsigned int)ibSize;
-    pipeline->shipIBView.Format = DXGI_FORMAT_R16_UINT;
-    pipeline->shipIndexCount = sizeof(ShipIndices) / sizeof(ShipIndices[0]);
-
-    return GHOST_OK;
-}
-
-// ============================================================
-//  Draw calls
-// ============================================================
-
-void GhostDrawCube(IGhostRHI* rhi, GhostPipeline* pipeline)
-{
+    if (slot >= GHOST_MAX_OBJECTS) return;
     auto* cmd = rhi->GetCmdList();
 
-    ID3D12DescriptorHeap* heaps[] = { pipeline->cbvHeap.Get() };
+    ID3D12DescriptorHeap* heaps[] = { p->cbvHeap.Get() };
     cmd->SetDescriptorHeaps(1, heaps);
-    cmd->SetPipelineState(pipeline->pso.Get());
-    cmd->SetGraphicsRootSignature(pipeline->rootSignature.Get());
+    cmd->SetPipelineState(p->iconPso.Get());
+    cmd->SetGraphicsRootSignature(p->rootSignature.Get());
     cmd->SetGraphicsRootConstantBufferView(
-        0, pipeline->constantBuffer->GetGPUVirtualAddress() + pipeline->cbOffsetCube);
+        0, p->constantBuffer->GetGPUVirtualAddress() + slot * GHOST_OBJECT_CB_STRIDE);
+    cmd->SetGraphicsRootConstantBufferView(1, p->sceneBuffer->GetGPUVirtualAddress());
 
     D3D12_CPU_DESCRIPTOR_HANDLE rtv = rhi->GetRTV();
-    D3D12_CPU_DESCRIPTOR_HANDLE dsv = pipeline->dsvHeap->GetCPUDescriptorHandleForHeapStart();
+    D3D12_CPU_DESCRIPTOR_HANDLE dsv = p->dsvHeap->GetCPUDescriptorHandleForHeapStart();
     cmd->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
 
     cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    cmd->IASetVertexBuffers(0, 1, &pipeline->vertexBufferView);
-    cmd->IASetIndexBuffer(&pipeline->indexBufferView);
-    cmd->DrawIndexedInstanced(pipeline->indexCount, 1, 0, 0, 0);
+    cmd->DrawInstanced(6, 1, 0, 0);       // one quad, corners generated from SV_VertexID
 }
-
-void GhostDrawTriangle(IGhostRHI* rhi, GhostPipeline* pipeline)
+void GhostDrawMesh(IGhostRHI* rhi, GhostPipeline* p, int meshId, unsigned int slot)
 {
+    if (meshId < 0 || meshId >= GHOST_MESH_COUNT || slot >= GHOST_MAX_OBJECTS) return;
+    const GhostMesh& m = p->meshes[meshId];
     auto* cmd = rhi->GetCmdList();
 
-    ID3D12DescriptorHeap* heaps[] = { pipeline->cbvHeap.Get() };
+    ID3D12DescriptorHeap* heaps[] = { p->cbvHeap.Get() };
     cmd->SetDescriptorHeaps(1, heaps);
-    cmd->SetPipelineState(pipeline->pso.Get());
-    cmd->SetGraphicsRootSignature(pipeline->rootSignature.Get());
+    cmd->SetPipelineState(p->pso.Get());
+    cmd->SetGraphicsRootSignature(p->rootSignature.Get());
     cmd->SetGraphicsRootConstantBufferView(
-        0, pipeline->constantBuffer->GetGPUVirtualAddress() + pipeline->cbOffsetTriangle);
-
+        0, p->constantBuffer->GetGPUVirtualAddress() + slot * GHOST_OBJECT_CB_STRIDE);
+    cmd->SetGraphicsRootConstantBufferView(1, p->sceneBuffer->GetGPUVirtualAddress());
     D3D12_CPU_DESCRIPTOR_HANDLE rtv = rhi->GetRTV();
-    D3D12_CPU_DESCRIPTOR_HANDLE dsv = pipeline->dsvHeap->GetCPUDescriptorHandleForHeapStart();
+    D3D12_CPU_DESCRIPTOR_HANDLE dsv = p->dsvHeap->GetCPUDescriptorHandleForHeapStart();
     cmd->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
 
     cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    cmd->IASetVertexBuffers(0, 1, &pipeline->triangleVBView);
-    cmd->IASetIndexBuffer(&pipeline->triangleIBView);
-    cmd->DrawIndexedInstanced(pipeline->triangleIndexCount, 1, 0, 0, 0);
+    cmd->IASetVertexBuffers(0, 1, &m.vbView);
+    cmd->IASetIndexBuffer(&m.ibView);
+    cmd->DrawIndexedInstanced(m.indexCount, 1, 0, 0, 0);
 }
 
-void GhostDrawTriangle2(IGhostRHI* rhi, GhostPipeline* pipeline)
-{
-    auto* cmd = rhi->GetCmdList();
-
-    ID3D12DescriptorHeap* heaps[] = { pipeline->cbvHeap.Get() };
-    cmd->SetDescriptorHeaps(1, heaps);
-    cmd->SetPipelineState(pipeline->pso.Get());
-    cmd->SetGraphicsRootSignature(pipeline->rootSignature.Get());
-    cmd->SetGraphicsRootConstantBufferView(
-        0, pipeline->constantBuffer->GetGPUVirtualAddress() + pipeline->cbOffsetTriangle2);
-
-    D3D12_CPU_DESCRIPTOR_HANDLE rtv = rhi->GetRTV();
-    D3D12_CPU_DESCRIPTOR_HANDLE dsv = pipeline->dsvHeap->GetCPUDescriptorHandleForHeapStart();
-    cmd->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
-
-    cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    cmd->IASetVertexBuffers(0, 1, &pipeline->triangle2VBView);
-    cmd->IASetIndexBuffer(&pipeline->triangle2IBView);
-    cmd->DrawIndexedInstanced(pipeline->triangle2IndexCount, 1, 0, 0, 0);
-}
-
-void GhostDrawShip(IGhostRHI* rhi, GhostPipeline* pipeline)
-{
-    auto* cmd = rhi->GetCmdList();
-
-    ID3D12DescriptorHeap* heaps[] = { pipeline->cbvHeap.Get() };
-    cmd->SetDescriptorHeaps(1, heaps);
-    cmd->SetPipelineState(pipeline->pso.Get());
-    cmd->SetGraphicsRootSignature(pipeline->rootSignature.Get());
-    cmd->SetGraphicsRootConstantBufferView(
-        0, pipeline->constantBuffer->GetGPUVirtualAddress() + pipeline->cbOffsetShip);
-
-    cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    cmd->IASetVertexBuffers(0, 1, &pipeline->shipVBView);
-    cmd->IASetIndexBuffer(&pipeline->shipIBView);
-    cmd->DrawIndexedInstanced(pipeline->shipIndexCount, 1, 0, 0, 0);
-}
 
 // ============================================================
 //  Resize + Destroy
@@ -537,5 +420,7 @@ void GhostPipelineDestroy(GhostPipeline* pipeline)
     if (!pipeline) return;
     if (pipeline->cbvMappedData)
         pipeline->constantBuffer->Unmap(0, nullptr);
+    if (pipeline->sceneMappedData)
+        pipeline->sceneBuffer->Unmap(0, nullptr);
     delete pipeline;
 }

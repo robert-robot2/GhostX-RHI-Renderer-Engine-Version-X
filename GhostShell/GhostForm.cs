@@ -20,11 +20,9 @@ namespace GhostShell
 
         // ---- Menu builder ----
         private GhostMenuBuilder _menuBuilder;
-
-        // ---- Add this field near the top with the other fields ----
-    
-
         private Microsoft.Web.WebView2.WinForms.WebView2 _ghostUI;
+        private GhostEditorUI _editor = null!;
+
         public GhostForm()
         {
             InitializeForm();
@@ -57,7 +55,7 @@ namespace GhostShell
         private void BuildUI()
         {
             // ---- Render panel (DX12 draws here) ----
-            _renderPanel = new Panel
+            _renderPanel = new ViewportPanel      // was: new Panel
             {
                 Dock = DockStyle.Fill,
                 BackColor = Color.Black,
@@ -139,6 +137,29 @@ namespace GhostShell
             };
             _menuBuilder.OnAbout += OnAbout;
             _menuBuilder.OnVersion += OnVersion;
+            // ---- Engine editor panels (must come after the menu strip exists) ----
+            _editor = new GhostEditorUI(this, _renderPanel);
+            _editor.Build();
+            _menuBuilder.OnToggleEditorUI += (s, e) => _editor.ToggleVisible();
+
+            // Key 4 toggles the panels, Delete removes the selection (ignored while typing in the grid)
+            KeyPreview = true;
+            KeyDown += (s, e) =>
+            {
+                if (_editor.HandleKey(e.KeyCode)) { e.Handled = true; e.SuppressKeyPress = true; }
+            };
+
+            // The side panels change the viewport size, so re-sync the swap chain once layout is final
+            Shown += (s, e) =>
+            {
+                _renderPanel.Select();
+                if (_renderPanel.ClientSize.Width > 0 && _renderPanel.ClientSize.Height > 0)
+                    GhostEngine.GhostEngine_Resize(
+                        (uint)_renderPanel.ClientSize.Width,
+                        (uint)_renderPanel.ClientSize.Height);
+            };
+
+
         }
 
         // -------------------------------------------------------
@@ -180,7 +201,19 @@ namespace GhostShell
                     _ghostUI.Bounds = _renderPanel.ClientRectangle;
                 }
             };
-
+            // Forward left-button mouse events (client coords) for picking and dragging
+            _renderPanel.MouseDown += (s, e) =>
+            {
+                if (e.Button == MouseButtons.Left)
+                    GhostEngine.GhostEngine_MouseDown(e.X, e.Y, 0);
+            };
+            _renderPanel.MouseMove += (s, e) => GhostEngine.GhostEngine_MouseMove(e.X, e.Y);
+            _renderPanel.MouseUp += (s, e) =>
+            {
+                if (e.Button == MouseButtons.Left)
+                    GhostEngine.GhostEngine_MouseUp(e.X, e.Y, 0);
+            };
+            _renderPanel.MouseLeave += (s, e) => GhostEngine.GhostEngine_MouseLeave();
             // Clean shutdown
             FormClosing += (s, e) =>
             {
@@ -197,8 +230,19 @@ namespace GhostShell
             // Drain all pending Windows messages first, then tick
             while (!Win32.PeekMessageExists())
             {
+                GhostEngine.GhostEngine_SetInputEnabled(IsViewportHot() ? 1 : 0);
                 GhostEngine.GhostEngine_Tick();
             }
+        }
+
+        // Camera keys and right-mouse look only work while this window is active
+        // and the cursor is over the viewport, so typing elsewhere never moves the camera.
+        private bool IsViewportHot()
+        {
+            if (ActiveForm != this) return false;
+            if (_ghostUI.Visible) return false;
+            if (ActiveControl != _renderPanel) return false;     // typing in a panel never moves the camera
+            return _renderPanel.ClientRectangle.Contains(_renderPanel.PointToClient(Cursor.Position));
         }
 
         // -------------------------------------------------------

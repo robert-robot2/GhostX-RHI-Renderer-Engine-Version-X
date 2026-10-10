@@ -1,8 +1,33 @@
 ﻿
 using System.Runtime.InteropServices;
-
+using System.Text;
 namespace GhostShell
 {
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GhostObjectInfo
+    {
+        public int id, meshId;
+        public float px, py, pz;
+        public float rx, ry, rz;
+        public float sx, sy, sz;
+        public float r, g, b;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GhostLightInfo
+    {
+        public int id, type;
+        public float px, py, pz;
+        public float yawDeg, pitchDeg;
+        public float r, g, b;
+        public float intensity, range;
+        public float width, height;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GhostEntityInfo { public int id, kind, subtype; }
+
     internal static class GhostEngine
     {
         private const string DllName = "GhostX.dll";
@@ -21,6 +46,48 @@ namespace GhostShell
 
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern void GhostEngine_SetClearColor(float r, float g, float b);
+
+        // ---- Input ----
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetInputEnabled(int enabled);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_MouseDown(int x, int y, int button);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_MouseMove(int x, int y);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_MouseUp(int x, int y, int button);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_MouseLeave();
+
+        // ---- Scene ----
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_AddObject(int meshId, int screenX, int screenY);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_AddLight(int lightType, int screenX, int screenY);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_RemoveEntity(int id);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SelectEntity(int id);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetSelected();
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern uint GhostEngine_GetSceneVersion();
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetEntities([Out] GhostEntityInfo[] buffer, int maxCount);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+        public static extern int GhostEngine_GetEntityName(int id, StringBuilder buf, int bufSize);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetObject(int id, ref GhostObjectInfo info);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetObject(ref GhostObjectInfo info);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetLight(int id, ref GhostLightInfo info);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetLight(ref GhostLightInfo info);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_GetAmbient(out float r, out float g, out float b, out float intensity);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetAmbient(float r, float g, float b, float intensity);
 
     }
 }

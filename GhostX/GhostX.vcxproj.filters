@@ -36,6 +36,9 @@
     <ClInclude Include="include\GhostRHI_DX12.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="include\GhostScene.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\GhostPipeline.cpp">
@@ -49,10 +52,10 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <None Include="shaders\GhostPS.hlsl">
+    <None Include="shaders\GhostVS.hlsl">
       <Filter>Shaders</Filter>
     </None>
-    <None Include="shaders\GhostVS.hlsl">
+    <None Include="shaders\GhostPS.hlsl">
       <Filter>Shaders</Filter>
     </None>
   </ItemGroup>

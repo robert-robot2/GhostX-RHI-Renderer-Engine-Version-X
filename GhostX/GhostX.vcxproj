@@ -154,6 +154,7 @@ d3dcompiler.lib;Comdlg32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     <ClInclude Include="include\GhostMath.h" />
     <ClInclude Include="include\GhostPipeline.h" />
     <ClInclude Include="include\GhostRHI_DX12.h" />
+    <ClInclude Include="include\GhostScene.h" />
     <ClInclude Include="include\IGhostRHI.h" />
   </ItemGroup>
   <ItemGroup>

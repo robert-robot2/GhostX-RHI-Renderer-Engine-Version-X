@@ -7,5 +7,4 @@
   <Project Path="GhostBlazorUI/GhostBlazorUI.csproj" Id="4794bc30-c352-4139-acc2-e4c8c1fde5e4" />
   <Project Path="GhostShell/GhostShell.csproj" Id="2398bbea-ce5b-48c7-9094-2b42d489e99a" />
   <Project Path="GhostX/GhostX.vcxproj" Id="8322a81c-5821-4273-bbf3-d1c73ca69692" />
-  <Project Path="GhostXBlazorUI/GhostXBlazorUI.csproj" Id="36af769d-2655-440a-bbfd-ab059b6d7240" />
 </Solution>
