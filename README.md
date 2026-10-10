@@ -11,31 +11,26 @@ new PatchNoteEntry
         "Point and Rect lights have smooth range falloff. Rect lights are one-sided.",
         "Gamma-correct output, and back faces now light correctly.",
         "Fixed the triangle mesh normals.",
-
         "SCENE",
         "New backend-agnostic scene model: objects and lights share one ID space.",
         "Per-object constant buffers (up to 256 slots) replace the four hard-coded object slots.",
         "New mesh registry: Cube, Triangle and Ship. Dropped primitives default to grey.",
         "Scene Settings holds the ambient color and intensity.",
-
         "VIEWPORT",
         "Lights now have in-scene icons: sun, bulb and panel, plus a direction arrow for directional lights.",
         "Icons stay a constant screen size, draw on top, and highlight on hover and selection.",
         "Click to select any object or light, and drag it on a camera-facing plane.",
         "Selected objects get an orange tint.",
         "Camera keys and right-mouse look only work while the viewport has focus.",
-
         "CAMERA",
         "Fixed the mirrored X axis: LookAt handedness, strafe direction and mouse-look yaw.",
         "The projection now uses the real viewport aspect ratio, so resizing no longer stretches the image.",
-
         "ENGINE UI",
         "Left panel: Lighting / Primitives palette. Drag an item into the viewport, or double-click to spawn it at screen center.",
         "Right panel: scene hierarchy, with the selected item's details below it.",
         "Details panel (PropertyGrid): Position, Rotation and Scale, color, intensity, range, yaw/pitch and rect size. It updates live while you drag in the viewport.",
         "Bottom panel: Content Browser placeholder for mesh imports.",
         "Key 4 or View > Toggle Engine UI hides and shows all panels. Delete removes the selection.",
-
         "ENGINE API",
         "New exports for add/remove/select, enumerate, get/set object, get/set light, ambient and scene version.",
         "New mouse input exports: down, move, up and leave.",
