@@ -1,41 +1,79 @@
-# GhostXV0.0.9
+# Ghost Version X
 
-new PatchNoteEntry
-{
-    Title = "GhostX Version 0.0.7 👻💡🧊💡👻",
-    Lines = new List<string>
-    {
-        "LIGHTING",
-        "Removed the old fused directional + ambient light.",
-        "New lighting system, calculated per pixel: Ambient, Directional, Point and Rect Area lights (up to 16).",
-        "Point and Rect lights have smooth range falloff. Rect lights are one-sided.",
-        "Gamma-correct output, and back faces now light correctly.",
-        "Fixed the triangle mesh normals.",
-        "SCENE",
-        "New backend-agnostic scene model: objects and lights share one ID space.",
-        "Per-object constant buffers (up to 256 slots) replace the four hard-coded object slots.",
-        "New mesh registry: Cube, Triangle and Ship. Dropped primitives default to grey.",
-        "Scene Settings holds the ambient color and intensity.",
-        "VIEWPORT",
-        "Lights now have in-scene icons: sun, bulb and panel, plus a direction arrow for directional lights.",
-        "Icons stay a constant screen size, draw on top, and highlight on hover and selection.",
-        "Click to select any object or light, and drag it on a camera-facing plane.",
-        "Selected objects get an orange tint.",
-        "Camera keys and right-mouse look only work while the viewport has focus.",
-        "CAMERA",
-        "Fixed the mirrored X axis: LookAt handedness, strafe direction and mouse-look yaw.",
-        "The projection now uses the real viewport aspect ratio, so resizing no longer stretches the image.",
-        "ENGINE UI",
-        "Left panel: Lighting / Primitives palette. Drag an item into the viewport, or double-click to spawn it at screen center.",
-        "Right panel: scene hierarchy, with the selected item's details below it.",
-        "Details panel (PropertyGrid): Position, Rotation and Scale, color, intensity, range, yaw/pitch and rect size. It updates live while you drag in the viewport.",
-        "Bottom panel: Content Browser placeholder for mesh imports.",
-        "Key 4 or View > Toggle Engine UI hides and shows all panels. Delete removes the selection.",
-        "ENGINE API",
-        "New exports for add/remove/select, enumerate, get/set object, get/set light, ambient and scene version.",
-        "New mouse input exports: down, move, up and leave.",
-    }
-},
+👻 GhostX Version X 👻💡🧊💡👻
+💡 LIGHTING
+Removed the old fused directional and ambient lighting system.
+Introduced a new per-pixel lighting system supporting:
+Ambient lights
+Directional lights
+Point lights
+Rect Area lights (up to 16 lights)
+Point and Rect Area lights feature smooth range falloff.
+Rect Area lights are one-sided.
+Added gamma-correct output.
+Fixed back-face lighting.
+Fixed triangle mesh normals.
+🌎 SCENE
+Introduced a new backend-agnostic scene model where objects and lights share one ID space.
+Replaced four hard-coded object slots with per-object constant buffers supporting up to 256 slots.
+Added a new mesh registry:
+Cube
+Triangle
+Ship
+Dropped primitives now default to grey.
+Added Scene Settings for ambient color and intensity.
+🖥️ VIEWPORT
+Added in-scene light icons:
+☀️ Sun — Directional lights
+💡 Bulb — Point lights
+🟦 Panel — Rect Area lights
+➡️ Direction arrow — Directional lights
+Icons maintain a constant screen size, render on top of the scene, and highlight on hover and selection.
+Click to select any object or light.
+Drag selected items along a camera-facing plane.
+Selected objects are highlighted with an orange tint.
+Camera controls and right-mouse look now work only when the viewport has focus.
+🎥 CAMERA
+Fixed the mirrored X axis, including:
+LookAt handedness
+Strafe direction
+Mouse-look yaw
+Updated projection calculations to use the actual viewport aspect ratio.
+Resizing the viewport no longer stretches the rendered image.
+🛠️ ENGINE UI
+Left Panel: Lighting and Primitives palette.
+Drag items into the viewport to spawn them.
+Double-click an item to spawn it at the center of the screen.
+Right Panel: Scene hierarchy with the selected item's details below.
+Details Panel (PropertyGrid):
+Position
+Rotation
+Scale
+Color
+Intensity
+Range
+Yaw / Pitch
+Rect Area size
+Property values update live while dragging items in the viewport.
+Bottom Panel: Added a Content Browser placeholder for mesh imports.
+Press 4 or use View > Toggle Engine UI to show or hide all panels.
+Press Delete to remove the current selection.
+⚙️ ENGINE API
+Added new API exports for:
+Adding and removing objects
+Selecting objects
+Enumerating scene items
+Getting and setting object properties
+Getting and setting light properties
+Ambient lighting configuration
+Scene version retrieval
+Added mouse input exports:
+Mouse down
+Mouse move
+Mouse up
+Mouse leave
+
+👻 GhostX — A new step forward in rendering, scene management, and editor tooling.
 
 
 <img width="1920" height="1080" alt="Screenshot 2026-10-10 151235" src="https://github.com/user-attachments/assets/708763a5-d19a-4ef2-92ce-f58bfae39fc6" />
