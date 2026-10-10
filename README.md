@@ -126,6 +126,64 @@ GhostShell/bin/Debug/net10.0/wwwroot/
 ### 9. Build and Run
 
 Build the solution in Visual Studio and run `GhostShell`. The WinForms window will launch with the DX12 renderer active and the Blazor UI hosted via WebView2.
+---
+
+## Blazor → DX12 Color Bridge
+
+---
+Once the base setup is complete, the following wires up live communication between the Blazor UI and the DirectX 12 engine, allowing the Blazor frontend to control the DX12 clear color in real time.
+
+### 1. `index.html` — Add the JS Bridge
+
+Inside the `<head>` tag, before `blazor.webassembly.js`:
+
+```javascript
+window.ghostBridge = {
+    sendColor: function (colorStr) {
+        window.chrome.webview.postMessage("SetColor:" + colorStr);
+    }
+};
+```
+
+### 2. `Home.razor` — Add a Toggle Button
+
+```razor
+@inject IJSRuntime JS
+
+<button @onclick="ToggleColor">Toggle BG Color</button>
+
+@code {
+    private bool _toggled = false;
+
+    private async Task ToggleColor()
+    {
+        _toggled = !_toggled;
+        await JS.InvokeVoidAsync("ghostBridge.sendColor",
+            _toggled ? "0.2,0.0,0.4" : "0.0,0.0,0.0");
+    }
+}
+```
+
+### 3. `GhostForm.cs` — Wire Up the Message Receiver
+
+Inside `OnToggleGhostUI`, after `CoreWebView2.Navigate()`:
+
+```csharp
+_ghostUI.CoreWebView2.WebMessageReceived += (sender, args) =>
+{
+    var msg = args.TryGetWebMessageAsString();
+    if (msg.StartsWith("SetColor:"))
+    {
+        var parts = msg.Replace("SetColor:", "").Split(',');
+        float r = float.Parse(parts[0]);
+        float g = float.Parse(parts[1]);
+        float b = float.Parse(parts[2]);
+        GhostEngine.GhostEngine_SetClearColor(r, g, b);
+    }
+};
+```
+
+> **Result:** Clicking the toggle button in the Blazor UI sends a message through WebView2 directly to `GhostEngine_SetClearColor`, changing the DX12 background color in real time.
 
 ---
 
@@ -173,6 +231,10 @@ SOFTWARE.
 </div>
 
 
-<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/26559d95-0952-4617-9a2a-60ef506016bd" />
-<img width="1920" height="1080" alt="Screenshot 2026-09-04 215025" src="https://github.com/user-attachments/assets/dd15a007-04ff-4cab-86cd-ab850173f2a7" />
-<img width="1920" height="1080" alt="Screenshot 2026-09-04 215037" src="https://github.com/user-attachments/assets/20076442-587a-4489-a763-d41924a84b67" />
+<img width="1920" height="1080" alt="Screenshot 2026-09-05 003001" src="https://github.com/user-attachments/assets/b6d6613d-afe8-46ab-b263-40e625061d17" />
+<img width="1920" height="1080" alt="Screenshot 2026-09-05 002729" src="https://github.com/user-attachments/assets/e4bac892-ed1b-49be-b117-32150236ef46" />
+<img width="1920" height="1080" alt="Screenshot 2026-09-05 002613" src="https://github.com/user-attachments/assets/5f8b7257-055f-4bc7-8618-11dd27e09757" />
+<img width="1920" height="1080" alt="Screenshot 2026-09-05 002629" src="https://github.com/user-attachments/assets/add7347d-670d-4c82-9897-f3797858d10a" />
+
+
+
