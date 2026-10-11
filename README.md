@@ -15,10 +15,11 @@ A Windows desktop application that fuses a raw **DirectX 12 RHI rendering engine
 - 🪟 **WinForms Shell** — native Windows host with dropdown menus and window management
 - 🔗 **JS Interop Bridge** — communication between the Blazor frontend and the DX12 backend
 - 📦 **Self-contained** — no external servers, everything runs locally
-## Cameras
+## Recently Added 
+- Visual Studio click drag drop windows
 - Multiple Free Camera Drop and Drag Support
-## Texture Support
-## Primitive Object Support
+- Texture Support
+- Primitive Object Support
 ## 💡 LIGHTING
 - Removed the old fused directional + ambient light.
 - New lighting system, calculated per pixel: Ambient, Directional, Point, and Rect Area lights (up to 16).
@@ -56,6 +57,8 @@ A Windows desktop application that fuses a raw **DirectX 12 RHI rendering engine
 ## ⚙️ ENGINE API
 - New exports for add/remove/select, enumerate, get/set object, get/set light, ambient, and scene version.
 - New mouse input exports: down, move, up, and leave.
+- 
+<img width="1920" height="1080" alt="Screenshot 2026-10-11 145248" src="https://github.com/user-attachments/assets/13b5d341-8699-47bb-92d2-85f466babe6a" />
 
 <img width="1920" height="1080" alt="Screenshot 2026-10-11 043606" src="https://github.com/user-attachments/assets/a9721aab-0f8c-4fdc-b23c-197844c0ac20" />
 
