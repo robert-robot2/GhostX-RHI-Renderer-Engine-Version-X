@@ -311,7 +311,64 @@ namespace GhostShell
                 "GhostX v0.0.6\nWinForms shell migration complete.",
                 "Version", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
+        // Selected object if there is one, otherwise the first cube in the scene (0 = none)
+        private int TargetObjectId()
+        {
+            int sel = GhostEngine.GhostEngine_GetSelected();
+            var o = new GhostObjectInfo();
+            if (sel != 0 && GhostEngine.GhostEngine_GetObject(sel, ref o) != 0) return sel;
 
+            var buf = new GhostEntityInfo[512];
+            int n = GhostEngine.GhostEngine_GetEntities(buf, buf.Length);
+            for (int i = 0; i < n; i++)
+                if (buf[i].kind == 0 && buf[i].subtype == 0) return buf[i].id;
+            return 0;
+        }
+
+        private void ApplyTexture(int textureId)
+        {
+            int id = TargetObjectId();
+            if (id == 0)
+            {
+                MessageBox.Show("Drop a cube into the scene first.", "No object", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            GhostEngine.GhostEngine_SetObjectTexture(id, textureId);
+        }
+
+        private void OnImportTexture(object? sender, EventArgs e)
+        {
+            int target = TargetObjectId();
+            if (target == 0)
+            {
+                MessageBox.Show("Drop a cube into the scene first.", "No object", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            using var dlg = new OpenFileDialog
+            {
+                Title = "Import Texture",
+                Filter = "Images (*.png;*.jpg;*.jpeg;*.bmp)|*.png;*.jpg;*.jpeg;*.bmp|All files (*.*)|*.*",
+            };
+            if (dlg.ShowDialog(this) != DialogResult.OK) return;
+
+            try
+            {
+                byte[] px = GhostImageLoader.Load(dlg.FileName,4096, out int w, out int h, out int sw,out int sh);
+                int tex = GhostEngine.GhostEngine_CreateTexture(Path.GetFileName(dlg.FileName), px, (uint)w, (uint)h);
+                if (tex < 0)
+                {
+                    MessageBox.Show("The engine could not create the texture (too large, or the texture limit was reached).",
+                        "Import failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+                GhostEngine.GhostEngine_SetObjectTexture(target, tex);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ex.Message, "Import failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
         // -------------------------------------------------------
         // Helpers
         // -------------------------------------------------------

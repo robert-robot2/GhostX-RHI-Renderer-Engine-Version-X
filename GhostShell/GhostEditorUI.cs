@@ -53,6 +53,158 @@ namespace GhostShell
         }
     }
 
+    // ============================================================
+    //  Texture list helpers (dropdown contents + disk import)
+    // ============================================================
+    internal static class GhostTextures
+    {
+        public const string ImportLabel = "Import Texture...";
+
+        public static string DisplayName(int id)
+        {
+            if (id <= 0) return "None";
+            var sb = new StringBuilder(260);
+            if (GhostEngine.GhostEngine_GetTextureInfo(id, sb, sb.Capacity, out _, out _) == 0) return "None";
+            return id <= 2 ? sb.ToString() : $"{sb} [{id}]";      // built-ins have fixed names, imports get their id
+        }
+
+        public static string SizeText(int id)
+        {
+            if (id <= 0) return "-";
+            var sb = new StringBuilder(260);
+            if (GhostEngine.GhostEngine_GetTextureInfo(id, sb, sb.Capacity, out uint w, out uint h) == 0) return "-";
+            var a = GhostAssets.Get(id);
+            bool scaled = a != null && a.Path != null && (a.OrigW != w || a.OrigH != h);
+            return scaled ? $"{w} x {h}  (source {a!.OrigW} x {a.OrigH})" : $"{w} x {h}";
+        }
+
+        public static List<string> Choices()
+        {
+            var list = new List<string>();
+            int n = GhostEngine.GhostEngine_GetTextureCount();
+            for (int i = 0; i < n; i++) list.Add(DisplayName(i));
+            list.Add(ImportLabel);
+            return list;
+        }
+
+        public static int IdFromDisplay(string text)
+        {
+            int n = GhostEngine.GhostEngine_GetTextureCount();
+            for (int i = 0; i < n; i++)
+                if (DisplayName(i) == text) return i;
+            return -1;
+        }
+
+        // Opens the file dialog, decodes, uploads. Returns the new texture id, or -1 if cancelled or failed.
+        // Opens the file dialog, decodes, uploads. Returns the new texture id, or -1 if cancelled or failed.
+        public static int ImportFromDisk()
+        {
+            using var dlg = new OpenFileDialog
+            {
+                Title = "Import Texture",
+                Filter = "Images (*.png;*.jpg;*.jpeg;*.bmp)|*.png;*.jpg;*.jpeg;*.bmp|All files (*.*)|*.*",
+            };
+            if (dlg.ShowDialog() != DialogResult.OK) return -1;
+
+            try
+            {
+                int tex = GhostAssets.Import(dlg.FileName);
+                if (tex < 0)
+                    MessageBox.Show("The engine could not create the texture (too large, or the texture limit was reached).",
+                        "Import failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return tex;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ex.Message, "Import failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return -1;
+            }
+        }
+
+        // face -1 = every face. Used by the browser's double-click and by drag-to-object.
+        public static void Apply(int objectId, int face, int tex)
+        {
+            if (face < 0) { GhostEngine.GhostEngine_SetObjectTexture(objectId, tex); return; }
+
+            var m = new GhostMaterialInfo();
+            if (GhostEngine.GhostEngine_GetMaterial(objectId, face, ref m) == 0) return;
+            if (m.textureId == 0 && tex != 0) m.r = m.g = m.b = 1.0f;      // white tint so the image shows at full strength
+            else if (tex == 0) m.r = m.g = m.b = 0.6f;      // back to the default grey
+            m.textureId = tex;
+            GhostEngine.GhostEngine_SetMaterial(objectId, face, ref m);
+        }
+    }
+
+    // Turns a string property into a dropdown fed from the engine's texture list
+    internal class TextureChoiceConverter : StringConverter
+    {
+        public override bool GetStandardValuesSupported(ITypeDescriptorContext? context) => true;
+        public override bool GetStandardValuesExclusive(ITypeDescriptorContext? context) => true;
+        public override StandardValuesCollection GetStandardValues(ITypeDescriptorContext? context)
+            => new StandardValuesCollection(GhostTextures.Choices());
+    }
+
+    [TypeConverter(typeof(ExpandableObjectConverter))]
+    internal class Vec2Edit
+    {
+        private readonly Func<(float u, float v)> _get;
+        private readonly Action<float, float> _set;
+
+        public Vec2Edit(Func<(float u, float v)> get, Action<float, float> set) { _get = get; _set = set; }
+
+        public float U { get => _get().u; set { var t = _get(); _set(value, t.v); } }
+        public float V { get => _get().v; set { var t = _get(); _set(t.u, value); } }
+
+        public override string ToString() { var t = _get(); return $"{t.u:0.##}, {t.v:0.##}"; }
+    }
+
+    internal abstract class FixedListConverter : StringConverter
+    {
+        protected abstract string[] Items { get; }
+        public override bool GetStandardValuesSupported(ITypeDescriptorContext? context) => true;
+        public override bool GetStandardValuesExclusive(ITypeDescriptorContext? context) => true;
+        public override StandardValuesCollection GetStandardValues(ITypeDescriptorContext? context)
+            => new StandardValuesCollection(Items);
+    }
+
+    internal class MapModeConverter : FixedListConverter
+    {
+        public static readonly string[] Names =
+            { "Mesh UV", "Box", "Planar XY", "Planar XZ", "Planar YZ", "Cylindrical", "Spherical", "Cube Cross" };
+        protected override string[] Items => Names;
+    }
+
+    internal class WrapConverter : FixedListConverter
+    {
+        public static readonly string[] Names = { "Repeat", "Clamp" };
+        protected override string[] Items => Names;
+    }
+
+    internal class FilterConverter : FixedListConverter
+    {
+        public static readonly string[] Names = { "Linear", "Point" };
+        protected override string[] Items => Names;
+    }
+
+    // Lists "All Faces" plus the faces of whichever object the grid is showing
+    internal class FaceChoiceConverter : StringConverter
+    {
+        public override bool GetStandardValuesSupported(ITypeDescriptorContext? context) => true;
+        public override bool GetStandardValuesExclusive(ITypeDescriptorContext? context) => true;
+        public override StandardValuesCollection GetStandardValues(ITypeDescriptorContext? context)
+            => new StandardValuesCollection((context?.Instance as ObjectProxy)?.FaceChoices()
+                                            ?? new List<string> { "All Faces" });
+    }
+    // Presets in a dropdown, but any number can be typed too
+    internal class ResizeConverter : StringConverter
+    {
+        public static readonly string[] Names = { "Original", "4096", "2048", "1024", "512", "256", "128", "64" };
+        public override bool GetStandardValuesSupported(ITypeDescriptorContext? context) => true;
+        public override bool GetStandardValuesExclusive(ITypeDescriptorContext? context) => false;
+        public override StandardValuesCollection GetStandardValues(ITypeDescriptorContext? context)
+            => new StandardValuesCollection(Names);
+    }
+
     internal class ObjectProxy
     {
         private readonly int _id;
@@ -69,6 +221,12 @@ namespace GhostShell
             Scale = new Vec3Edit(
                 () => { var i = Get(); return (i.sx, i.sy, i.sz); },
                 (x, y, z) => { var i = Get(); i.sx = x; i.sy = y; i.sz = z; Set(i); });
+            Tiling = new Vec2Edit(
+    () => { var m = ReadMat(); return (m.tilingU, m.tilingV); },
+    (u, v) => EditMat((ref GhostMaterialInfo m) => { m.tilingU = u; m.tilingV = v; }));
+            Offset = new Vec2Edit(
+                () => { var m = ReadMat(); return (m.offsetU, m.offsetV); },
+                (u, v) => EditMat((ref GhostMaterialInfo m) => { m.offsetU = u; m.offsetV = v; }));
         }
 
         private GhostObjectInfo Get() { var i = new GhostObjectInfo(); GhostEngine.GhostEngine_GetObject(_id, ref i); return i; }
@@ -80,11 +238,158 @@ namespace GhostShell
         [Category("Transform"), DisplayName("Rotation (deg)")] public Vec3Edit Rotation { get; }
         [Category("Transform")] public Vec3Edit Scale { get; }
 
-        [Category("Material"), DisplayName("Color")]
-        public Color BaseColor
+        // ---- Material: edits go to the Target Face, or to every face when it is "All Faces" ----
+        private delegate void MatEdit(ref GhostMaterialInfo m);
+
+        private GhostMaterialInfo ReadMat()          // "All Faces" shows face 0's values
         {
-            get { var i = Get(); return GhostColorUtil.ToColor(i.r, i.g, i.b); }
-            set { var i = Get(); i.r = value.R / 255f; i.g = value.G / 255f; i.b = value.B / 255f; Set(i); }
+            var m = new GhostMaterialInfo();
+            GhostEngine.GhostEngine_GetMaterial(_id, Math.Max(GhostEngine.GhostEngine_GetTargetFace(), 0), ref m);
+            return m;
+        }
+
+        private void EditMat(MatEdit edit)            // changes one field and leaves each face's other settings alone
+        {
+            int face = GhostEngine.GhostEngine_GetTargetFace();
+            int count = GhostEngine.GhostEngine_GetFaceCount(_id);
+            int from = face < 0 ? 0 : face;
+            int to = face < 0 ? count - 1 : face;
+            for (int f = from; f <= to; f++)
+            {
+                var m = new GhostMaterialInfo();
+                if (GhostEngine.GhostEngine_GetMaterial(_id, f, ref m) == 0) continue;
+                edit(ref m);
+                GhostEngine.GhostEngine_SetMaterial(_id, f, ref m);
+            }
+        }
+
+        private string FaceName(int f)
+        {
+            var sb = new StringBuilder(64);
+            return GhostEngine.GhostEngine_GetFaceName(_id, f, sb, sb.Capacity) != 0 ? sb.ToString() : "All Faces";
+        }
+
+        internal List<string> FaceChoices()
+        {
+            var list = new List<string> { "All Faces" };
+            int n = GhostEngine.GhostEngine_GetFaceCount(_id);
+            for (int f = 0; f < n; f++) list.Add(FaceName(f));
+            return list;
+        }
+
+        [Category("Material"), DisplayName("Target Face")]
+        [TypeConverter(typeof(FaceChoiceConverter))]
+        public string TargetFace
+        {
+            get { int f = GhostEngine.GhostEngine_GetTargetFace(); return f < 0 ? "All Faces" : FaceName(f); }
+            set
+            {
+                int n = GhostEngine.GhostEngine_GetFaceCount(_id);
+                int face = -1;
+                for (int f = 0; f < n; f++) if (FaceName(f) == value) face = f;
+                GhostEngine.GhostEngine_SetTargetFace(face);
+            }
+        }
+
+        [Category("Material"), DisplayName("Texture")]
+        [TypeConverter(typeof(TextureChoiceConverter))]
+        public string Texture
+        {
+            get => GhostTextures.DisplayName(ReadMat().textureId);
+            set
+            {
+                int tex = (value == GhostTextures.ImportLabel) ? GhostTextures.ImportFromDisk()
+                                                               : GhostTextures.IdFromDisplay(value);
+                if (tex < 0) return;
+                EditMat((ref GhostMaterialInfo m) =>
+                {
+                    if (m.textureId == 0 && tex != 0) m.r = m.g = m.b = 1.0f;   // white tint so the image shows at full strength
+                    else if (tex == 0) m.r = m.g = m.b = 0.6f;   // back to the default grey
+                    m.textureId = tex;
+                });
+            }
+        }
+
+        [Category("Material"), DisplayName("Image Size")]
+        public string ImageSize => GhostTextures.SizeText(ReadMat().textureId);
+
+        [Category("Material"), DisplayName("Resize (max px)")]
+        [TypeConverter(typeof(ResizeConverter))]
+        public string Resize
+        {
+            get => GhostAssets.ResizeText(ReadMat().textureId);
+            set
+            {
+                int tex = ReadMat().textureId;
+                var a = GhostAssets.Get(tex);
+                if (a == null || a.Path == null) { System.Media.SystemSounds.Beep.Play(); return; }   // built-ins have no source file
+
+                if (!GhostAssets.TryParseSize(value, out int max))
+                {
+                    MessageBox.Show("Enter Original, or the longest side in pixels (1 - 4096).",
+                        "Resize", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+                try { GhostAssets.Resize(tex, max); }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Could not re-read the source image:\n{ex.Message}",
+                        "Resize failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+            }
+        }
+
+        [Category("Material"), DisplayName("Mapping")]
+        [TypeConverter(typeof(MapModeConverter))]
+        public string Mapping
+        {
+            get => MapModeConverter.Names[Math.Clamp(ReadMat().mapMode, 0, MapModeConverter.Names.Length - 1)];
+            set
+            {
+                int i = Array.IndexOf(MapModeConverter.Names, value);
+                if (i >= 0) EditMat((ref GhostMaterialInfo m) => m.mapMode = i);
+            }
+        }
+
+        [Category("Material")] public Vec2Edit Tiling { get; }
+        [Category("Material")] public Vec2Edit Offset { get; }
+
+        [Category("Material"), DisplayName("UV Rotation (deg)")]
+        public float UVRotation
+        {
+            get => ReadMat().rotationDeg;
+            set => EditMat((ref GhostMaterialInfo m) => m.rotationDeg = value);
+        }
+
+        [Category("Material")]
+        [TypeConverter(typeof(WrapConverter))]
+        public string Wrap
+        {
+            get => WrapConverter.Names[Math.Clamp(ReadMat().wrap, 0, 1)];
+            set
+            {
+                int i = Array.IndexOf(WrapConverter.Names, value);
+                if (i >= 0) EditMat((ref GhostMaterialInfo m) => m.wrap = i);
+            }
+        }
+
+        [Category("Material")]
+        [TypeConverter(typeof(FilterConverter))]
+        public string Filter
+        {
+            get => FilterConverter.Names[Math.Clamp(ReadMat().filter, 0, 1)];
+            set
+            {
+                int i = Array.IndexOf(FilterConverter.Names, value);
+                if (i >= 0) EditMat((ref GhostMaterialInfo m) => m.filter = i);
+            }
+        }
+
+        [Category("Material")]
+        public Color Tint
+        {
+            get { var m = ReadMat(); return GhostColorUtil.ToColor(m.r, m.g, m.b); }
+            set => EditMat((ref GhostMaterialInfo m) => { m.r = value.R / 255f; m.g = value.G / 255f; m.b = value.B / 255f; });
         }
     }
 
@@ -221,15 +526,11 @@ namespace GhostShell
         // -------------------------------------------------------
         public void Build()
         {
-            // ---- Bottom: asset browser placeholder ----
-            _bottom = new Panel { Dock = DockStyle.Bottom, Height = 140, BackColor = Bg };
-            _bottom.Controls.Add(new Label
-            {
-                Dock = DockStyle.Fill,
-                ForeColor = Color.Gray,
-                TextAlign = ContentAlignment.MiddleCenter,
-                Text = "Content Browser — mesh & asset imports (drag and drop) coming soon",
-            });
+           
+            // ---- Bottom: content browser ----
+            var browser = new GhostContentBrowser { Dock = DockStyle.Bottom, Height = 190 };
+            browser.ApplyRequested += ApplyTextureToSelection;
+            _bottom = browser;
 
             // ---- Left: palette ----
             _left = new Panel { Dock = DockStyle.Left, Width = 200, BackColor = Bg };
@@ -292,6 +593,9 @@ namespace GhostShell
                 CommandsBackColor = Bg,
                 CommandsForeColor = Fg,
             };
+            // Re-read every row after an edit, so "Image Size" and "Color" follow a texture change
+            _grid.PropertyValueChanged += (s, e) => _grid.Refresh();
+
             var splitter = new Splitter { Dock = DockStyle.Top, Height = 5, BackColor = Bg2 };
             _tree = new TreeView
             {
@@ -329,18 +633,9 @@ namespace GhostShell
 
             // ---- Viewport: drop target + keyboard focus ----
             _viewport.AllowDrop = true;
-            _viewport.DragEnter += (s, e) => e.Effect = DropPayload(e) != null ? DragDropEffects.Copy : DragDropEffects.None;
-            _viewport.DragOver += (s, e) => e.Effect = DropPayload(e) != null ? DragDropEffects.Copy : DragDropEffects.None;
-            _viewport.DragDrop += (s, e) =>
-            {
-                string? payload = DropPayload(e);
-                if (payload == null) return;
-                string[] p = payload.Split(':');
-                if (p.Length != 3 || !int.TryParse(p[2], out int type)) return;
-                Point pt = _viewport.PointToClient(new Point(e.X, e.Y));
-                Spawn(p[1] == "light", type, pt.X, pt.Y);
-                _viewport.Select();
-            };
+            _viewport.DragEnter += OnViewportDrag;
+            _viewport.DragOver += OnViewportDrag;
+            _viewport.DragDrop += OnViewportDrop;
             _viewport.MouseDown += (s, e) => _viewport.Select();
             _viewport.MouseEnter += (s, e) =>
             {
@@ -436,7 +731,63 @@ namespace GhostShell
             if (id == 0) System.Media.SystemSounds.Beep.Play();   // scene is full
             Sync();
         }
+        private void OnViewportDrag(object? sender, DragEventArgs e)
+        {
+            string? payload = DropPayload(e);
+            if (payload == null) { e.Effect = DragDropEffects.None; return; }
+            e.Effect = DragDropEffects.Copy;
 
+            if (payload.StartsWith("ghost:tex:"))
+            {
+                // The object under the cursor gets selected, so its orange tint shows where the drop will land
+                Point pt = _viewport.PointToClient(new Point(e.X, e.Y));
+                int id = GhostEngine.GhostEngine_PickObjectAt(pt.X, pt.Y, out _);
+                if (id == 0) e.Effect = DragDropEffects.None;
+                else if (id != GhostEngine.GhostEngine_GetSelected()) GhostEngine.GhostEngine_SelectEntity(id);
+
+                GhostEngine.GhostEngine_Tick();   // the idle render loop doesn't run during a drag, so draw a frame here
+            }
+        }
+
+        private void OnViewportDrop(object? sender, DragEventArgs e)
+        {
+            string? payload = DropPayload(e);
+            if (payload == null) return;
+            string[] p = payload.Split(':');
+            if (p.Length != 3 || !int.TryParse(p[2], out int value)) return;
+            Point pt = _viewport.PointToClient(new Point(e.X, e.Y));
+
+            if (p[1] == "tex")
+            {
+                int id = GhostEngine.GhostEngine_PickObjectAt(pt.X, pt.Y, out int face);
+                if (id != 0)
+                {
+                    GhostEngine.GhostEngine_SelectEntity(id);
+                    bool oneFace = (e.KeyState & 4) != 0 && face >= 0;          // Shift = only the face under the cursor
+                    GhostEngine.GhostEngine_SetTargetFace(oneFace ? face : -1);
+                    GhostTextures.Apply(id, oneFace ? face : -1, value);
+                    _grid.Refresh();
+                }
+            }
+            else
+            {
+                Spawn(p[1] == "light", value, pt.X, pt.Y);
+            }
+            _viewport.Select();
+        }
+
+        private void ApplyTextureToSelection(int tex)
+        {
+            int sel = GhostEngine.GhostEngine_GetSelected();
+            var o = new GhostObjectInfo();
+            if (sel == 0 || GhostEngine.GhostEngine_GetObject(sel, ref o) == 0)
+            {
+                System.Media.SystemSounds.Beep.Play();                         // nothing selected to apply to
+                return;
+            }
+            GhostTextures.Apply(sel, GhostEngine.GhostEngine_GetTargetFace(), tex);
+            _grid.Refresh();
+        }
         // -------------------------------------------------------
         //  Hierarchy / details sync
         // -------------------------------------------------------
@@ -532,7 +883,8 @@ namespace GhostShell
                 return (r, g, b, k);
             }
             var o = new GhostObjectInfo();
-            if (GhostEngine.GhostEngine_GetObject(id, ref o) != 0) return o;
+            if (GhostEngine.GhostEngine_GetObject(id, ref o) != 0)
+                return (o, GhostEngine.GhostEngine_GetTargetFace());   // face included, so the grid refreshes when it changes
             var l = new GhostLightInfo();
             if (GhostEngine.GhostEngine_GetLight(id, ref l) != 0) return l;
             return null;

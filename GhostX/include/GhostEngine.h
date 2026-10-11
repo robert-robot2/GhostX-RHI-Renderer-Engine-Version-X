@@ -28,7 +28,13 @@ struct GhostLightInfo
 };
 
 struct GhostEntityInfo { int id; int kind; int subtype; };   // kind: 0 object, 1 light
-
+struct GhostMaterialInfo
+{
+    int   textureId, mapMode, wrap, filter;
+    float tilingU, tilingV, offsetU, offsetV;
+    float rotationDeg;
+    float r, g, b;                     // tint
+};
 extern "C"
 {
     GHOST_API int  GhostEngine_Init(HWND hwnd, unsigned int width, unsigned int height);
@@ -59,4 +65,30 @@ extern "C"
     GHOST_API void GhostEngine_SetLight(const GhostLightInfo* in);
     GHOST_API void GhostEngine_GetAmbient(float* r, float* g, float* b, float* intensity);
     GHOST_API void GhostEngine_SetAmbient(float r, float g, float b, float intensity);
+    // ---- Textures ----
+// rgba = tightly packed 8-bit RGBA, top row first, max 4096x4096.
+// Returns the texture id (built in: 0 = white, 1 = checkerboard), or -1 on failure.
+    GHOST_API int GhostEngine_CreateTexture(const char* name, const unsigned char* rgba,
+        unsigned int width, unsigned int height);
+    // textureId 0 clears the texture. Returns 1 on success.
+    GHOST_API int GhostEngine_SetObjectTexture(int objectId, int textureId);
+    GHOST_API int GhostEngine_GetTextureCount();
+    // Returns 1 and fills name/size if the id exists
+    GHOST_API int GhostEngine_GetTextureInfo(int id, char* nameBuf, int nameSize,
+        unsigned int* width, unsigned int* height);
+    // Texture id currently on an object (0 = none)
+    GHOST_API int GhostEngine_GetObjectTexture(int objectId);
+    // ---- Faces / materials ----
+    GHOST_API int  GhostEngine_GetFaceCount(int objectId);
+    GHOST_API int  GhostEngine_GetFaceName(int objectId, int face, char* buf, int bufSize);
+    GHOST_API int  GhostEngine_GetMaterial(int objectId, int face, GhostMaterialInfo* out);     // face -1 = face 0
+    GHOST_API void GhostEngine_SetMaterial(int objectId, int face, const GhostMaterialInfo* in); // face -1 = every face
+    GHOST_API int  GhostEngine_GetTargetFace();                  // -1 = all faces
+    GHOST_API void GhostEngine_SetTargetFace(int face);
+    // Re-uploads pixels into an imported texture (id >= 3), keeping its id. Returns 1 on success.
+    GHOST_API int GhostEngine_ReplaceTexture(int id, const char* name, const unsigned char* rgba,
+        unsigned int width, unsigned int height);
+    // Nearest object under a client position (light icons ignored). Returns 0 if none.
+    // outFace = face under the cursor, or -1.
+    GHOST_API int GhostEngine_PickObjectAt(int x, int y, int* outFace);
 }

@@ -3,10 +3,61 @@
 #include "GhostMath.h"
 #include <vector>
 #include <string>
+#include <string.h>
 
 enum GhostMeshId { GHOST_MESH_CUBE = 0, GHOST_MESH_TRIANGLE, GHOST_MESH_SHIP, GHOST_MESH_COUNT };
 enum class GhostLightType : int { Directional = 0, Point = 1, RectArea = 2 };
 constexpr unsigned int GHOST_MAX_LIGHTS = 16;
+
+constexpr int GHOST_MAX_FACES = 6;
+
+struct GhostMaterial
+{
+    int   textureId = 0;                      // 0 = built-in white
+    int   mapMode = 0;                        // 0 Mesh UV, 1 Box, 2 Planar XY, 3 Planar XZ, 4 Planar YZ,
+    // 5 Cylindrical, 6 Spherical, 7 Cube Cross
+    int   wrap = 0;                           // 0 repeat, 1 clamp
+    int   filter = 0;                         // 0 linear, 1 point
+    float tiling[2] = { 1, 1 };
+    float offset[2] = { 0, 0 };
+    float rotationDeg = 0.0f;
+    float tint[3] = { 0.6f, 0.6f, 0.6f };     // grey by default
+};
+
+inline bool GhostMaterial_Equal(const GhostMaterial& a, const GhostMaterial& b)
+{
+    return memcmp(&a, &b, sizeof(GhostMaterial)) == 0;
+}
+
+// A face is a contiguous range of the mesh's index buffer
+struct GhostFaceDef { const char* name; unsigned int firstIndex, indexCount; };
+
+inline int GhostMesh_FaceCount(int meshId)
+{
+    switch (meshId) { case GHOST_MESH_TRIANGLE: return 1; default: return 6; }   // cube and ship: 6
+}
+
+inline const GhostFaceDef& GhostMesh_Face(int meshId, int face)
+{
+    static const GhostFaceDef cube[6] = {
+        { "Front", 0, 6 }, { "Back", 6, 6 }, { "Top", 12, 6 },
+        { "Bottom", 18, 6 }, { "Left", 24, 6 }, { "Right", 30, 6 } };
+    static const GhostFaceDef tri[1] = { { "Face", 0, 3 } };
+    static const GhostFaceDef ship[6] = {      // one triangle each; names are approximate
+        { "Hull Right", 0, 3 }, { "Hull Left", 3, 3 }, { "Hull Rear", 6, 3 },
+        { "Hull Bottom", 9, 3 }, { "Wing Right", 12, 3 }, { "Wing Left", 15, 3 } };
+
+    if (face < 0 || face >= GhostMesh_FaceCount(meshId)) face = 0;
+    switch (meshId) { case GHOST_MESH_TRIANGLE: return tri[face]; case GHOST_MESH_SHIP: return ship[face]; default: return cube[face]; }
+}
+
+
+struct GhostTextureInfo
+{
+    int          id = 0;           // doubles as the SRV slot index in the pipeline
+    std::string  name;
+    unsigned int width = 0, height = 0;
+};
 
 struct GhostObject
 {
@@ -16,7 +67,7 @@ struct GhostObject
     GhostVec3 position = { 0, 0, 0 };
     GhostVec3 rotationDeg = { 0, 0, 0 };
     GhostVec3 scale = { 1, 1, 1 };
-    float     color[3] = { 0.6f, 0.6f, 0.6f };   // grey by default
+    GhostMaterial faces[GHOST_MAX_FACES];        // one material per face (cube 6, triangle 1, ship 6)
     bool      useVertexColor = false;
 };
 
@@ -37,10 +88,12 @@ struct GhostScene
 {
     std::vector<GhostObject> objects;
     std::vector<GhostLight>  lights;
+    std::vector<GhostTextureInfo> textures;     // id 0 = White, id 1 = Checkerboard, then imports
     float        ambientColor[3] = { 1, 1, 1 };
     float        ambientIntensity = 0.15f;
     int          nextId = 1;          // ONE id space for objects and lights
     int          selectedId = 0;      // 0 = nothing selected
+    int          selectedFace = -1;   // -1 = all faces; always belongs to selectedId
     unsigned int version = 0;         // bumps on any structural change
 };
 

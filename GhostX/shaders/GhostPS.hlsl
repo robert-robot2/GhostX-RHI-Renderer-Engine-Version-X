@@ -17,6 +17,24 @@ cbuffer SceneBuffer : register(b1)
     Light  lights[MAX_LIGHTS];
 };
 
+Texture2D    gTexture : register(t0);
+SamplerState sLinWrap : register(s0);
+SamplerState sLinClamp : register(s1);
+SamplerState sPtWrap : register(s2);
+SamplerState sPtClamp : register(s3);
+
+cbuffer ObjectBuffer : register(b0)       // same layout as MVPBuffer in GhostVS.hlsl
+{
+    row_major float4x4 model;
+    row_major float4x4 view;
+    row_major float4x4 proj;
+    float4 baseColor;
+    float  useVertexColor;
+    float3 objPad;
+    float4 uvParams;                      // tilingU, tilingV, offsetU, offsetV
+    float4 mapParams;                     // mode, rotation (radians), wrap, filter
+};
+
 struct PSInput
 {
     float4 pos : SV_POSITION;
@@ -24,12 +42,108 @@ struct PSInput
     float2 uv : TEXCOORD0;
     float3 worldPos : TEXCOORD1;
     float3 worldNormal : TEXCOORD2;
+    float3 localPos : TEXCOORD3;
+    float3 localNormal : TEXCOORD4;
 };
 
 float RangeFalloff(float dist, float range)
 {
     float r = saturate(1.0f - pow(saturate(dist / max(range, 0.001f)), 4.0f));
     return (r * r) / (dist * dist + 1.0f);
+}
+
+static const float PI = 3.14159265f;
+static const float TWO_PI = 6.28318531f;
+
+// Per-face planar layout, upright and unmirrored when viewed from outside.
+// On the unit cube this is identical to the mesh UVs.
+float2 BoxUV(float3 p, float3 n)
+{
+    float3 a = abs(n);
+    if (a.x >= a.y && a.x >= a.z)                                  // +-X
+        return float2((n.x > 0.0f ? p.z : -p.z) + 0.5f, 0.5f - p.y);
+    if (a.y >= a.z)                                                // +-Y
+        return float2(p.x + 0.5f, n.y > 0.0f ? 0.5f - p.z : 0.5f + p.z);
+    return float2((n.z < 0.0f ? p.x : -p.x) + 0.5f, 0.5f - p.y);   // +-Z
+}
+
+// 4x3 horizontal cross:   .  Top .  .
+//                         Left Front Right Back
+//                         .  Bottom .  .
+float2 CrossCell(float3 n)
+{
+    float3 a = abs(n);
+    if (a.x >= a.y && a.x >= a.z) return n.x > 0.0f ? float2(2, 1) : float2(0, 1);
+    if (a.y >= a.z)               return n.y > 0.0f ? float2(1, 0) : float2(1, 2);
+    return n.z < 0.0f ? float2(1, 1) : float2(3, 1);
+}
+
+float2 Rot2(float2 v, float cs, float sn)
+{
+    return float2(cs * v.x - sn * v.y, sn * v.x + cs * v.y);
+}
+
+float4 SampleTex(float2 uv, float2 dx, float2 dy, int wrap, int filt)
+{
+    if (filt == 0)
+    {
+        if (wrap == 0) return gTexture.SampleGrad(sLinWrap, uv, dx, dy);
+        return                gTexture.SampleGrad(sLinClamp, uv, dx, dy);
+    }
+    if (wrap == 0) return gTexture.SampleGrad(sPtWrap, uv, dx, dy);
+    return                gTexture.SampleGrad(sPtClamp, uv, dx, dy);
+}
+
+float4 MappedTexel(PSInput input)
+{
+    int    mode = (int)(mapParams.x + 0.5f);
+    int    wrap = (int)(mapParams.z + 0.5f);
+    int    filt = (int)(mapParams.w + 0.5f);
+    float3 lp = input.localPos;
+    float3 ln = normalize(input.localNormal);
+
+    // ---- 1. projection -> raw uv ----
+    float2 raw = input.uv;
+    bool   seam = false;
+    if (mode == 2) raw = float2(lp.x + 0.5f, 0.5f - lp.y);       // planar XY (projects along Z)
+    else if (mode == 3) raw = float2(lp.x + 0.5f, 0.5f - lp.z);       // planar XZ (along Y)
+    else if (mode == 4) raw = float2(lp.z + 0.5f, 0.5f - lp.y);       // planar YZ (along X)
+    else if (mode == 5)                                               // cylindrical around Y
+    {
+        raw = float2(atan2(lp.x, lp.z) / TWO_PI + 0.5f, 0.5f - lp.y);
+        seam = true;
+    }
+    else if (mode == 6)                                               // spherical
+    {
+        float r = max(length(lp), 1e-5f);
+        raw = float2(atan2(lp.x, lp.z) / TWO_PI + 0.5f, acos(clamp(lp.y / r, -1.0f, 1.0f)) / PI);
+        seam = true;
+    }
+    else if (mode == 1 || mode == 7) raw = BoxUV(lp, ln);             // box / cube cross
+
+    // ---- 2. gradients (fixed across the wrap seam of cylindrical / spherical) ----
+    float2 rdx = ddx(raw), rdy = ddy(raw);
+    if (seam)
+    {
+        float2 alt = float2(frac(raw.x + 0.5f), raw.y);
+        float2 adx = ddx(alt), ady = ddy(alt);
+        if (abs(adx.x) + abs(ady.x) < abs(rdx.x) + abs(rdy.x)) { rdx.x = adx.x; rdy.x = ady.x; }
+    }
+
+    // ---- 3. tiling (about the center), rotation, offset ----
+    float cs = cos(mapParams.y), sn = sin(mapParams.y);
+    float2 uv = Rot2((raw - 0.5f) * uvParams.xy, cs, sn) + 0.5f + uvParams.zw;
+    float2 dx = Rot2(rdx * uvParams.xy, cs, sn);
+    float2 dy = Rot2(rdy * uvParams.xy, cs, sn);
+
+    // ---- 4. sample ----
+    if (mode == 7)                                                    // each face reads its own cell
+    {
+        float2 f = (wrap == 0) ? frac(uv) : saturate(uv);
+        float2 atlas = (CrossCell(ln) + f) / float2(4.0f, 3.0f);
+        return SampleTex(atlas, dx / float2(4.0f, 3.0f), dy / float2(4.0f, 3.0f), 1, filt);
+    }
+    return SampleTex(uv, dx, dy, wrap, filt);
 }
 
 float4 PSMain(PSInput input, bool isFront : SV_IsFrontFace) : SV_TARGET
@@ -39,7 +153,9 @@ float4 PSMain(PSInput input, bool isFront : SV_IsFrontFace) : SV_TARGET
     if (!isFront) N = -N;
 
     // Light in linear space, encode to gamma at the end
-    float3 albedo = pow(input.color.rgb, 2.2f);
+        // The texture view is sRGB, so the sample arrives already linear
+    float4 texel = MappedTexel(input);
+    float3 albedo = pow(input.color.rgb, 2.2f) * texel.rgb;
     float3 lit = ambientColor.rgb;
 
     for (uint i = 0; i < lightCount; i++)
@@ -83,6 +199,7 @@ float4 PSMain(PSInput input, bool isFront : SV_IsFrontFace) : SV_TARGET
     }
 
     float3 color = albedo * lit;
+    if (objPad.x > 1.5f) color += float3(0.25f, 0.12f, 0.0f);   // selected-face glow, visible even when unlit
     return float4(pow(saturate(color), 1.0f / 2.2f), input.color.a);
 }
 

@@ -26,7 +26,8 @@ public:
     ID3D12Device* GetDevice()  override;
     ID3D12GraphicsCommandList* GetCmdList() override;
     D3D12_CPU_DESCRIPTOR_HANDLE GetRTV()     override;
-
+    GhostResult ExecuteOneShot(
+        const std::function<void(ID3D12GraphicsCommandList*)>& record) override;
 private:
     void FlushGPU();
     void RebuildRTVs();
@@ -51,4 +52,6 @@ private:
     unsigned int                      m_frameIndex = 0;
 
     GhostColor m_clearColor = { 0.0f, 0.0f, 0.0f, 1.0f };
+    ComPtr<ID3D12CommandAllocator>    m_uploadAllocator;
+    ComPtr<ID3D12GraphicsCommandList> m_uploadList;
 };

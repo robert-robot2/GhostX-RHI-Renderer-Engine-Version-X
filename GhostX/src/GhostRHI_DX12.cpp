@@ -90,7 +90,13 @@ GhostResult GhostRHI_DX12::Init(HWND hwnd, unsigned int width, unsigned int heig
         0, D3D12_COMMAND_LIST_TYPE_DIRECT,
         m_cmdAllocator.Get(), nullptr, IID_PPV_ARGS(&m_cmdList));
     m_cmdList->Close();
-
+    // ---- One-shot upload allocator + list ----
+    m_device->CreateCommandAllocator(
+        D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&m_uploadAllocator));
+    m_device->CreateCommandList(
+        0, D3D12_COMMAND_LIST_TYPE_DIRECT,
+        m_uploadAllocator.Get(), nullptr, IID_PPV_ARGS(&m_uploadList));
+    m_uploadList->Close();
     // ---- Fence ----
     m_device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_fence));
     m_fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
@@ -110,6 +116,8 @@ GhostResult GhostRHI_DX12::Init(HWND hwnd, unsigned int width, unsigned int heig
 
     return GHOST_OK;
 }
+
+
 
 // ============================================================
 //  Shutdown  (was GhostShutdown)
@@ -240,7 +248,21 @@ D3D12_CPU_DESCRIPTOR_HANDLE GhostRHI_DX12::GetRTV()
     rtv.ptr += (SIZE_T)m_frameIndex * m_rtvDescSize;
     return rtv;
 }
+GhostResult GhostRHI_DX12::ExecuteOneShot(
+    const std::function<void(ID3D12GraphicsCommandList*)>& record)
+{
+    if (!m_uploadList) return GHOST_FAIL;
+    if (FAILED(m_uploadAllocator->Reset())) return GHOST_FAIL;
+    if (FAILED(m_uploadList->Reset(m_uploadAllocator.Get(), nullptr))) return GHOST_FAIL;
 
+    record(m_uploadList.Get());
+
+    if (FAILED(m_uploadList->Close())) return GHOST_FAIL;
+    ID3D12CommandList* lists[] = { m_uploadList.Get() };
+    m_cmdQueue->ExecuteCommandLists(1, lists);
+    FlushGPU();
+    return GHOST_OK;
+}
 // ============================================================
 //  Private helpers
 // ============================================================

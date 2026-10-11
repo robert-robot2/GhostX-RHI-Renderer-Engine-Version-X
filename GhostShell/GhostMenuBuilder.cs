@@ -46,7 +46,6 @@ namespace GhostShell
             // ---- File ----
             var fileMenu = new ToolStripMenuItem("File");
             fileMenu.DropDownItems.Add(MakeItem("Exit", (s, e) => OnExit?.Invoke(s, e)));
-
             // ---- Settings ----
             var settingsMenu = new ToolStripMenuItem("Settings");
             settingsMenu.DropDownItems.Add(MakeItem("Background Color...", (s, e) => OnBackgroundColor?.Invoke(s, e)));

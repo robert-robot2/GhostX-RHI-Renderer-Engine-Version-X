@@ -3,7 +3,7 @@
 #include <Windows.h>
 #include <d3d12.h>
 #include "../include/Ghost3D1.h"   // GhostResult, GhostColor
-
+#include <functional>
 // ---- Backend selector ----
 enum class RHIType
 {
@@ -52,6 +52,10 @@ public:
     virtual ID3D12Device* GetDevice() = 0;
     virtual ID3D12GraphicsCommandList* GetCmdList() = 0;
     virtual D3D12_CPU_DESCRIPTOR_HANDLE GetRTV() = 0;
+    // ---- One-shot GPU work (texture uploads etc.) ----
+// Records into a private list, submits, and waits for the GPU. Call between frames only.
+    virtual GhostResult ExecuteOneShot(
+        const std::function<void(ID3D12GraphicsCommandList*)>& record) = 0;
 };
 
 // ---- Factory ----

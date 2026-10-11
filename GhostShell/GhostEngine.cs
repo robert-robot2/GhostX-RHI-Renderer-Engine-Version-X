@@ -27,7 +27,14 @@ namespace GhostShell
 
     [StructLayout(LayoutKind.Sequential)]
     internal struct GhostEntityInfo { public int id, kind, subtype; }
-
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GhostMaterialInfo
+    {
+        public int textureId, mapMode, wrap, filter;
+        public float tilingU, tilingV, offsetU, offsetV;
+        public float rotationDeg;
+        public float r, g, b;
+    }
     internal static class GhostEngine
     {
         private const string DllName = "GhostX.dll";
@@ -88,6 +95,36 @@ namespace GhostShell
         public static extern void GhostEngine_GetAmbient(out float r, out float g, out float b, out float intensity);
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern void GhostEngine_SetAmbient(float r, float g, float b, float intensity);
+        // ---- Textures ----
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+        public static extern int GhostEngine_CreateTexture(string name, byte[] rgba, uint width, uint height);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_SetObjectTexture(int objectId, int textureId);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetTextureCount();
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+        public static extern int GhostEngine_GetTextureInfo(int id, StringBuilder name, int nameSize, out uint width, out uint height);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetObjectTexture(int objectId);
+
+        // ---- Faces / materials ----
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetFaceCount(int objectId);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+        public static extern int GhostEngine_GetFaceName(int objectId, int face, StringBuilder buf, int bufSize);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetMaterial(int objectId, int face, ref GhostMaterialInfo info);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetMaterial(int objectId, int face, ref GhostMaterialInfo info);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetTargetFace();
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetTargetFace(int face);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+        public static extern int GhostEngine_ReplaceTexture(int id, string name, byte[] rgba, uint width, uint height);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_PickObjectAt(int x, int y, out int face);
+
 
     }
 }

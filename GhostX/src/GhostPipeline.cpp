@@ -83,6 +83,25 @@ static unsigned short ShipIndices[] =
     4,5,6,  7,8,9,
 };
 
+
+bool GhostGetMeshCPU(int meshId, const GhostVertex** verts,
+    const unsigned short** indices, unsigned int* indexCount)
+{
+    switch (meshId)
+    {
+    case GHOST_MESH_CUBE:
+        *verts = CubeVertices; *indices = CubeIndices;
+        *indexCount = sizeof(CubeIndices) / sizeof(CubeIndices[0]); return true;
+    case GHOST_MESH_TRIANGLE:
+        *verts = TriangleVertices; *indices = TriangleIndices;
+        *indexCount = sizeof(TriangleIndices) / sizeof(TriangleIndices[0]); return true;
+    case GHOST_MESH_SHIP:
+        *verts = ShipVertices; *indices = ShipIndices;
+        *indexCount = sizeof(ShipIndices) / sizeof(ShipIndices[0]); return true;
+    }
+    return false;
+}
+
 // ============================================================
 //  Internal helpers  (no RHI dependency — take raw device)
 // ============================================================
@@ -168,6 +187,60 @@ static GhostResult CreateUploadBuffer(ID3D12Device* device,
     return FAILED(hr) ? GHOST_FAIL : GHOST_OK;
 }
 
+// ---- Mip chain (box filter in linear space, RGBA8 sRGB in/out) ----
+struct MipLevel { unsigned int w, h; std::vector<unsigned char> px; };
+
+static float SrgbToLinear(float c) { return c <= 0.04045f ? c / 12.92f : powf((c + 0.055f) / 1.055f, 2.4f); }
+static float LinearToSrgb(float c) { return c <= 0.0031308f ? c * 12.92f : 1.055f * powf(c, 1.0f / 2.4f) - 0.055f; }
+
+static void BuildMipChain(const unsigned char* rgba, unsigned int w, unsigned int h,
+    std::vector<MipLevel>& out)
+{
+    float lut[256];
+    for (int i = 0; i < 256; i++) lut[i] = SrgbToLinear(i / 255.0f);
+    unsigned char enc[4096];
+    for (int i = 0; i < 4096; i++)
+        enc[i] = (unsigned char)(LinearToSrgb(i / 4095.0f) * 255.0f + 0.5f);
+
+    out.clear();
+    MipLevel m0;
+    m0.w = w; m0.h = h;
+    m0.px.assign(rgba, rgba + (size_t)w * h * 4);
+    out.push_back(std::move(m0));
+
+    while (out.back().w > 1 || out.back().h > 1)
+    {
+        const MipLevel& s = out.back();
+        MipLevel d;
+        d.w = s.w > 1 ? s.w / 2 : 1;
+        d.h = s.h > 1 ? s.h / 2 : 1;
+        d.px.resize((size_t)d.w * d.h * 4);
+
+        for (unsigned int y = 0; y < d.h; y++)
+            for (unsigned int x = 0; x < d.w; x++)
+            {
+                unsigned int x0 = x * 2, y0 = y * 2;
+                unsigned int x1 = (x0 + 1 < s.w) ? x0 + 1 : s.w - 1;
+                unsigned int y1 = (y0 + 1 < s.h) ? y0 + 1 : s.h - 1;
+                const unsigned char* a = &s.px[((size_t)y0 * s.w + x0) * 4];
+                const unsigned char* b = &s.px[((size_t)y0 * s.w + x1) * 4];
+                const unsigned char* c = &s.px[((size_t)y1 * s.w + x0) * 4];
+                const unsigned char* e = &s.px[((size_t)y1 * s.w + x1) * 4];
+                unsigned char* o = &d.px[((size_t)y * d.w + x) * 4];
+
+                for (int k = 0; k < 3; k++)
+                {
+                    float v = (lut[a[k]] + lut[b[k]] + lut[c[k]] + lut[e[k]]) * 0.25f;
+                    v = v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
+                    o[k] = enc[(int)(v * 4095.0f + 0.5f)];
+                }
+                o[3] = (unsigned char)(((int)a[3] + b[3] + c[3] + e[3] + 2) / 4);
+            }
+        out.push_back(std::move(d));
+    }
+}
+
+
 static GhostResult UploadMesh(ID3D12Device* device, GhostMesh& m,
     const void* verts, unsigned int vbSize,
     const unsigned short* idx, unsigned int ibSize)
@@ -204,14 +277,21 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
     p->viewport = { 0, 0, (float)desc->width, (float)desc->height, 0.0f, 1.0f };
     p->scissorRect = { 0, 0, (long)desc->width,  (long)desc->height };
 
-    // ---- Root Signature — b0 (per-object MVP + color) ----
-    D3D12_ROOT_PARAMETER rp[2] = {};
+    // ---- Root Signature — b0 (per-object), b1 (scene), table t0 (texture), 4 static samplers ----
+    D3D12_DESCRIPTOR_RANGE srvRange = {};
+    srvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    srvRange.NumDescriptors = 1;
+    srvRange.BaseShaderRegister = 0;
+    srvRange.RegisterSpace = 0;
+    srvRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
-    // b0 — per-object CB, vertex shader only
+    D3D12_ROOT_PARAMETER rp[3] = {};
+
+    // b0 — per-object CB (transform + material), VS and PS.
     rp[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     rp[0].Descriptor.ShaderRegister = 0;
     rp[0].Descriptor.RegisterSpace = 0;
-    rp[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+    rp[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;     // was D3D12_SHADER_VISIBILITY_VERTEX
 
     // b1 — scene CB (ambient + lights), pixel shader only
     rp[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
@@ -219,9 +299,42 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
     rp[1].Descriptor.RegisterSpace = 0;
     rp[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
+    // t0 — the object's texture, pixel shader only
+    rp[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    rp[2].DescriptorTable.NumDescriptorRanges = 1;
+    rp[2].DescriptorTable.pDescriptorRanges = &srvRange;
+    rp[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+    // s0 linear/wrap, s1 linear/clamp, s2 point/wrap, s3 point/clamp
+    D3D12_STATIC_SAMPLER_DESC samplers[4] = {};
+    const D3D12_FILTER filters[4] = {
+        D3D12_FILTER_MIN_MAG_MIP_LINEAR, D3D12_FILTER_MIN_MAG_MIP_LINEAR,
+        D3D12_FILTER_MIN_MAG_MIP_POINT,  D3D12_FILTER_MIN_MAG_MIP_POINT };
+    const D3D12_TEXTURE_ADDRESS_MODE modes[4] = {
+        D3D12_TEXTURE_ADDRESS_MODE_WRAP, D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
+        D3D12_TEXTURE_ADDRESS_MODE_WRAP, D3D12_TEXTURE_ADDRESS_MODE_CLAMP };
+    for (int i = 0; i < 4; i++)
+    {
+        samplers[i].Filter = filters[i];
+        samplers[i].AddressU = modes[i];
+        samplers[i].AddressV = modes[i];
+        samplers[i].AddressW = modes[i];
+        samplers[i].MipLODBias = 0.0f;
+        samplers[i].MaxAnisotropy = 1;
+        samplers[i].ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
+        samplers[i].BorderColor = D3D12_STATIC_BORDER_COLOR_OPAQUE_BLACK;
+        samplers[i].MinLOD = 0.0f;
+        samplers[i].MaxLOD = D3D12_FLOAT32_MAX;
+        samplers[i].ShaderRegister = (UINT)i;
+        samplers[i].RegisterSpace = 0;
+        samplers[i].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    }
+
     D3D12_ROOT_SIGNATURE_DESC rsd = {};
-    rsd.NumParameters = 2;
+    rsd.NumParameters = 3;
     rsd.pParameters = rp;
+    rsd.NumStaticSamplers = 4;
+    rsd.pStaticSamplers = samplers;
     rsd.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 
     ComPtr<ID3DBlob> rsBlob, rsErr;
@@ -323,11 +436,11 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
 
     // ---- CBV Heap ----
     D3D12_DESCRIPTOR_HEAP_DESC hd = {};
-    hd.NumDescriptors = 1;
+    hd.NumDescriptors = GHOST_MAX_TEXTURES;
     hd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
     hd.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     device->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&p->cbvHeap));
-
+    p->srvIncrement = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     // ---- DSV Heap + Depth Buffer ----
     D3D12_DESCRIPTOR_HEAP_DESC dsvHeapDesc = {};
     dsvHeapDesc.NumDescriptors = 1;
@@ -340,10 +453,107 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
     *outPipeline = p;
     return GHOST_OK;
 }
+
 void GhostUpdateSceneCB(GhostPipeline* p, const GhostSceneCB* cb)
 {
     memcpy(p->sceneMappedData, cb, sizeof(GhostSceneCB));
 }
+
+int GhostCreateTexture(IGhostRHI* rhi, GhostPipeline* p,
+    const unsigned char* rgba, unsigned int width, unsigned int height, int replaceIndex)
+{
+    if (!rgba || width == 0 || height == 0) return -1;
+    if (replaceIndex < 0 && p->textureCount >= GHOST_MAX_TEXTURES) return -1;
+    if (replaceIndex >= (int)p->textureCount) return -1;
+
+    ID3D12Device* device = rhi->GetDevice();
+
+    std::vector<MipLevel> mips;
+    BuildMipChain(rgba, width, height, mips);
+    const UINT mipCount = (UINT)mips.size();
+
+    D3D12_HEAP_PROPERTIES hp = {};
+    hp.Type = D3D12_HEAP_TYPE_DEFAULT;
+
+    D3D12_RESOURCE_DESC td = {};
+    td.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    td.Width = width;
+    td.Height = height;
+    td.DepthOrArraySize = 1;
+    td.MipLevels = (UINT16)mipCount;
+    td.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;      // hardware decodes sRGB -> linear on sample
+    td.SampleDesc.Count = 1;
+    td.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+
+    ComPtr<ID3D12Resource> tex;
+    if (FAILED(device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &td,
+        D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&tex)))) return -1;
+
+    std::vector<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> fp(mipCount);
+    std::vector<UINT>   numRows(mipCount);
+    std::vector<UINT64> rowBytes(mipCount);
+    UINT64 total = 0;
+    device->GetCopyableFootprints(&td, 0, mipCount, 0, fp.data(), numRows.data(), rowBytes.data(), &total);
+
+    ComPtr<ID3D12Resource> upload;
+    if (CreateUploadBuffer(device, total, &upload) != GHOST_OK) return -1;
+
+    unsigned char* dst = nullptr;
+    D3D12_RANGE rr = { 0, 0 };
+    upload->Map(0, &rr, (void**)&dst);
+    for (UINT i = 0; i < mipCount; i++)
+        for (UINT row = 0; row < numRows[i]; row++)
+            memcpy(dst + fp[i].Offset + (UINT64)row * fp[i].Footprint.RowPitch,
+                mips[i].px.data() + (size_t)row * mips[i].w * 4,
+                (size_t)mips[i].w * 4);
+    upload->Unmap(0, nullptr);
+
+    ID3D12Resource* texPtr = tex.Get();
+    ID3D12Resource* upPtr = upload.Get();
+    GhostResult r = rhi->ExecuteOneShot([&](ID3D12GraphicsCommandList* cmd)
+        {
+            for (UINT i = 0; i < mipCount; i++)
+            {
+                D3D12_TEXTURE_COPY_LOCATION dl = {};
+                dl.pResource = texPtr;
+                dl.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+                dl.SubresourceIndex = i;
+
+                D3D12_TEXTURE_COPY_LOCATION sl = {};
+                sl.pResource = upPtr;
+                sl.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+                sl.PlacedFootprint = fp[i];
+
+                cmd->CopyTextureRegion(&dl, 0, 0, 0, &sl, nullptr);
+            }
+
+            D3D12_RESOURCE_BARRIER b = {};
+            b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+            b.Transition.pResource = texPtr;
+            b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+            b.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+            b.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+            cmd->ResourceBarrier(1, &b);
+        });
+    if (r != GHOST_OK) return -1;            // GPU is idle again here, so the upload buffer can go
+
+    const unsigned int idx = (replaceIndex >= 0) ? (unsigned int)replaceIndex : p->textureCount++;
+    p->textures[idx] = tex;       // when replacing, the old resource is released here; the GPU is idle
+
+    D3D12_SHADER_RESOURCE_VIEW_DESC sd = {};
+    sd.Format = td.Format;
+    sd.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    sd.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    sd.Texture2D.MipLevels = mipCount;
+
+    D3D12_CPU_DESCRIPTOR_HANDLE h = p->cbvHeap->GetCPUDescriptorHandleForHeapStart();
+    h.ptr += (SIZE_T)idx * p->srvIncrement;
+    device->CreateShaderResourceView(tex.Get(), &sd, h);
+
+    return (int)idx;
+}
+
+
 void GhostUpdateObjectCB(GhostPipeline* p, unsigned int slot, const GhostObjectCB* cb)
 {
     if (slot >= GHOST_MAX_OBJECTS) return;
@@ -373,7 +583,7 @@ void GhostDrawIcon(IGhostRHI* rhi, GhostPipeline* p, unsigned int slot)
     cmd->SetGraphicsRootConstantBufferView(
         0, p->constantBuffer->GetGPUVirtualAddress() + slot * GHOST_OBJECT_CB_STRIDE);
     cmd->SetGraphicsRootConstantBufferView(1, p->sceneBuffer->GetGPUVirtualAddress());
-
+    cmd->SetGraphicsRootDescriptorTable(2, p->cbvHeap->GetGPUDescriptorHandleForHeapStart());
     D3D12_CPU_DESCRIPTOR_HANDLE rtv = rhi->GetRTV();
     D3D12_CPU_DESCRIPTOR_HANDLE dsv = p->dsvHeap->GetCPUDescriptorHandleForHeapStart();
     cmd->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
@@ -381,7 +591,9 @@ void GhostDrawIcon(IGhostRHI* rhi, GhostPipeline* p, unsigned int slot)
     cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     cmd->DrawInstanced(6, 1, 0, 0);       // one quad, corners generated from SV_VertexID
 }
-void GhostDrawMesh(IGhostRHI* rhi, GhostPipeline* p, int meshId, unsigned int slot)
+
+void GhostDrawMesh(IGhostRHI* rhi, GhostPipeline* p, int meshId, unsigned int slot,
+    unsigned int textureIndex, unsigned int firstIndex, unsigned int indexCount)
 {
     if (meshId < 0 || meshId >= GHOST_MESH_COUNT || slot >= GHOST_MAX_OBJECTS) return;
     const GhostMesh& m = p->meshes[meshId];
@@ -394,6 +606,10 @@ void GhostDrawMesh(IGhostRHI* rhi, GhostPipeline* p, int meshId, unsigned int sl
     cmd->SetGraphicsRootConstantBufferView(
         0, p->constantBuffer->GetGPUVirtualAddress() + slot * GHOST_OBJECT_CB_STRIDE);
     cmd->SetGraphicsRootConstantBufferView(1, p->sceneBuffer->GetGPUVirtualAddress());
+    if (textureIndex >= p->textureCount) textureIndex = 0;
+    D3D12_GPU_DESCRIPTOR_HANDLE srv = p->cbvHeap->GetGPUDescriptorHandleForHeapStart();
+    srv.ptr += (UINT64)textureIndex * p->srvIncrement;
+    cmd->SetGraphicsRootDescriptorTable(2, srv);
     D3D12_CPU_DESCRIPTOR_HANDLE rtv = rhi->GetRTV();
     D3D12_CPU_DESCRIPTOR_HANDLE dsv = p->dsvHeap->GetCPUDescriptorHandleForHeapStart();
     cmd->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
@@ -401,7 +617,7 @@ void GhostDrawMesh(IGhostRHI* rhi, GhostPipeline* p, int meshId, unsigned int sl
     cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     cmd->IASetVertexBuffers(0, 1, &m.vbView);
     cmd->IASetIndexBuffer(&m.ibView);
-    cmd->DrawIndexedInstanced(m.indexCount, 1, 0, 0, 0);
+    cmd->DrawIndexedInstanced(indexCount ? indexCount : m.indexCount, 1, firstIndex, 0, 0);
 }
 
 

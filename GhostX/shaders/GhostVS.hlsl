@@ -23,6 +23,8 @@ struct PSInput
     float2 uv : TEXCOORD0;
     float3 worldPos : TEXCOORD1;
     float3 worldNormal : TEXCOORD2;
+    float3 localPos : TEXCOORD3;
+    float3 localNormal : TEXCOORD4;
 };
 
 PSInput VSMain(VSInput input)
@@ -34,9 +36,17 @@ PSInput VSMain(VSInput input)
     output.pos = mul(proj, viewPos);
     output.worldPos = worldPos.xyz;
     output.worldNormal = mul(model, float4(input.normal, 0.0f)).xyz;
+    // Object-local position scaled by the object's scale, so planar/box projections keep a
+// constant texel size when you scale the object
+    float3 sc = float3(length(float3(model[0][0], model[1][0], model[2][0])),
+        length(float3(model[0][1], model[1][1], model[2][1])),
+        length(float3(model[0][2], model[1][2], model[2][2])));
+    output.localPos = input.pos * sc;
+    output.localNormal = input.normal;
     output.color = (useVertexColor > 0.5f) ? input.color : float4(baseColor.rgb, 1.0f);
     if (padObj.x > 0.5f)
-        output.color.rgb = lerp(output.color.rgb, float3(1.0f, 0.6f, 0.1f), 0.35f);
+        output.color.rgb = lerp(output.color.rgb, float3(1.0f, 0.6f, 0.1f),
+            padObj.x > 1.5f ? 0.6f : 0.35f);
     // Pass UV through for 1.5
     output.uv = input.uv;
 

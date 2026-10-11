@@ -15,15 +15,18 @@ struct GhostVertex {
     float nx, ny, nz;    // NORMAL
     float u, v;          // TEXCOORD
 };
-struct GhostObjectCB            // matches cbuffer MVPBuffer in GhostVS.hlsl
+struct GhostObjectCB            // matches cbuffer MVPBuffer (VS) and ObjectBuffer (PS), both at b0
 {
     GhostMat4 model;
     GhostMat4 view;
     GhostMat4 proj;
-    float     color[4];
+    float     color[4];         // material tint (rgb)
     float     useVertexColor;
-    float     pad[3];
-};                              // 224 bytes, padded to 256 in the buffer
+    float     pad[3];           // pad[0] = selected tint (VS)
+    float     uvParams[4];      // tilingU, tilingV, offsetU, offsetV
+    float     mapParams[4];     // mode, rotation (radians), wrap, filter
+};
+static_assert(sizeof(GhostObjectCB) == 256, "GhostObjectCB layout must match the HLSL cbuffer");                             // 224 bytes, padded to 256 in the buffer
 struct GhostGPULight                // matches struct Light in GhostPS.hlsl
 {
     float posRange[4];              // xyz position, w range
@@ -41,9 +44,17 @@ struct GhostSceneCB                 // matches cbuffer SceneBuffer (b1)
     GhostGPULight lights[GHOST_MAX_LIGHTS];
 };                                  // 32 + 16*80 = 1312 bytes
 
+
+// does this line get deleted as well?
 constexpr unsigned long long GHOST_SCENE_CB_SIZE = (sizeof(GhostSceneCB) + 255) & ~255ULL;
-constexpr unsigned int       GHOST_MAX_OBJECTS = 256;
-constexpr unsigned long long GHOST_OBJECT_CB_STRIDE = (sizeof(GhostObjectCB) + 255) & ~255ULL;
+
+
+constexpr unsigned int       GHOST_MAX_OBJECTS = 1024;
+constexpr unsigned long long GHOST_OBJECT_CB_STRIDE = 512;     // room for the Section B material block
+static_assert(sizeof(GhostObjectCB) <= GHOST_OBJECT_CB_STRIDE, "GhostObjectCB too large");
+
+constexpr unsigned int       GHOST_MAX_TEXTURES = 256;
+
 
 struct GhostMesh
 {
@@ -64,6 +75,10 @@ struct GhostPipeline
     ComPtr<ID3D12Resource>       constantBuffer;
     ComPtr<ID3D12DescriptorHeap> cbvHeap;
     void* cbvMappedData = nullptr;
+    // Textures
+    ComPtr<ID3D12Resource> textures[GHOST_MAX_TEXTURES];
+    unsigned int           textureCount = 0;
+    unsigned int           srvIncrement = 0;
     // Scene Buffer
     ComPtr<ID3D12Resource> sceneBuffer;
     void* sceneMappedData = nullptr;
@@ -83,10 +98,21 @@ struct GhostPipelineDesc { unsigned int width = 1280; unsigned int height = 720;
 GhostResult GhostPipelineCreate(IGhostRHI* rhi, const GhostPipelineDesc* desc, GhostPipeline** outPipeline);
 void        GhostPipelineDestroy(GhostPipeline* pipeline);
 
+// CPU-side mesh data (picking only). Returns false for an unknown mesh id.
+bool GhostGetMeshCPU(int meshId, const GhostVertex** verts,
+    const unsigned short** indices, unsigned int* indexCount);
+
 GhostResult GhostUploadMeshes(IGhostRHI* rhi, GhostPipeline* pipeline);
 void GhostUpdateObjectCB(GhostPipeline* pipeline, unsigned int slot, const GhostObjectCB* cb);
 void GhostUpdateSceneCB(GhostPipeline* pipeline, const GhostSceneCB* cb);
-void GhostDrawMesh(IGhostRHI* rhi, GhostPipeline* pipeline, int meshId, unsigned int slot);
+// rgba = tightly packed RGBA8, top row first. Builds mips, uploads, creates the SRV. Returns texture id or -1.
+// replaceIndex >= 0 re-uploads into that existing slot (same id) instead of adding a new texture
+int GhostCreateTexture(IGhostRHI* rhi, GhostPipeline* pipeline,
+    const unsigned char* rgba, unsigned int width, unsigned int height, int replaceIndex = -1);
+
+// indexCount 0 = whole mesh; otherwise draws indices [firstIndex, firstIndex + indexCount)
+void GhostDrawMesh(IGhostRHI* rhi, GhostPipeline* pipeline, int meshId, unsigned int slot,
+    unsigned int textureIndex = 0, unsigned int firstIndex = 0, unsigned int indexCount = 0);
 
 void GhostDrawIcon(IGhostRHI* rhi, GhostPipeline* pipeline, unsigned int slot);
 

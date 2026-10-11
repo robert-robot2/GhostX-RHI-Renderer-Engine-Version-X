@@ -36,16 +36,37 @@ static bool       g_dragging = false;
 static int        g_dragId = 0;
 static GhostVec3  g_dragOffset;
 static GhostVec3  g_dragPlanePoint;
+static GhostObject* FindObject(int id);
+static int          CurrentFace();
+
+
 
 static const float ICON_HALF_PX = 18.0f;
 static const float ICON_PICK_PX = ICON_HALF_PX + 4.0f;
 // the last 2 * GHOST_MAX_LIGHTS constant-buffer slots are reserved for light icons + arrows
 static const unsigned int MAX_SCENE_OBJECTS = GHOST_MAX_OBJECTS - 2 * GHOST_MAX_LIGHTS;
-
+// worst case an object needs one draw per face
+static const unsigned int MAX_SCENE_OBJECT_COUNT = MAX_SCENE_OBJECTS / GHOST_MAX_FACES;
 // local-space bounds of each mesh (picking only)
 static const GhostVec3 kMeshMin[GHOST_MESH_COUNT] = { { -0.5f, -0.5f, -0.5f }, { -0.5f, 0.0f, -0.05f }, { -3.2f, -1.0f, -3.0f } };
 static const GhostVec3 kMeshMax[GHOST_MESH_COUNT] = { {  0.5f,  0.5f,  0.5f }, {  0.5f, 1.0f,  0.05f }, {  3.2f,  3.0f, 11.0f } };
 static GhostColor g_clearColor = { 0.0f, 0.0f, 0.0f, 1.0f };
+
+// Creates the GPU texture and records it in the scene's registry (id == pipeline slot)
+static int RegisterTexture(const char* name, const unsigned char* rgba,
+    unsigned int w, unsigned int h)
+{
+    if (!g_rhi || !g_pipeline) return -1;
+    int idx = GhostCreateTexture(g_rhi, g_pipeline, rgba, w, h);
+    if (idx < 0) return -1;
+    GhostTextureInfo t;
+    t.id = idx;
+    t.name = name ? name : "Texture";
+    t.width = w;
+    t.height = h;
+    g_scene.textures.push_back(t);
+    return idx;
+}
 
 void GhostEngine_SetClearColor(float r, float g, float b)
 {
@@ -68,6 +89,54 @@ int GhostEngine_Init(HWND hwnd, unsigned int width, unsigned int height)
     // these are thin wrappers, no D3D12 types leak into Engine.
     if (GhostPipelineCreate(g_rhi, &pd, &g_pipeline) != GHOST_OK) return -1;
     if (GhostUploadMeshes(g_rhi, g_pipeline) != GHOST_OK) return -1;
+
+    // ---- Built-in textures: id 0 = white (untextured draws), id 1 = checkerboard (UV debugging) ----
+    {
+        const unsigned char white[4] = { 255, 255, 255, 255 };
+        if (RegisterTexture("White", white, 1, 1) != 0) return -1;
+
+        std::vector<unsigned char> checker(256 * 256 * 4);
+        for (int y = 0; y < 256; y++)
+            for (int x = 0; x < 256; x++)
+            {
+                bool light = (((x / 32) + (y / 32)) % 2) == 0;
+                unsigned char v = light ? 230 : 70;
+                unsigned char r = v, g = v, b = v;
+                if (x < 32 && y < 32) { r = 255; g = 140; b = 40; }   // orange top-left cell = orientation marker
+                unsigned char* px = &checker[((size_t)y * 256 + x) * 4];
+                px[0] = r; px[1] = g; px[2] = b; px[3] = 255;
+            }
+        if (RegisterTexture("Checkerboard", checker.data(), 256, 256) != 1) return -1;
+        // id 2 = "Cube Cross Test": a 4x3 cell layout, one color per face, orange marker = top-left of each cell
+        const int CW = 128, TW = CW * 4, TH = CW * 3;
+        std::vector<unsigned char> cross((size_t)TW * TH * 4);
+        struct Cell { int cx, cy; unsigned char r, g, b; };
+        const Cell cells[6] = {
+            { 1, 0,  60, 180,  75 },   // Top    green
+            { 0, 1,  60, 100, 220 },   // Left   blue
+            { 1, 1, 220,  60,  60 },   // Front  red
+            { 2, 1, 230, 200,  50 },   // Right  yellow
+            { 3, 1, 150,  70, 200 },   // Back   purple
+            { 1, 2,  50, 200, 210 },   // Bottom cyan
+        };
+        for (int y = 0; y < TH; y++)
+            for (int x = 0; x < TW; x++)
+            {
+                unsigned char r = 40, g = 40, b = 40;               // unused cells
+                int cellX = x / CW, cellY = y / CW, lx = x % CW, ly = y % CW;
+                for (const Cell& c : cells)
+                    if (c.cx == cellX && c.cy == cellY)
+                    {
+                        r = c.r; g = c.g; b = c.b;
+                        if (lx < 4 || ly < 4 || lx >= CW - 4 || ly >= CW - 4) { r /= 2; g /= 2; b /= 2; }
+                        if (lx < 24 && ly < 24) { r = 255; g = 140; b = 40; }
+                    }
+                unsigned char* px = &cross[((size_t)y * TW + x) * 4];
+                px[0] = r; px[1] = g; px[2] = b; px[3] = 255;
+            }
+        if (RegisterTexture("Cube Cross Test", cross.data(), TW, TH) != 2) return -1;
+
+    }
 
     /*
     // ---- TEMP seed (removed in section C) so the checkpoint has something to see ----
@@ -268,7 +337,67 @@ static int PickAt(int sx, int sy)
     }
     return bestId;
 }
+// Moller-Trumbore. The ray is in the object's local space; t is in the same units as the
+// world ray, because the local ray is an affine transform of it.
+static bool RayTriangle(const GhostVec3& o, const GhostVec3& d,
+    const GhostVec3& a, const GhostVec3& b, const GhostVec3& c, float& t)
+{
+    GhostVec3 e1 = b - a, e2 = c - a;
+    GhostVec3 p = d.Cross(e2);
+    float det = e1.Dot(p);
+    if (fabsf(det) < 1e-9f) return false;            // parallel or degenerate
+    float inv = 1.0f / det;
+    GhostVec3 s = o - a;
+    float u = s.Dot(p) * inv;
+    if (u < 0.0f || u > 1.0f) return false;
+    GhostVec3 q = s.Cross(e1);
+    float v = d.Dot(q) * inv;
+    if (v < 0.0f || u + v > 1.0f) return false;
+    t = e2.Dot(q) * inv;
+    return t > 0.0f;
+}
 
+// Exact face under a screen position (nearest triangle, double-sided). -1 = none.
+static int PickFace(const GhostObject& ob, int sx, int sy)
+{
+    GhostVec3 o, d;
+    if (!ScreenRay(sx, sy, o, d)) return -1;
+
+    GhostMat4 inv = ObjectInverse(ob);
+    GhostVec3 lo = XformPoint(inv, o, 1.0f);
+    GhostVec3 ld = XformPoint(inv, d, 0.0f);
+
+    const GhostVertex* v = nullptr;
+    const unsigned short* idx = nullptr;
+    unsigned int count = 0;
+    if (!GhostGetMeshCPU(ob.meshId, &v, &idx, &count)) return -1;
+
+    float bestT = 1e30f;
+    int   bestTri = -1;
+    for (unsigned int i = 0; i + 2 < count; i += 3)
+    {
+        const GhostVertex& a = v[idx[i]];
+        const GhostVertex& b = v[idx[i + 1]];
+        const GhostVertex& c = v[idx[i + 2]];
+        float t;
+        if (RayTriangle(lo, ld, GhostVec3(a.x, a.y, a.z), GhostVec3(b.x, b.y, b.z),
+            GhostVec3(c.x, c.y, c.z), t) && t < bestT)
+        {
+            bestT = t;
+            bestTri = (int)i;
+        }
+    }
+    if (bestTri < 0) return -1;
+
+    const int faces = GhostMesh_FaceCount(ob.meshId);
+    for (int f = 0; f < faces; f++)
+    {
+        const GhostFaceDef& def = GhostMesh_Face(ob.meshId, f);
+        if ((unsigned int)bestTri >= def.firstIndex && (unsigned int)bestTri < def.firstIndex + def.indexCount)
+            return f;
+    }
+    return -1;
+}
 // Ground-plane (y = 0) hit under a screen position, or a point 5 units ahead if the ray misses
 static GhostVec3 SpawnPoint(int sx, int sy)
 {
@@ -310,6 +439,22 @@ void GhostEngine_MouseDown(int x, int y, int button)
     if (button != 0 || g_looking || !g_haveCam) return;
 
     int id = PickAt(x, y);
+
+    // Shift+click on an object: select it and pick the face under the cursor. No drag.
+    // Shift+click on the face that is already targeted goes back to "All Faces".
+    if ((GetAsyncKeyState(VK_SHIFT) & 0x8000) && id != 0)
+    {
+        if (GhostObject* ob = FindObject(id))
+        {
+            g_scene.selectedId = id;
+            CurrentFace();                         // re-syncs the owner, so a previous object's face never leaks over
+            int face = PickFace(*ob, x, y);
+            if (face >= 0)
+                g_scene.selectedFace = (g_scene.selectedFace == face) ? -1 : face;
+            g_dragging = false;
+            return;
+        }
+    }
     g_scene.selectedId = id;
     g_dragging = false;
     if (id == 0) return;
@@ -354,7 +499,7 @@ void GhostEngine_MouseLeave() { g_hoverId = 0; }
 // ============================================================
 int GhostEngine_AddObject(int meshId, int sx, int sy)
 {
-    if (g_scene.objects.size() >= MAX_SCENE_OBJECTS) return 0;
+    if (g_scene.objects.size() >= MAX_SCENE_OBJECT_COUNT) return 0;
     GhostObject* o = GhostScene_AddObject(g_scene, meshId);
     if (!o) return 0;
 
@@ -423,7 +568,7 @@ int GhostEngine_GetObject(int id, GhostObjectInfo* out)
                      o.position.x, o.position.y, o.position.z,
                      o.rotationDeg.x, o.rotationDeg.y, o.rotationDeg.z,
                      o.scale.x, o.scale.y, o.scale.z,
-                     o.color[0], o.color[1], o.color[2] };
+                     o.faces[0].tint[0], o.faces[0].tint[1], o.faces[0].tint[2] };
             return 1;
         }
     return 0;
@@ -439,9 +584,6 @@ void GhostEngine_SetObject(const GhostObjectInfo* in)
             o.position = { in->px, in->py, in->pz };
             o.rotationDeg = { in->rx, in->ry, in->rz };
             o.scale = { sc(in->sx), sc(in->sy), sc(in->sz) };
-            if (o.color[0] != in->r || o.color[1] != in->g || o.color[2] != in->b)
-                o.useVertexColor = false;              // editing the color switches off vertex colors
-            o.color[0] = in->r; o.color[1] = in->g; o.color[2] = in->b;
             return;
         }
 }
@@ -492,6 +634,63 @@ void GhostEngine_SetAmbient(float r, float g, float b, float intensity)
     g_scene.ambientColor[0] = r; g_scene.ambientColor[1] = g; g_scene.ambientColor[2] = b;
     g_scene.ambientIntensity = intensity < 0.0f ? 0.0f : intensity;
 }
+static GhostObject* FindObject(int id)
+{
+    for (GhostObject& o : g_scene.objects) if (o.id == id) return &o;
+    return nullptr;
+}
+
+// The target face belongs to the selected object, so it resets whenever the selection changes
+static int g_faceOwner = 0;
+static int CurrentFace()
+{
+    if (g_faceOwner != g_scene.selectedId) { g_faceOwner = g_scene.selectedId; g_scene.selectedFace = -1; }
+    return g_scene.selectedFace;
+}
+// ============================================================
+//  Exported: textures
+// ============================================================
+int GhostEngine_CreateTexture(const char* name, const unsigned char* rgba,
+    unsigned int width, unsigned int height)
+{
+    if (!rgba || width == 0 || height == 0 || width > 4096 || height > 4096) return -1;
+    return RegisterTexture(name, rgba, width, height);
+}
+
+int GhostEngine_SetObjectTexture(int objectId, int textureId)
+{
+    if (textureId < 0 || textureId >= (int)g_scene.textures.size()) return 0;
+    GhostObject* o = FindObject(objectId);
+    if (!o) return 0;
+    for (GhostMaterial& m : o->faces)
+    {
+        m.textureId = textureId;
+        m.tint[0] = m.tint[1] = m.tint[2] = (textureId != 0) ? 1.0f : 0.6f;
+    }
+    o->useVertexColor = false;
+    return 1;
+}
+
+int GhostEngine_GetObjectTexture(int objectId)
+{
+    GhostObject* o = FindObject(objectId);
+    return o ? o->faces[0].textureId : 0;
+}
+
+int GhostEngine_GetTextureCount() { return (int)g_scene.textures.size(); }
+
+int GhostEngine_GetTextureInfo(int id, char* nameBuf, int nameSize,
+    unsigned int* width, unsigned int* height)
+{
+    if (id < 0 || id >= (int)g_scene.textures.size()) return 0;
+    const GhostTextureInfo& t = g_scene.textures[id];
+    if (nameBuf && nameSize > 0) strncpy_s(nameBuf, nameSize, t.name.c_str(), _TRUNCATE);
+    if (width)  *width = t.width;
+    if (height) *height = t.height;
+    return 1;
+}
+
+
 
 void GhostEngine_Tick()
 {
@@ -573,23 +772,45 @@ void GhostEngine_Tick()
     GhostSceneCB sceneCB;
     BuildSceneCB(g_scene, sceneCB);
     GhostUpdateSceneCB(g_pipeline, &sceneCB);
-    // ---- Draw scene objects ----
+
+    // ---- Draw scene objects (one draw per run of faces that share a material) ----
+    const float deg2rad = GHOST_PI / 180.0f;
     unsigned int slot = 0;
     for (const GhostObject& o : g_scene.objects)
     {
-        if (slot >= MAX_SCENE_OBJECTS) break;
+        const int       faceCount = GhostMesh_FaceCount(o.meshId);
+        const GhostMat4 model = GhostObjectModel(o);
+        const int hl = (o.id == g_scene.selectedId) ? CurrentFace() : -1;   // face to highlight
+        int f = 0;
+        while (f < faceCount && slot < MAX_SCENE_OBJECTS)
+        {
+            int g = f + 1;
+            while (g < faceCount && GhostMaterial_Equal(o.faces[g], o.faces[f]) && ((g == hl) == (f == hl))) g++;
 
-        GhostObjectCB cb = {};
-        cb.model = GhostObjectModel(o);
-        cb.view = view;
-        cb.proj = proj;
-        cb.color[0] = o.color[0]; cb.color[1] = o.color[1];
-        cb.color[2] = o.color[2]; cb.color[3] = 1.0f;
-        cb.useVertexColor = o.useVertexColor ? 1.0f : 0.0f;
-        cb.pad[0] = (o.id == g_scene.selectedId) ? 1.0f : 0.0f;    // selection tint (VS)
-        GhostUpdateObjectCB(g_pipeline, slot, &cb);
-        GhostDrawMesh(g_rhi, g_pipeline, o.meshId, slot);
-        slot++;
+            const GhostMaterial& m = o.faces[f];
+            const GhostFaceDef& a = GhostMesh_Face(o.meshId, f);
+            const GhostFaceDef& b = GhostMesh_Face(o.meshId, g - 1);
+
+            GhostObjectCB cb = {};
+            cb.model = model;
+            cb.view = view;
+            cb.proj = proj;
+            cb.color[0] = m.tint[0]; cb.color[1] = m.tint[1]; cb.color[2] = m.tint[2]; cb.color[3] = 1.0f;
+            cb.useVertexColor = o.useVertexColor ? 1.0f : 0.0f;
+            cb.pad[0] = (o.id == g_scene.selectedId) ? ((f == hl) ? 2.0f : 1.0f) : 0.0f;   // 1 = selected, 2 = selected face
+            cb.uvParams[0] = m.tiling[0]; cb.uvParams[1] = m.tiling[1];
+            cb.uvParams[2] = m.offset[0]; cb.uvParams[3] = m.offset[1];
+            cb.mapParams[0] = (float)m.mapMode;
+            cb.mapParams[1] = m.rotationDeg * deg2rad;
+            cb.mapParams[2] = (float)m.wrap;
+            cb.mapParams[3] = (float)m.filter;
+
+            GhostUpdateObjectCB(g_pipeline, slot, &cb);
+            GhostDrawMesh(g_rhi, g_pipeline, o.meshId, slot, (unsigned int)m.textureId,
+                a.firstIndex, b.firstIndex + b.indexCount - a.firstIndex);
+            slot++;
+            f = g;
+        }
     }
     // ---- Light icons (unlit, always on top) ----
     for (const GhostLight& l : g_scene.lights)
@@ -625,4 +846,118 @@ void GhostEngine_Shutdown()
         delete g_rhi;
         g_rhi = nullptr;
     }
+}
+
+// ============================================================
+//  Exported: faces / materials
+// ============================================================
+int GhostEngine_GetFaceCount(int objectId)
+{
+    GhostObject* o = FindObject(objectId);
+    return o ? GhostMesh_FaceCount(o->meshId) : 0;
+}
+
+int GhostEngine_GetFaceName(int objectId, int face, char* buf, int bufSize)
+{
+    GhostObject* o = FindObject(objectId);
+    if (!o || !buf || bufSize <= 0 || face < 0 || face >= GhostMesh_FaceCount(o->meshId)) return 0;
+    strncpy_s(buf, bufSize, GhostMesh_Face(o->meshId, face).name, _TRUNCATE);
+    return 1;
+}
+
+int GhostEngine_GetMaterial(int objectId, int face, GhostMaterialInfo* out)
+{
+    GhostObject* o = FindObject(objectId);
+    if (!o || !out) return 0;
+    if (face < 0) face = 0;
+    if (face >= GhostMesh_FaceCount(o->meshId)) return 0;
+    const GhostMaterial& m = o->faces[face];
+    *out = { m.textureId, m.mapMode, m.wrap, m.filter,
+             m.tiling[0], m.tiling[1], m.offset[0], m.offset[1], m.rotationDeg,
+             m.tint[0], m.tint[1], m.tint[2] };
+    return 1;
+}
+
+void GhostEngine_SetMaterial(int objectId, int face, const GhostMaterialInfo* in)
+{
+    GhostObject* o = FindObject(objectId);
+    if (!o || !in) return;
+    const int count = GhostMesh_FaceCount(o->meshId);
+    if (face >= count) return;
+
+    auto nz = [](float v) { return fabsf(v) < 0.001f ? (v < 0.0f ? -0.001f : 0.001f) : v; };
+    auto c01 = [](float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); };
+
+    GhostMaterial m;
+    m.textureId = (in->textureId >= 0 && in->textureId < (int)g_scene.textures.size()) ? in->textureId : 0;
+    m.mapMode = in->mapMode < 0 ? 0 : (in->mapMode > 7 ? 7 : in->mapMode);
+    m.wrap = in->wrap ? 1 : 0;
+    m.filter = in->filter ? 1 : 0;
+    m.tiling[0] = nz(in->tilingU); m.tiling[1] = nz(in->tilingV);
+    m.offset[0] = in->offsetU;     m.offset[1] = in->offsetV;
+    m.rotationDeg = in->rotationDeg;
+    m.tint[0] = c01(in->r); m.tint[1] = c01(in->g); m.tint[2] = c01(in->b);
+
+    const int from = face < 0 ? 0 : face;
+    const int to = face < 0 ? count - 1 : face;
+    for (int f = from; f <= to; f++) o->faces[f] = m;
+}
+
+int GhostEngine_GetTargetFace() { return CurrentFace(); }
+
+void GhostEngine_SetTargetFace(int face)
+{
+    CurrentFace();
+    GhostObject* o = FindObject(g_scene.selectedId);
+    g_scene.selectedFace = (o && face >= 0 && face < GhostMesh_FaceCount(o->meshId)) ? face : -1;
+}
+
+
+// ============================================================
+//  Exported: texture replace + drop picking
+// ============================================================
+int GhostEngine_ReplaceTexture(int id, const char* name, const unsigned char* rgba,
+    unsigned int width, unsigned int height)
+{
+    if (!g_rhi || !g_pipeline) return 0;
+    if (id < 3 || id >= (int)g_scene.textures.size()) return 0;          // built-ins are fixed
+    if (!rgba || width == 0 || height == 0 || width > 4096 || height > 4096) return 0;
+
+    if (GhostCreateTexture(g_rhi, g_pipeline, rgba, width, height, id) != id) return 0;
+
+    GhostTextureInfo& t = g_scene.textures[id];
+    t.width = width;
+    t.height = height;
+    if (name) t.name = name;
+    return 1;
+}
+
+static int PickObjectAt(int sx, int sy)
+{
+    GhostVec3 o, d;
+    if (!ScreenRay(sx, sy, o, d)) return 0;
+
+    int   bestId = 0;
+    float bestT = 1e30f;
+    for (const GhostObject& ob : g_scene.objects)
+    {
+        GhostMat4 inv = ObjectInverse(ob);
+        float t;
+        if (RayAABB(XformPoint(inv, o, 1.0f), XformPoint(inv, d, 0.0f),
+            kMeshMin[ob.meshId], kMeshMax[ob.meshId], t) && t < bestT)
+        {
+            bestT = t; bestId = ob.id;
+        }
+    }
+    return bestId;
+}
+
+int GhostEngine_PickObjectAt(int x, int y, int* outFace)
+{
+    if (outFace) *outFace = -1;
+    int id = PickObjectAt(x, y);
+    if (id == 0) return 0;
+    if (outFace)
+        if (GhostObject* ob = FindObject(id)) *outFace = PickFace(*ob, x, y);
+    return id;
 }
