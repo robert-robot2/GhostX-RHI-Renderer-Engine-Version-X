@@ -235,6 +235,13 @@ float4 IconPS(IconPSInput input) : SV_TARGET
     {
         inside = abs(p.x) < 0.85f && abs(p.y) < 0.6f;
     }
+    else if (type == 4)               // camera: body, lens, two film reels
+    {
+        bool body = p.x > -0.85f && p.x < 0.25f && abs(p.y + 0.1f) < 0.45f;
+        bool lens = p.x >= 0.25f && p.x < 0.9f && abs(p.y + 0.1f) < 0.12f + (p.x - 0.25f) * 0.65f;
+        bool reels = length(p - float2(-0.55f, 0.55f)) < 0.27f || length(p - float2(-0.05f, 0.55f)) < 0.27f;
+        inside = body || lens || reels;
+    }
     else                              // arrow: u = p.x along the arrow, v = p.y across
     {
         bool shaft = p.x < 0.3f && abs(p.y) < 0.15f;

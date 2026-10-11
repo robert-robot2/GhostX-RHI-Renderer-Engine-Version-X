@@ -98,7 +98,7 @@ IconPSInput IconVS(uint vid : SV_VertexID)
 
     float2 offsetPx = o.uv * halfPx;           // constant screen size
 
-    if (iconType > 2.5f)                       // direction arrow
+    if (iconType > 2.5f && iconType < 3.5f)   
     {
         float3 vd = mul(view, float4(dir, 0.0f)).xyz;
         float2 d = float2(proj[0][0] * (vd.x * vc.z - vc.x * vd.z) * viewSize.x,

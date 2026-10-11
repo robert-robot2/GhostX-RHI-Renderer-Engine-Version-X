@@ -27,7 +27,7 @@ struct GhostLightInfo
     float width, height;
 };
 
-struct GhostEntityInfo { int id; int kind; int subtype; };   // kind: 0 object, 1 light
+struct GhostEntityInfo { int id; int kind; int subtype; };   // kind: 0 object, 1 light, 2 camera.
 struct GhostMaterialInfo
 {
     int   textureId, mapMode, wrap, filter;
@@ -35,6 +35,15 @@ struct GhostMaterialInfo
     float rotationDeg;
     float r, g, b;                     // tint
 };
+struct GhostCameraInfo
+{
+    int   id;
+    float px, py, pz;
+    float yawDeg, pitchDeg;
+    float fovDeg;
+    int   isActive;
+};
+
 extern "C"
 {
     GHOST_API int  GhostEngine_Init(HWND hwnd, unsigned int width, unsigned int height);
@@ -53,7 +62,14 @@ extern "C"
     // Spawn at a screen position (ground-plane hit); pass -1, -1 for screen center. Returns id, 0 on failure.
     GHOST_API int  GhostEngine_AddObject(int meshId, int screenX, int screenY);
     GHOST_API int  GhostEngine_AddLight(int lightType, int screenX, int screenY);
-    GHOST_API void GhostEngine_RemoveEntity(int id);
+    GHOST_API int  GhostEngine_RemoveEntity(int id);      // returns 1 if removed (0 = refused, e.g. the last camera)
+
+    // ---- Cameras ----
+    GHOST_API int  GhostEngine_AddCamera(int screenX, int screenY);   // id, or 0 if at the limit of 4
+    GHOST_API int  GhostEngine_GetCamera(int id, GhostCameraInfo* out);
+    GHOST_API void GhostEngine_SetCamera(const GhostCameraInfo* in);  // isActive is ignored
+    GHOST_API void GhostEngine_SetActiveCamera(int id);
+    GHOST_API int  GhostEngine_GetActiveCamera();
     GHOST_API void GhostEngine_SelectEntity(int id);
     GHOST_API int  GhostEngine_GetSelected();
     GHOST_API unsigned int GhostEngine_GetSceneVersion();

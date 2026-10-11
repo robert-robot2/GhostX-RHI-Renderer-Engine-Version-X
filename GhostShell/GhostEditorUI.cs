@@ -41,6 +41,7 @@ namespace GhostShell
     {
         private static int C(float v) => (int)Math.Round(Math.Clamp(v, 0f, 1f) * 255f);
         public static Color ToColor(float r, float g, float b) => Color.FromArgb(C(r), C(g), C(b));
+
     }
 
     internal static class GhostNames
@@ -204,7 +205,45 @@ namespace GhostShell
         public override StandardValuesCollection GetStandardValues(ITypeDescriptorContext? context)
             => new StandardValuesCollection(Names);
     }
+    internal class CameraProxy
+    {
+        private readonly int _id;
 
+        public CameraProxy(int id)
+        {
+            _id = id;
+            Position = new Vec3Edit(
+                () => { var i = Get(); return (i.px, i.py, i.pz); },
+                (x, y, z) => { var i = Get(); i.px = x; i.py = y; i.pz = z; Set(i); });
+        }
+
+        private GhostCameraInfo Get() { var i = new GhostCameraInfo(); GhostEngine.GhostEngine_GetCamera(_id, ref i); return i; }
+        private void Set(GhostCameraInfo i) => GhostEngine.GhostEngine_SetCamera(ref i);
+
+        [Category("Details")] public string Name => GhostNames.Of(_id);
+
+        [Category("Camera"), DisplayName("Main View Camera")]
+        public bool MainView
+        {
+            get => GhostEngine.GhostEngine_GetActiveCamera() == _id;
+            set
+            {
+                if (value) GhostEngine.GhostEngine_SetActiveCamera(_id);
+                else System.Media.SystemSounds.Beep.Play();     // there is always one main view camera
+            }
+        }
+
+        [Category("Camera"), DisplayName("Yaw (deg)")]
+        public float Yaw { get => Get().yawDeg; set { var i = Get(); i.yawDeg = value; Set(i); } }
+
+        [Category("Camera"), DisplayName("Pitch (deg)")]
+        public float Pitch { get => Get().pitchDeg; set { var i = Get(); i.pitchDeg = value; Set(i); } }
+
+        [Category("Camera"), DisplayName("FOV (deg)")]
+        public float Fov { get => Get().fovDeg; set { var i = Get(); i.fovDeg = value; Set(i); } }
+
+        [Category("Transform")] public Vec3Edit Position { get; }
+    }
     internal class ObjectProxy
     {
         private readonly int _id;
@@ -492,11 +531,12 @@ namespace GhostShell
         private static readonly Color Bg2 = Color.FromArgb(0x1E, 0x1E, 0x1E);
         private static readonly Color Fg = Color.FromArgb(0xF2, 0xF2, 0xF2);
         private static readonly Color Accent = Color.FromArgb(0xFF, 0xC8, 0x6E);
+        private static readonly Color CamColor = Color.FromArgb(0x7F, 0xD4, 0xFF);
 
         private sealed class PaletteItem
         {
             public string Text = "";
-            public bool IsLight;
+            public string Kind = "obj";      // "light", "obj" or "cam"
             public int Type;
             public override string ToString() => Text;
         }
@@ -559,7 +599,7 @@ namespace GhostShell
                 BackColor = Bg2,
                 ForeColor = Fg,
             };
-            _category.Items.AddRange(new object[] { "Lighting", "Primitives" });
+            _category.Items.AddRange(new object[] { "Lighting", "Primitives", "Cameras" });
             _category.SelectedIndexChanged += (s, e) => FillPalette();
             // add order matters for docking: Fill first, then Bottom, then Top
             _left.Controls.Add(_palette);
@@ -571,7 +611,7 @@ namespace GhostShell
             _palette.MouseMove += OnPaletteMouseMove;
             _palette.DoubleClick += (s, e) =>
             {
-                if (_palette.SelectedItem is PaletteItem it) Spawn(it.IsLight, it.Type, -1, -1);
+                if (_palette.SelectedItem is PaletteItem it) Spawn(it.Kind, it.Type, -1, -1);
             };
 
             // ---- Right: hierarchy (top) + details (fill) ----
@@ -618,6 +658,17 @@ namespace GhostShell
                 _lastSel = id;
                 _lastSnap = Snapshot(id);
             };
+            // Double-click a camera in the hierarchy to make it the main view
+            _tree.NodeMouseDoubleClick += (s, e) =>
+            {
+                if (e.Node?.Tag is int id && id != 0)
+                {
+                    var c = new GhostCameraInfo();
+                    if (GhostEngine.GhostEngine_GetCamera(id, ref c) != 0)
+                        GhostEngine.GhostEngine_SetActiveCamera(id);
+                }
+            };
+
             // add order matters: Fill first, then the splitter, then the tree
             _right.Controls.Add(_grid);
             _right.Controls.Add(splitter);
@@ -676,7 +727,8 @@ namespace GhostShell
             {
                 int sel = GhostEngine.GhostEngine_GetSelected();
                 if (sel == 0) return false;
-                GhostEngine.GhostEngine_RemoveEntity(sel);
+                if (GhostEngine.GhostEngine_RemoveEntity(sel) == 0)
+                    System.Media.SystemSounds.Beep.Play();       // refused: the last camera stays
                 Sync();
                 return true;
             }
@@ -691,18 +743,22 @@ namespace GhostShell
             _palette.Items.Clear();
             if (_category.SelectedIndex == 0)
             {
-                Add("Directional Light", true, 0);
-                Add("Point Light", true, 1);
-                Add("Rect Area Light", true, 2);
+                Add("Directional Light", "light", 0);
+                Add("Point Light", "light", 1);
+                Add("Rect Area Light", "light", 2);
+            }
+            else if (_category.SelectedIndex == 1)
+            {
+                Add("Cube", "obj", 0);
+                Add("Triangle", "obj", 1);
+                Add("Ship", "obj", 2);
             }
             else
             {
-                Add("Cube", false, 0);
-                Add("Triangle", false, 1);
-                Add("Ship", false, 2);
+                Add("Free Camera", "cam", 0);
             }
-            void Add(string text, bool light, int type) =>
-                _palette.Items.Add(new PaletteItem { Text = text, IsLight = light, Type = type });
+            void Add(string text, string kind, int type) =>
+                _palette.Items.Add(new PaletteItem { Text = text, Kind = kind, Type = type });
         }
 
         private void OnPaletteMouseMove(object? sender, MouseEventArgs e)
@@ -714,7 +770,7 @@ namespace GhostShell
             var item = _palette.Items[_dragIndex] as PaletteItem;
             _dragIndex = -1;
             if (item != null)
-                _palette.DoDragDrop($"ghost:{(item.IsLight ? "light" : "obj")}:{item.Type}", DragDropEffects.Copy);
+                _palette.DoDragDrop($"ghost:{item.Kind}:{item.Type}", DragDropEffects.Copy);
         }
 
         private static string? DropPayload(DragEventArgs e)
@@ -724,11 +780,12 @@ namespace GhostShell
             return (s != null && s.StartsWith("ghost:")) ? s : null;
         }
 
-        private void Spawn(bool isLight, int type, int x, int y)
+        private void Spawn(string kind, int type, int x, int y)
         {
-            int id = isLight ? GhostEngine.GhostEngine_AddLight(type, x, y)
-                             : GhostEngine.GhostEngine_AddObject(type, x, y);
-            if (id == 0) System.Media.SystemSounds.Beep.Play();   // scene is full
+            int id = kind == "light" ? GhostEngine.GhostEngine_AddLight(type, x, y)
+                   : kind == "cam" ? GhostEngine.GhostEngine_AddCamera(x, y)
+                                     : GhostEngine.GhostEngine_AddObject(type, x, y);
+            if (id == 0) System.Media.SystemSounds.Beep.Play();   // scene is full (or 4 cameras already)
             Sync();
         }
         private void OnViewportDrag(object? sender, DragEventArgs e)
@@ -771,7 +828,7 @@ namespace GhostShell
             }
             else
             {
-                Spawn(p[1] == "light", value, pt.X, pt.Y);
+                Spawn(p[1], value, pt.X, pt.Y);
             }
             _viewport.Select();
         }
@@ -829,12 +886,15 @@ namespace GhostShell
 
             var buf = new GhostEntityInfo[512];
             int n = GhostEngine.GhostEngine_GetEntities(buf, buf.Length);
+            int activeCam = GhostEngine.GhostEngine_GetActiveCamera();
             for (int i = 0; i < n; i++)
             {
-                var node = new TreeNode(GhostNames.Of(buf[i].id))
+                string text = GhostNames.Of(buf[i].id);
+                if (buf[i].kind == 2 && buf[i].id == activeCam) text += "   (Main View)";
+                var node = new TreeNode(text)
                 {
                     Tag = buf[i].id,
-                    ForeColor = buf[i].kind == 1 ? Accent : Fg,   // lights are highlighted
+                    ForeColor = buf[i].kind == 1 ? Accent : (buf[i].kind == 2 ? CamColor : Fg),
                 };
                 _tree.Nodes.Add(node);
                 _nodes[buf[i].id] = node;
@@ -871,6 +931,11 @@ namespace GhostShell
                     else if (l.type == 1) proxy = new PointLightProxy(id);
                     else proxy = new RectLightProxy(id);
                 }
+                else
+                {
+                    var c = new GhostCameraInfo();
+                    if (GhostEngine.GhostEngine_GetCamera(id, ref c) != 0) proxy = new CameraProxy(id);
+                }
             }
             _grid.SelectedObject = proxy;
         }
@@ -887,6 +952,8 @@ namespace GhostShell
                 return (o, GhostEngine.GhostEngine_GetTargetFace());   // face included, so the grid refreshes when it changes
             var l = new GhostLightInfo();
             if (GhostEngine.GhostEngine_GetLight(id, ref l) != 0) return l;
+            var c = new GhostCameraInfo();
+            if (GhostEngine.GhostEngine_GetCamera(id, ref c) != 0) return c;
             return null;
         }
     }

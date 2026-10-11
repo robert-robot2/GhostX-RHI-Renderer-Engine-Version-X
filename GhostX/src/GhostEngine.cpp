@@ -44,7 +44,7 @@ static int          CurrentFace();
 static const float ICON_HALF_PX = 18.0f;
 static const float ICON_PICK_PX = ICON_HALF_PX + 4.0f;
 // the last 2 * GHOST_MAX_LIGHTS constant-buffer slots are reserved for light icons + arrows
-static const unsigned int MAX_SCENE_OBJECTS = GHOST_MAX_OBJECTS - 2 * GHOST_MAX_LIGHTS;
+static const unsigned int MAX_SCENE_OBJECTS = GHOST_MAX_OBJECTS - 2 * GHOST_MAX_LIGHTS - 2 * GHOST_MAX_CAMERAS;
 // worst case an object needs one draw per face
 static const unsigned int MAX_SCENE_OBJECT_COUNT = MAX_SCENE_OBJECTS / GHOST_MAX_FACES;
 // local-space bounds of each mesh (picking only)
@@ -137,7 +137,8 @@ int GhostEngine_Init(HWND hwnd, unsigned int width, unsigned int height)
         if (RegisterTexture("Cube Cross Test", cross.data(), TW, TH) != 2) return -1;
 
     }
-
+    // ---- The default camera: always present, gets id 1 ----
+    GhostScene_AddCamera(g_scene);
     /*
     // ---- TEMP seed (removed in section C) so the checkpoint has something to see ----
     {
@@ -224,7 +225,19 @@ static GhostVec3 XformPoint(const GhostMat4& m, const GhostVec3& p, float w)
         m.m[1][0] * p.x + m.m[1][1] * p.y + m.m[1][2] * p.z + m.m[1][3] * w,
         m.m[2][0] * p.x + m.m[2][1] * p.y + m.m[2][2] * p.z + m.m[2][3] * w };
 }
+static GhostCamera* ActiveCamera()
+{
+    for (GhostCamera& c : g_scene.cameras)
+        if (c.id == g_scene.activeCameraId) return &c;
+    return nullptr;
+}
 
+static GhostVec3 AnglesToDir(float yawDeg, float pitchDeg)
+{
+    const float d2r = GHOST_PI / 180.0f;
+    float yaw = yawDeg * d2r, pitch = pitchDeg * d2r;
+    return { cosf(pitch) * sinf(yaw), sinf(pitch), cosf(pitch) * cosf(yaw) };
+}
 static GhostVec3 LightForward(const GhostLight& l)
 {
     const float d2r = GHOST_PI / 180.0f;
@@ -304,6 +317,7 @@ static GhostVec3* EntityPosition(int id)
 {
     for (GhostObject& o : g_scene.objects) if (o.id == id) return &o.position;
     for (GhostLight& l : g_scene.lights)  if (l.id == id) return &l.position;
+    for (GhostCamera& c : g_scene.cameras) if (c.id == id) return &c.position;
     return nullptr;
 }
 
@@ -319,6 +333,15 @@ static int PickAt(int sx, int sy)
         float dx = px - (float)sx, dy = py - (float)sy;
         float d2 = dx * dx + dy * dy;
         if (d2 <= bestD2) { bestD2 = d2; bestId = l.id; }
+    }
+    for (const GhostCamera& c : g_scene.cameras)
+    {
+        if (c.id == g_scene.activeCameraId) continue;       // no icon on the camera you're looking through
+        float px, py;
+        if (!WorldToScreen(c.position, px, py)) continue;
+        float dx = px - (float)sx, dy = py - (float)sy;
+        float d2 = dx * dx + dy * dy;
+        if (d2 <= bestD2) { bestD2 = d2; bestId = c.id; }
     }
     if (bestId) return bestId;
 
@@ -523,11 +546,12 @@ int GhostEngine_AddLight(int lightType, int sx, int sy)
     return l->id;
 }
 
-void GhostEngine_RemoveEntity(int id)
+int GhostEngine_RemoveEntity(int id)
 {
-    if (!GhostScene_Remove(g_scene, id)) return;
+    if (!GhostScene_Remove(g_scene, id)) return 0;
     if (g_hoverId == id) g_hoverId = 0;
     if (g_dragId == id) { g_dragging = false; g_dragId = 0; }
+    return 1;
 }
 
 void GhostEngine_SelectEntity(int id)
@@ -544,6 +568,7 @@ int GhostEngine_GetEntities(GhostEntityInfo* out, int maxCount)
     int n = 0;
     for (const GhostObject& o : g_scene.objects) { if (n >= maxCount) return n; out[n++] = { o.id, 0, o.meshId }; }
     for (const GhostLight& l : g_scene.lights) { if (n >= maxCount) return n; out[n++] = { l.id, 1, (int)l.type }; }
+    for (const GhostCamera& c : g_scene.cameras) { if (n >= maxCount) return n; out[n++] = { c.id, 2, 0 }; }
     return n;
 }
 
@@ -553,6 +578,7 @@ int GhostEngine_GetEntityName(int id, char* buf, int bufSize)
     const std::string* name = nullptr;
     for (const GhostObject& o : g_scene.objects) if (o.id == id) name = &o.name;
     for (const GhostLight& l : g_scene.lights)  if (l.id == id) name = &l.name;
+    for (const GhostCamera& c : g_scene.cameras) if (c.id == id) name = &c.name;
     if (!name) { buf[0] = 0; return 0; }
     strncpy_s(buf, bufSize, name->c_str(), _TRUNCATE);
     return 1;
@@ -701,7 +727,14 @@ void GhostEngine_Tick()
     QueryPerformanceCounter(&curr);
     float dt = (float)(curr.QuadPart - g_prev.QuadPart) / (float)g_freq.QuadPart;
     g_prev = curr;
-
+    // ---- Active camera -> working state (the fly code below keeps using g_eye / g_yaw / g_pitch) ----
+    GhostCamera* cam = ActiveCamera();
+    if (cam)
+    {
+        g_eye = cam->position;
+        g_yaw = cam->yawDeg * (GHOST_PI / 180.0f);
+        g_pitch = cam->pitchDeg * (GHOST_PI / 180.0f);
+    }
     // ---- Mouse look ----
     const float lookSens = 0.0025f;
     const float moveSpeed = 3.5f;
@@ -751,13 +784,19 @@ void GhostEngine_Tick()
     if (down('D'))        g_eye = g_eye + right * speed;
     if (down(VK_SPACE))   g_eye.y += speed;
     if (down(VK_CONTROL)) g_eye.y -= speed;
-
+    // ---- Working state -> active camera ----
+    if (cam)
+    {
+        cam->position = g_eye;
+        cam->yawDeg = fmodf(g_yaw * (180.0f / GHOST_PI), 360.0f);
+        cam->pitchDeg = g_pitch * (180.0f / GHOST_PI);
+    }
     // ---- Matrices ----
     GhostVec3 target = g_eye + forward;
     GhostMat4 view = GhostMat4::LookAtLH(g_eye, target, worldUp);
     float aspect = (g_height > 0) ? (float)g_width / (float)g_height : 1.0f;
     GhostMat4 proj = GhostMat4::PerspectiveFovLH(
-        3.1415926535f / 4.0f, aspect, 0.1f, 100.0f);
+        (cam ? cam->fovDeg : 45.0f) * (GHOST_PI / 180.0f), aspect, 0.1f, 100.0f);
     g_view = view;
     g_proj = proj;
     g_camR = right;
@@ -821,6 +860,17 @@ void GhostEngine_Tick()
         if (l.type == GhostLightType::Directional)
             DrawIcon(slot, 3, l.position, fwd, l.color, state, view, proj);   // direction arrow
     }
+    // ---- Camera icons (the camera you're looking through has none) ----
+    static const float kCamColor[3] = { 0.5f, 0.83f, 1.0f };
+    for (const GhostCamera& c : g_scene.cameras)
+    {
+        if (c.id == g_scene.activeCameraId) continue;
+        int state = (c.id == g_scene.selectedId) ? 2 : (c.id == g_hoverId ? 1 : 0);
+        GhostVec3 fwd = AnglesToDir(c.yawDeg, c.pitchDeg);
+        DrawIcon(slot, 4, c.position, fwd, kCamColor, state, view, proj);   // camera glyph
+        DrawIcon(slot, 3, c.position, fwd, kCamColor, state, view, proj);   // direction arrow
+    }
+
     // ---- End frame ----
     g_rhi->EndFrame();
 }
@@ -961,3 +1011,61 @@ int GhostEngine_PickObjectAt(int x, int y, int* outFace)
         if (GhostObject* ob = FindObject(id)) *outFace = PickFace(*ob, x, y);
     return id;
 }
+
+// ============================================================
+//  Exported: cameras
+// ============================================================
+int GhostEngine_AddCamera(int sx, int sy)
+{
+    GhostCamera* c = GhostScene_AddCamera(g_scene);
+    if (!c) return 0;
+
+    GhostVec3 p = SpawnPoint(sx, sy);
+    p.y += 1.5f;
+    c->position = p;
+    if (const GhostCamera* a = ActiveCamera())          // face the same way as the main view
+    {
+        c->yawDeg = a->yawDeg; c->pitchDeg = a->pitchDeg; c->fovDeg = a->fovDeg;
+    }
+    g_scene.selectedId = c->id;
+    return c->id;
+}
+
+int GhostEngine_GetCamera(int id, GhostCameraInfo* out)
+{
+    if (!out) return 0;
+    for (const GhostCamera& c : g_scene.cameras)
+        if (c.id == id)
+        {
+            *out = { c.id, c.position.x, c.position.y, c.position.z,
+                     c.yawDeg, c.pitchDeg, c.fovDeg, c.id == g_scene.activeCameraId ? 1 : 0 };
+            return 1;
+        }
+    return 0;
+}
+
+void GhostEngine_SetCamera(const GhostCameraInfo* in)
+{
+    if (!in) return;
+    for (GhostCamera& c : g_scene.cameras)
+        if (c.id == in->id)
+        {
+            c.position = { in->px, in->py, in->pz };
+            c.yawDeg = in->yawDeg;
+            c.pitchDeg = in->pitchDeg < -88.0f ? -88.0f : (in->pitchDeg > 88.0f ? 88.0f : in->pitchDeg);
+            c.fovDeg = in->fovDeg < 10.0f ? 10.0f : (in->fovDeg > 120.0f ? 120.0f : in->fovDeg);
+            return;
+        }
+}
+
+void GhostEngine_SetActiveCamera(int id)
+{
+    for (const GhostCamera& c : g_scene.cameras)
+        if (c.id == id)
+        {
+            if (g_scene.activeCameraId != id) { g_scene.activeCameraId = id; g_scene.version++; }
+            return;
+        }
+}
+
+int GhostEngine_GetActiveCamera() { return g_scene.activeCameraId; }

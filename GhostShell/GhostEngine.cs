@@ -35,6 +35,16 @@ namespace GhostShell
         public float rotationDeg;
         public float r, g, b;
     }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GhostCameraInfo
+    {
+        public int id;
+        public float px, py, pz;
+        public float yawDeg, pitchDeg;
+        public float fovDeg;
+        public int isActive;
+    }
     internal static class GhostEngine
     {
         private const string DllName = "GhostX.dll";
@@ -72,7 +82,7 @@ namespace GhostShell
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern int GhostEngine_AddLight(int lightType, int screenX, int screenY);
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        public static extern void GhostEngine_RemoveEntity(int id);
+        public static extern int GhostEngine_RemoveEntity(int id);
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern void GhostEngine_SelectEntity(int id);
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
@@ -124,6 +134,18 @@ namespace GhostShell
         public static extern int GhostEngine_ReplaceTexture(int id, string name, byte[] rgba, uint width, uint height);
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern int GhostEngine_PickObjectAt(int x, int y, out int face);
+
+        // ---- Cameras ----
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_AddCamera(int screenX, int screenY);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetCamera(int id, ref GhostCameraInfo info);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetCamera(ref GhostCameraInfo info);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetActiveCamera(int id);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetActiveCamera();
 
 
     }

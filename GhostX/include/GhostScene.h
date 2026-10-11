@@ -8,7 +8,7 @@
 enum GhostMeshId { GHOST_MESH_CUBE = 0, GHOST_MESH_TRIANGLE, GHOST_MESH_SHIP, GHOST_MESH_COUNT };
 enum class GhostLightType : int { Directional = 0, Point = 1, RectArea = 2 };
 constexpr unsigned int GHOST_MAX_LIGHTS = 16;
-
+constexpr unsigned int GHOST_MAX_CAMERAS = 4;
 constexpr int GHOST_MAX_FACES = 6;
 
 struct GhostMaterial
@@ -83,11 +83,20 @@ struct GhostLight
     float          range = 10.0f;                    // point + rect
     float          width = 1.0f, height = 1.0f;      // rect only
 };
-
+struct GhostCamera
+{
+    int         id = 0;
+    std::string name;
+    GhostVec3   position = { 0.0f, 0.75f, -2.0f };   // the old fly-cam start
+    float       yawDeg = 0.0f, pitchDeg = 0.0f;
+    float       fovDeg = 45.0f;
+};
 struct GhostScene
 {
     std::vector<GhostObject> objects;
     std::vector<GhostLight>  lights;
+    std::vector<GhostCamera> cameras;
+    int activeCameraId = 0;              // the camera the main view renders through
     std::vector<GhostTextureInfo> textures;     // id 0 = White, id 1 = Checkerboard, then imports
     float        ambientColor[3] = { 1, 1, 1 };
     float        ambientIntensity = 0.15f;
@@ -129,13 +138,33 @@ inline GhostLight* GhostScene_AddLight(GhostScene& s, GhostLightType type)
     s.version++;
     return &s.lights.back();
 }
-
+// The first camera added becomes the active one. Pointer valid until the next Add/Remove.
+inline GhostCamera* GhostScene_AddCamera(GhostScene& s)
+{
+    if (s.cameras.size() >= GHOST_MAX_CAMERAS) return nullptr;
+    GhostCamera c;
+    c.id = s.nextId++;
+    c.name = std::string(s.cameras.empty() ? "Default Camera" : "Camera") + " " + std::to_string(c.id);
+    s.cameras.push_back(c);
+    if (s.activeCameraId == 0) s.activeCameraId = c.id;
+    s.version++;
+    return &s.cameras.back();
+}
 inline bool GhostScene_Remove(GhostScene& s, int id)
 {
     for (size_t i = 0; i < s.objects.size(); i++)
         if (s.objects[i].id == id) { s.objects.erase(s.objects.begin() + i); goto removed; }
     for (size_t i = 0; i < s.lights.size(); i++)
         if (s.lights[i].id == id) { s.lights.erase(s.lights.begin() + i);  goto removed; }
+    for (size_t i = 0; i < s.cameras.size(); i++)
+        if (s.cameras[i].id == id)
+        {
+            if (s.cameras.size() <= 1) return false;          // the last camera can never be deleted
+            bool wasActive = (s.activeCameraId == id);
+            s.cameras.erase(s.cameras.begin() + i);
+            if (wasActive) s.activeCameraId = s.cameras.front().id;
+            goto removed;
+        }
     return false;
 removed:
     if (s.selectedId == id) s.selectedId = 0;
