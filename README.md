@@ -60,9 +60,7 @@ A Windows desktop application that fuses a raw **DirectX 12 RHI rendering engine
 - 
 <img width="1920" height="1080" alt="Screenshot 2026-10-11 145248" src="https://github.com/user-attachments/assets/13b5d341-8699-47bb-92d2-85f466babe6a" />
 
-<img width="1920" height="1080" alt="Screenshot 2026-10-11 043606" src="https://github.com/user-attachments/assets/a9721aab-0f8c-4fdc-b23c-197844c0ac20" />
 
-<img width="1920" height="1080" alt="Screenshot 2026-10-10 151235" src="https://github.com/user-attachments/assets/708763a5-d19a-4ef2-92ce-f58bfae39fc6" />
 
 
 
