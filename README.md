@@ -17,7 +17,7 @@ A Windows desktop application that fuses a raw **DirectX 12 RHI rendering engine
 - 📦 **Self-contained** — no external servers, everything runs locally
 ## 💡Cameras
 - Multiple Free Camera Drop and Drag Support
-- 
+
 ## 💡 LIGHTING
 - Removed the old fused directional + ambient light.
 - New lighting system, calculated per pixel: Ambient, Directional, Point, and Rect Area lights (up to 16).
