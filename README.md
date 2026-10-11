@@ -2,7 +2,19 @@
 
 # MOAR UPDATES FASTER 
 # 👻 GhostX Version X 👻💡🧊💡👻
+> **DirectX12 RHI Renderer · WinForms Shell · Blazor WASM UI**
 
+A Windows desktop application that fuses a raw **DirectX 12 RHI rendering engine** with a **Blazor WebAssembly UI** hosted inside a WinForms shell via WebView2. The native DX12 renderer runs alongside the Blazor frontend, enabling real-time GPU-driven graphics controlled through a modern web-based interface — all in a single application.
+
+---
+
+## Features
+
+- 🎮 **DirectX 12 RHI Renderer** — low-level GPU rendering pipeline with full DX12 control
+- 🌐 **Blazor WASM UI** — browser-based UI layer hosted in-process via WebView2
+- 🪟 **WinForms Shell** — native Windows host with dropdown menus and window management
+- 🔗 **JS Interop Bridge** — communication between the Blazor frontend and the DX12 backend
+- 📦 **Self-contained** — no external servers, everything runs locally
 ## 💡 LIGHTING
 - Removed the old fused directional + ambient light.
 - New lighting system, calculated per pixel: Ambient, Directional, Point, and Rect Area lights (up to 16).
@@ -51,19 +63,7 @@
 
 
 
-> **DirectX12 RHI Renderer · WinForms Shell · Blazor WASM UI**
 
-A Windows desktop application that fuses a raw **DirectX 12 RHI rendering engine** with a **Blazor WebAssembly UI** hosted inside a WinForms shell via WebView2. The native DX12 renderer runs alongside the Blazor frontend, enabling real-time GPU-driven graphics controlled through a modern web-based interface — all in a single application.
-
----
-
-## Features
-
-- 🎮 **DirectX 12 RHI Renderer** — low-level GPU rendering pipeline with full DX12 control
-- 🌐 **Blazor WASM UI** — browser-based UI layer hosted in-process via WebView2
-- 🪟 **WinForms Shell** — native Windows host with dropdown menus and window management
-- 🔗 **JS Interop Bridge** — communication between the Blazor frontend and the DX12 backend
-- 📦 **Self-contained** — no external servers, everything runs locally
 
 ---
 
