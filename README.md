@@ -1,6 +1,6 @@
 # Ghost Version X
 
-
+# MOAR UPDATES FASTER 
 # 👻 GhostX Version X 👻💡🧊💡👻
 
 ## 💡 LIGHTING
@@ -41,6 +41,7 @@
 - New exports for add/remove/select, enumerate, get/set object, get/set light, ambient, and scene version.
 - New mouse input exports: down, move, up, and leave.
 
+<img width="1920" height="1080" alt="Screenshot 2026-10-11 043606" src="https://github.com/user-attachments/assets/a9721aab-0f8c-4fdc-b23c-197844c0ac20" />
 
 <img width="1920" height="1080" alt="Screenshot 2026-10-10 151235" src="https://github.com/user-attachments/assets/708763a5-d19a-4ef2-92ce-f58bfae39fc6" />
 
