@@ -22,6 +22,7 @@ namespace GhostShell
         private GhostMenuBuilder _menuBuilder;
         private Microsoft.Web.WebView2.WinForms.WebView2 _ghostUI;
         private GhostEditorUI _editor = null!;
+        private EditorKeyFilter _keyFilter = null!;
 
         public GhostForm()
         {
@@ -69,9 +70,7 @@ namespace GhostShell
                 System.Reflection.BindingFlags.NonPublic,
                 null, _renderPanel, new object[] { false });
 
-            Controls.Add(_renderPanel);
-            // ---- In BuildUI(), after Controls.Add(_renderPanel) ----
-        
+          
             // ---- Menu strip ----
             _menuBuilder = new GhostMenuBuilder(_menuBgColor, _menuTextColor);
             _menuBuilder.Build(this);
@@ -142,21 +141,17 @@ namespace GhostShell
             _editor.Build();
             _menuBuilder.OnToggleEditorUI += (s, e) => _editor.ToggleVisible();
 
-            // Key 4 toggles the panels, Delete removes the selection (ignored while typing in the grid)
-            KeyPreview = true;
-            KeyDown += (s, e) =>
-            {
-                if (_editor.HandleKey(e.KeyCode)) { e.Handled = true; e.SuppressKeyPress = true; }
-            };
+           
+            // Restore the saved layout once the form handle exists
+            Load += (s, e) => _editor.RestoreLayout();
 
-            // The side panels change the viewport size, so re-sync the swap chain once layout is final
-            Shown += (s, e) =>
+            // Key 4 / Delete: a message filter, so it works from floating panels too
+            _keyFilter = new EditorKeyFilter(_editor);
+            Application.AddMessageFilter(_keyFilter);
+            FormClosing += (s, e) =>
             {
-                _renderPanel.Select();
-                if (_renderPanel.ClientSize.Width > 0 && _renderPanel.ClientSize.Height > 0)
-                    GhostEngine.GhostEngine_Resize(
-                        (uint)_renderPanel.ClientSize.Width,
-                        (uint)_renderPanel.ClientSize.Height);
+                _editor.SaveLayout();
+                Application.RemoveMessageFilter(_keyFilter);
             };
 
 
@@ -168,7 +163,7 @@ namespace GhostShell
         private void HookEngineEvents()
         {
             // Init engine once the handle exists
-            Load += (s, e) =>
+            Shown += (s, e) =>
             {
                 int result = GhostEngine.GhostEngine_Init(
                     _renderPanel.Handle,
@@ -217,6 +212,7 @@ namespace GhostShell
             // Clean shutdown
             FormClosing += (s, e) =>
             {
+                _renderPanel.Select();
                 Application.Idle -= OnIdle;
                 GhostEngine.GhostEngine_Shutdown();
             };
@@ -235,13 +231,13 @@ namespace GhostShell
             }
         }
 
-        // Camera keys and right-mouse look only work while this window is active
-        // and the cursor is over the viewport, so typing elsewhere never moves the camera.
+     
+        // Camera keys and right-mouse look work only while the viewport itself has keyboard focus
+        // and the cursor is over it, so typing in any panel (docked or floating) never moves the camera.
         private bool IsViewportHot()
         {
-            if (ActiveForm != this) return false;
             if (_ghostUI.Visible) return false;
-            if (ActiveControl != _renderPanel) return false;     // typing in a panel never moves the camera
+            if (!_renderPanel.Focused) return false;
             return _renderPanel.ClientRectangle.Contains(_renderPanel.PointToClient(Cursor.Position));
         }
 

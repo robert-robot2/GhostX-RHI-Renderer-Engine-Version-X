@@ -27,5 +27,7 @@ namespace GhostShell
         [DllImport("dwmapi.dll")]
         public static extern int DwmSetWindowAttribute(
             IntPtr hwnd, uint dwAttribute, ref uint pvAttribute, uint cbAttribute);
+        [DllImport("user32.dll")]
+        public static extern IntPtr GetFocus();
     }
 }

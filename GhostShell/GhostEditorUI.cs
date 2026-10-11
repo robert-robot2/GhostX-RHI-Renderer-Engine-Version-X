@@ -5,7 +5,8 @@ using System.ComponentModel;
 using System.Drawing;
 using System.Text;
 using System.Windows.Forms;
-
+using System.IO;
+using WeifenLuo.WinFormsUI.Docking;
 namespace GhostShell
 {
     // Render surface that can hold keyboard focus (a plain Panel can't)
@@ -544,7 +545,18 @@ namespace GhostShell
         private readonly Form _form;
         private readonly Panel _viewport;
 
-        private Panel _left = null!, _right = null!, _bottom = null!;
+        private Panel _left = null!, _bottom = null!;
+
+        // ---- Docking ----
+        private const DockAreas ToolAreas = DockAreas.DockLeft | DockAreas.DockRight |
+                                            DockAreas.DockTop | DockAreas.DockBottom | DockAreas.Float;
+        private DockPanel _dock = null!;
+        private PanelDock _dockViewport = null!, _dockPalette = null!, _dockHierarchy = null!,
+                          _dockDetails = null!, _dockContent = null!;
+        private readonly List<PanelDock> _tools = new();
+        private readonly List<PanelDock> _hiddenByToggle = new();
+        private static readonly string LayoutPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GhostX", "layout.xml");
         private ComboBox _category = null!;
         private ListBox _palette = null!;
         private TreeView _tree = null!;
@@ -566,14 +578,14 @@ namespace GhostShell
         // -------------------------------------------------------
         public void Build()
         {
-           
+
             // ---- Bottom: content browser ----
-            var browser = new GhostContentBrowser { Dock = DockStyle.Bottom, Height = 190 };
+            var browser = new GhostContentBrowser { Dock = DockStyle.Fill };
             browser.ApplyRequested += ApplyTextureToSelection;
             _bottom = browser;
 
             // ---- Left: palette ----
-            _left = new Panel { Dock = DockStyle.Left, Width = 200, BackColor = Bg };
+            _left = new Panel { Dock = DockStyle.Fill, BackColor = Bg };
             _palette = new ListBox
             {
                 Dock = DockStyle.Fill,
@@ -614,8 +626,7 @@ namespace GhostShell
                 if (_palette.SelectedItem is PaletteItem it) Spawn(it.Kind, it.Type, -1, -1);
             };
 
-            // ---- Right: hierarchy (top) + details (fill) ----
-            _right = new Panel { Dock = DockStyle.Right, Width = 320, BackColor = Bg };
+           
             _grid = new PropertyGrid
             {
                 Dock = DockStyle.Fill,
@@ -636,11 +647,10 @@ namespace GhostShell
             // Re-read every row after an edit, so "Image Size" and "Color" follow a texture change
             _grid.PropertyValueChanged += (s, e) => _grid.Refresh();
 
-            var splitter = new Splitter { Dock = DockStyle.Top, Height = 5, BackColor = Bg2 };
+           
             _tree = new TreeView
             {
-                Dock = DockStyle.Top,
-                Height = 240,
+                Dock = DockStyle.Fill,
                 BackColor = Bg2,
                 ForeColor = Fg,
                 BorderStyle = BorderStyle.None,
@@ -669,18 +679,7 @@ namespace GhostShell
                 }
             };
 
-            // add order matters: Fill first, then the splitter, then the tree
-            _right.Controls.Add(_grid);
-            _right.Controls.Add(splitter);
-            _right.Controls.Add(_tree);
-
-            // ---- Dock into the form ----
-            // Higher child index docks first. Added after the render panel, so these dock before it;
-            // the menu strip is sent to the back so it docks first of all (full width, on top).
-            _form.Controls.Add(_bottom);
-            _form.Controls.Add(_left);
-            _form.Controls.Add(_right);
-            _form.MainMenuStrip?.SendToBack();
+            BuildDocking();
 
             // ---- Viewport: drop target + keyboard focus ----
             _viewport.AllowDrop = true;
@@ -690,8 +689,8 @@ namespace GhostShell
             _viewport.MouseDown += (s, e) => _viewport.Select();
             _viewport.MouseEnter += (s, e) =>
             {
-                // Hovering the viewport takes keyboard focus (and commits any pending grid edit)
-                if (Form.ActiveForm == _form && !(_form.ActiveControl is TextBoxBase))
+                // Hovering the viewport takes keyboard focus, unless you're typing somewhere
+                if (Form.ActiveForm != null && Form.ActiveForm == _viewport.TopLevelControl && !IsTyping())
                     _viewport.Select();
             };
 
@@ -705,23 +704,31 @@ namespace GhostShell
         // -------------------------------------------------------
         //  Visibility + keys
         // -------------------------------------------------------
+        // Key 4: hide every tool window (remembering which were open), or bring them back
         public void ToggleVisible()
         {
-            _visible = !_visible;
-            _left.Visible = _visible;
-            _right.Visible = _visible;
-            _bottom.Visible = _visible;
+            if (_hiddenByToggle.Count == 0)
+            {
+                foreach (PanelDock d in _tools)
+                    if (d.DockPanel != null && !d.IsHidden) { d.IsHidden = true; _hiddenByToggle.Add(d); }
+            }
+            else
+            {
+                foreach (PanelDock d in _hiddenByToggle) d.IsHidden = false;
+                _hiddenByToggle.Clear();
+            }
             _viewport.Select();
         }
 
         // Returns true if the key was consumed
-        public bool HandleKey(Keys key)
+        public bool HandleKey(Keys key, bool repeat)
         {
-            // The property grid starts editing on a keypress, so never steal keys from it
-            if (_form.ActiveControl is PropertyGrid || _form.ActiveControl is TextBoxBase || _form.ActiveControl is UpDownBase)
-                return false;
+            if (key != Keys.D4 && key != Keys.NumPad4 && key != Keys.Delete) return false;
 
-            if (key == Keys.D4 || key == Keys.NumPad4) { ToggleVisible(); return true; }
+            Control? focus = Control.FromHandle(GhostShell.Win32.GetFocus());
+            if (focus == null) return false;          // a native dialog (file / color picker) has focus
+            if (IsTypingIn(focus)) return false;      // never steal keys from a text box or the property grid
+            if (repeat) return true;
 
             if (key == Keys.Delete)
             {
@@ -732,7 +739,154 @@ namespace GhostShell
                 Sync();
                 return true;
             }
+
+            ToggleVisible();
+            return true;
+        }
+
+        private static bool IsTypingIn(Control? c)
+        {
+            for (; c != null; c = c.Parent)
+                if (c is PropertyGrid || c is TextBoxBase || c is UpDownBase) return true;
             return false;
+        }
+
+        private static bool IsTyping() => IsTypingIn(Control.FromHandle(GhostShell.Win32.GetFocus()));
+
+        // -------------------------------------------------------
+        //  Docking
+        // -------------------------------------------------------
+        private void BuildDocking()
+        {
+            _dock = new DockPanel { Dock = DockStyle.Fill, BackColor = Bg2 };
+            _dock.Theme = new VS2015DarkTheme();
+
+            // The viewport is the main document and can't be closed
+            _dockViewport = new PanelDock("Viewport", "Viewport", _viewport, DockAreas.Document | DockAreas.Float, false);
+            _dockPalette = new PanelDock("Palette", "Palette", _left, ToolAreas);
+            _dockHierarchy = new PanelDock("Hierarchy", "Hierarchy", _tree, ToolAreas);
+            _dockDetails = new PanelDock("Details", "Details", _grid, ToolAreas);
+            _dockContent = new PanelDock("Content", "Content Browser", _bottom, ToolAreas);
+            _tools.AddRange(new[] { _dockPalette, _dockHierarchy, _dockDetails, _dockContent });
+
+            _form.Controls.Add(_dock);
+            _dock.BringToFront();                    // the dock fills whatever the menu strip leaves
+            _form.MainMenuStrip?.SendToBack();
+
+            BuildWindowMenu();
+        }
+
+        private IDockContent GetContentFromPersistString(string key) => key switch
+        {
+            "Viewport" => _dockViewport,
+            "Palette" => _dockPalette,
+            "Hierarchy" => _dockHierarchy,
+            "Details" => _dockDetails,
+            "Content" => _dockContent,
+            _ => null!,
+        };
+
+        private static DockState DefaultState(PanelDock d) =>
+            d.Key == "Palette" ? DockState.DockLeft :
+            d.Key == "Content" ? DockState.DockBottom : DockState.DockRight;
+
+        private void ApplyDefaultLayout()
+        {
+            if (_dockViewport.DockPanel == null) _dockViewport.Show(_dock, DockState.Document);
+
+            _dockPalette.Show(_dock, DockState.DockLeft);
+            _dockHierarchy.Show(_dock, DockState.DockRight);
+            _dockDetails.Show(_dockHierarchy.Pane, DockAlignment.Bottom, 0.6);
+            _dockContent.Show(_dock, DockState.DockBottom);
+
+            _dock.DockLeftPortion = 210;
+            _dock.DockRightPortion = 340;
+            _dock.DockBottomPortion = 200;
+        }
+
+        // Called from the form's Load event
+        public void RestoreLayout()
+        {
+            bool loaded = false;
+            try
+            {
+                if (File.Exists(LayoutPath))
+                {
+                    _dock.LoadFromXml(LayoutPath, GetContentFromPersistString);
+                    loaded = true;
+                }
+            }
+            catch { /* corrupt or old layout file: use the default */ }
+
+            if (!loaded)
+            {
+                foreach (PanelDock d in _tools) d.DockPanel = null!;     // a failed load may have attached some
+                ApplyDefaultLayout();
+            }
+            else if (_dockViewport.DockPanel == null)
+            {
+                _dockViewport.Show(_dock, DockState.Document);
+            }
+
+            foreach (PanelDock d in _tools)                               // panels an older layout file didn't know about
+                if (d.DockPanel == null) d.Show(_dock, DefaultState(d));
+        }
+
+        // Called from the form's FormClosing event
+        public void SaveLayout()
+        {
+            if (_hiddenByToggle.Count > 0) ToggleVisible();               // don't save a layout with everything hidden
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(LayoutPath)!);
+                _dock.SaveAsXml(LayoutPath);
+            }
+            catch { }
+        }
+
+        private void ResetLayout()
+        {
+            _hiddenByToggle.Clear();
+            foreach (PanelDock d in _tools) d.DockPanel = null!;
+            ApplyDefaultLayout();
+        }
+
+        private bool IsShown(PanelDock d) => d.DockPanel != null && !d.IsHidden;
+
+        private void ShowPanel(PanelDock d)
+        {
+            if (d.DockState == DockState.Unknown) d.Show(_dock, DefaultState(d));
+            else d.Show(_dock);
+        }
+
+        private void BuildWindowMenu()
+        {
+            ToolStrip? strip = _form.MainMenuStrip;
+            if (strip == null) return;
+
+            var menu = new ToolStripMenuItem("Window");
+            foreach (PanelDock d in _tools)
+            {
+                PanelDock dock = d;
+                var item = new ToolStripMenuItem(dock.Text);
+                item.Click += (s, e) => ShowPanel(dock);
+                menu.DropDownItems.Add(item);
+            }
+            menu.DropDownItems.Add(new ToolStripSeparator());
+            var reset = new ToolStripMenuItem("Reset Layout");
+            reset.Click += (s, e) => ResetLayout();
+            menu.DropDownItems.Add(reset);
+
+            menu.DropDownOpening += (s, e) =>
+            {
+                for (int i = 0; i < _tools.Count; i++)
+                    ((ToolStripMenuItem)menu.DropDownItems[i]).Checked = IsShown(_tools[i]);
+            };
+
+            int at = strip.Items.Count;                                   // before Help
+            for (int i = 0; i < strip.Items.Count; i++)
+                if (strip.Items[i].Text == "Help") { at = i; break; }
+            strip.Items.Insert(at, menu);
         }
 
         // -------------------------------------------------------

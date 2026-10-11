@@ -107,4 +107,5 @@ extern "C"
     // Nearest object under a client position (light icons ignored). Returns 0 if none.
     // outFace = face under the cursor, or -1.
     GHOST_API int GhostEngine_PickObjectAt(int x, int y, int* outFace);
+
 }
