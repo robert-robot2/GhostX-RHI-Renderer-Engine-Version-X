@@ -9,7 +9,8 @@
 ![UI](https://img.shields.io/badge/editor-WinForms%20%2B%20DockPanelSuite-orange)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
-<img width="1920" height="1080" alt="GhostX editor" src="https://github.com/user-attachments/assets/478c682a-0084-4388-8f77-19ab7e2ab84f" />
+<img width="1920" height="1080" alt="Screenshot 2026-10-11 213043" src="https://github.com/user-attachments/assets/88808691-55d3-4d33-8c7a-67f18403989c" />
+
 
 </div>
 
