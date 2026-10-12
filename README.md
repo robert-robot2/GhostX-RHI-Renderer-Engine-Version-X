@@ -69,8 +69,7 @@ A Windows desktop application that fuses a raw **DirectX 12 RHI rendering engine
 
 
 
-
-
+#Blazor WASM Integration Instructions
 
 ---
 
