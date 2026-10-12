@@ -38,7 +38,10 @@ static GhostVec3  g_dragOffset;
 static GhostVec3  g_dragPlanePoint;
 static GhostObject* FindObject(int id);
 static int          CurrentFace();
-
+struct EngineViewport { bool alive = false; bool visible = true; int cameraId = 0; };
+static EngineViewport g_vp[GHOST_MAX_SURFACES];
+static int            g_inputCameraId = 0;               // the camera WASD / right-mouse look drives
+static GhostVec3      g_mainEye = { 0, 0, 0 };           // main view position, for picking rays
 
 
 static const float ICON_HALF_PX = 18.0f;
@@ -139,6 +142,8 @@ int GhostEngine_Init(HWND hwnd, unsigned int width, unsigned int height)
     }
     // ---- The default camera: always present, gets id 1 ----
     GhostScene_AddCamera(g_scene);
+    g_vp[0].alive = true;
+    g_vp[0].visible = true;
     /*
     // ---- TEMP seed (removed in section C) so the checkpoint has something to see ----
     {
@@ -263,7 +268,7 @@ static bool ScreenRay(int sx, int sy, GhostVec3& origin, GhostVec3& dir)
     float xn = 2.0f * (float)sx / (float)g_width - 1.0f;
     float yn = 1.0f - 2.0f * (float)sy / (float)g_height;
     dir = (g_camR * (xn / g_proj.m[0][0]) + g_camU * (yn / g_proj.m[1][1]) + g_camF).Normalize();
-    origin = g_eye;
+    origin = g_mainEye;                                  // was g_eye
     return true;
 }
 
@@ -716,7 +721,135 @@ int GhostEngine_GetTextureInfo(int id, char* nameBuf, int nameSize,
     return 1;
 }
 
+static GhostCamera* FindCamera(int id)
+{
+    for (GhostCamera& c : g_scene.cameras) if (c.id == id) return &c;
+    return nullptr;
+}
 
+// Viewport 0 shows the main view camera; camera windows show their own camera
+static GhostCamera* ViewportCamera(int vp)
+{
+    return FindCamera(vp == 0 ? g_scene.activeCameraId : g_vp[vp].cameraId);
+}
+
+// The camera WASD and right-mouse look currently drive (falls back to the main view camera)
+static GhostCamera* InputCamera()
+{
+    GhostCamera* c = FindCamera(g_inputCameraId);
+    return c ? c : FindCamera(g_scene.activeCameraId);
+}
+
+// ============================================================
+//  One viewport = one surface + one camera. The GPU is idle between viewports
+//  (EndFrame waits), so the constant buffer slots are simply reused.
+// ============================================================
+static void RenderViewport(int vp)
+{
+    GhostCamera* cam = ViewportCamera(vp);
+    if (!cam || !g_vp[vp].visible) return;
+    if (!g_rhi->SetCurrentSurface(vp)) return;
+
+    const unsigned int w = g_rhi->GetSurfaceWidth();
+    const unsigned int h = g_rhi->GetSurfaceHeight();
+    if (w == 0 || h == 0) return;
+
+    const bool  mainView = (vp == 0);
+    const float d2r = GHOST_PI / 180.0f;
+
+    // ---- Matrices ----
+    GhostVec3 eye = cam->position;
+    GhostVec3 forward = AnglesToDir(cam->yawDeg, cam->pitchDeg);
+    GhostVec3 worldUp = { 0.0f, 1.0f, 0.0f };
+    GhostVec3 right = worldUp.Cross(forward).Normalize();
+    GhostMat4 view = GhostMat4::LookAtLH(eye, eye + forward, worldUp);
+    GhostMat4 proj = GhostMat4::PerspectiveFovLH(cam->fovDeg * d2r, (float)w / (float)h, 0.1f, 100.0f);
+
+    if (mainView)                                   // picking and dragging use the main view only
+    {
+        g_view = view;
+        g_proj = proj;
+        g_mainEye = eye;
+        g_camR = right;
+        g_camU = forward.Cross(right);
+        g_camF = forward;
+        g_haveCam = true;
+    }
+
+    // ---- Begin frame ----
+    D3D12_CPU_DESCRIPTOR_HANDLE dsv = GhostGetDSV(g_pipeline, vp);
+    g_rhi->BeginFrame(&g_clearColor, dsv);
+
+    GhostSceneCB sceneCB;
+    BuildSceneCB(g_scene, sceneCB);
+    GhostUpdateSceneCB(g_pipeline, &sceneCB);
+
+    // ---- Draw scene objects (one draw per run of faces that share a material) ----
+    unsigned int slot = 0;
+    for (const GhostObject& o : g_scene.objects)
+    {
+        const int       faceCount = GhostMesh_FaceCount(o.meshId);
+        const GhostMat4 model = GhostObjectModel(o);
+        const bool      selected = mainView && (o.id == g_scene.selectedId);   // camera windows show the clean scene
+        const int       hl = selected ? CurrentFace() : -1;
+
+        int f = 0;
+        while (f < faceCount && slot < MAX_SCENE_OBJECTS)
+        {
+            int g = f + 1;
+            while (g < faceCount && GhostMaterial_Equal(o.faces[g], o.faces[f]) && ((g == hl) == (f == hl))) g++;
+
+            const GhostMaterial& m = o.faces[f];
+            const GhostFaceDef& a = GhostMesh_Face(o.meshId, f);
+            const GhostFaceDef& b = GhostMesh_Face(o.meshId, g - 1);
+
+            GhostObjectCB cb = {};
+            cb.model = model;
+            cb.view = view;
+            cb.proj = proj;
+            cb.color[0] = m.tint[0]; cb.color[1] = m.tint[1]; cb.color[2] = m.tint[2]; cb.color[3] = 1.0f;
+            cb.useVertexColor = o.useVertexColor ? 1.0f : 0.0f;
+            cb.pad[0] = selected ? ((f == hl) ? 2.0f : 1.0f) : 0.0f;   // 1 = selected, 2 = selected face
+            cb.uvParams[0] = m.tiling[0]; cb.uvParams[1] = m.tiling[1];
+            cb.uvParams[2] = m.offset[0]; cb.uvParams[3] = m.offset[1];
+            cb.mapParams[0] = (float)m.mapMode;
+            cb.mapParams[1] = m.rotationDeg * d2r;
+            cb.mapParams[2] = (float)m.wrap;
+            cb.mapParams[3] = (float)m.filter;
+
+            GhostUpdateObjectCB(g_pipeline, slot, &cb);
+            GhostDrawMesh(g_rhi, g_pipeline, o.meshId, slot, (unsigned int)m.textureId,
+                a.firstIndex, b.firstIndex + b.indexCount - a.firstIndex);
+            slot++;
+            f = g;
+        }
+    }
+
+    // ---- Icons: main view only ----
+    if (mainView)
+    {
+        for (const GhostLight& l : g_scene.lights)
+        {
+            int state = (l.id == g_scene.selectedId) ? 2 : (l.id == g_hoverId ? 1 : 0);
+            GhostVec3 fwd = LightForward(l);
+            DrawIcon(slot, (int)l.type, l.position, fwd, l.color, state, view, proj);
+            if (l.type == GhostLightType::Directional)
+                DrawIcon(slot, 3, l.position, fwd, l.color, state, view, proj);   // direction arrow
+        }
+
+        static const float kCamColor[3] = { 0.5f, 0.83f, 1.0f };
+        for (const GhostCamera& c : g_scene.cameras)
+        {
+            if (c.id == g_scene.activeCameraId) continue;       // you're looking through this one
+            int state = (c.id == g_scene.selectedId) ? 2 : (c.id == g_hoverId ? 1 : 0);
+            GhostVec3 fwd = AnglesToDir(c.yawDeg, c.pitchDeg);
+            DrawIcon(slot, 4, c.position, fwd, kCamColor, state, view, proj);   // camera glyph
+            DrawIcon(slot, 3, c.position, fwd, kCamColor, state, view, proj);   // direction arrow
+        }
+    }
+
+    g_rhi->EndFrame();
+}
 
 void GhostEngine_Tick()
 {
@@ -728,7 +861,7 @@ void GhostEngine_Tick()
     float dt = (float)(curr.QuadPart - g_prev.QuadPart) / (float)g_freq.QuadPart;
     g_prev = curr;
     // ---- Active camera -> working state (the fly code below keeps using g_eye / g_yaw / g_pitch) ----
-    GhostCamera* cam = ActiveCamera();
+    GhostCamera* cam = InputCamera();
     if (cam)
     {
         g_eye = cam->position;
@@ -791,88 +924,11 @@ void GhostEngine_Tick()
         cam->yawDeg = fmodf(g_yaw * (180.0f / GHOST_PI), 360.0f);
         cam->pitchDeg = g_pitch * (180.0f / GHOST_PI);
     }
-    // ---- Matrices ----
-    GhostVec3 target = g_eye + forward;
-    GhostMat4 view = GhostMat4::LookAtLH(g_eye, target, worldUp);
-    float aspect = (g_height > 0) ? (float)g_width / (float)g_height : 1.0f;
-    GhostMat4 proj = GhostMat4::PerspectiveFovLH(
-        (cam ? cam->fovDeg : 45.0f) * (GHOST_PI / 180.0f), aspect, 0.1f, 100.0f);
-    g_view = view;
-    g_proj = proj;
-    g_camR = right;
-    g_camU = forward.Cross(right);
-    g_camF = forward;
-    g_haveCam = true;
-
-    // ---- Begin frame ----
-    D3D12_CPU_DESCRIPTOR_HANDLE dsv =
-        g_pipeline->dsvHeap->GetCPUDescriptorHandleForHeapStart();
-    g_rhi->BeginFrame(&g_clearColor, dsv);
-    GhostSceneCB sceneCB;
-    BuildSceneCB(g_scene, sceneCB);
-    GhostUpdateSceneCB(g_pipeline, &sceneCB);
-
-    // ---- Draw scene objects (one draw per run of faces that share a material) ----
-    const float deg2rad = GHOST_PI / 180.0f;
-    unsigned int slot = 0;
-    for (const GhostObject& o : g_scene.objects)
-    {
-        const int       faceCount = GhostMesh_FaceCount(o.meshId);
-        const GhostMat4 model = GhostObjectModel(o);
-        const int hl = (o.id == g_scene.selectedId) ? CurrentFace() : -1;   // face to highlight
-        int f = 0;
-        while (f < faceCount && slot < MAX_SCENE_OBJECTS)
-        {
-            int g = f + 1;
-            while (g < faceCount && GhostMaterial_Equal(o.faces[g], o.faces[f]) && ((g == hl) == (f == hl))) g++;
-
-            const GhostMaterial& m = o.faces[f];
-            const GhostFaceDef& a = GhostMesh_Face(o.meshId, f);
-            const GhostFaceDef& b = GhostMesh_Face(o.meshId, g - 1);
-
-            GhostObjectCB cb = {};
-            cb.model = model;
-            cb.view = view;
-            cb.proj = proj;
-            cb.color[0] = m.tint[0]; cb.color[1] = m.tint[1]; cb.color[2] = m.tint[2]; cb.color[3] = 1.0f;
-            cb.useVertexColor = o.useVertexColor ? 1.0f : 0.0f;
-            cb.pad[0] = (o.id == g_scene.selectedId) ? ((f == hl) ? 2.0f : 1.0f) : 0.0f;   // 1 = selected, 2 = selected face
-            cb.uvParams[0] = m.tiling[0]; cb.uvParams[1] = m.tiling[1];
-            cb.uvParams[2] = m.offset[0]; cb.uvParams[3] = m.offset[1];
-            cb.mapParams[0] = (float)m.mapMode;
-            cb.mapParams[1] = m.rotationDeg * deg2rad;
-            cb.mapParams[2] = (float)m.wrap;
-            cb.mapParams[3] = (float)m.filter;
-
-            GhostUpdateObjectCB(g_pipeline, slot, &cb);
-            GhostDrawMesh(g_rhi, g_pipeline, o.meshId, slot, (unsigned int)m.textureId,
-                a.firstIndex, b.firstIndex + b.indexCount - a.firstIndex);
-            slot++;
-            f = g;
-        }
-    }
-    // ---- Light icons (unlit, always on top) ----
-    for (const GhostLight& l : g_scene.lights)
-    {
-        int state = (l.id == g_scene.selectedId) ? 2 : (l.id == g_hoverId ? 1 : 0);
-        GhostVec3 fwd = LightForward(l);
-        DrawIcon(slot, (int)l.type, l.position, fwd, l.color, state, view, proj);
-        if (l.type == GhostLightType::Directional)
-            DrawIcon(slot, 3, l.position, fwd, l.color, state, view, proj);   // direction arrow
-    }
-    // ---- Camera icons (the camera you're looking through has none) ----
-    static const float kCamColor[3] = { 0.5f, 0.83f, 1.0f };
-    for (const GhostCamera& c : g_scene.cameras)
-    {
-        if (c.id == g_scene.activeCameraId) continue;
-        int state = (c.id == g_scene.selectedId) ? 2 : (c.id == g_hoverId ? 1 : 0);
-        GhostVec3 fwd = AnglesToDir(c.yawDeg, c.pitchDeg);
-        DrawIcon(slot, 4, c.position, fwd, kCamColor, state, view, proj);   // camera glyph
-        DrawIcon(slot, 3, c.position, fwd, kCamColor, state, view, proj);   // direction arrow
-    }
-
-    // ---- End frame ----
-    g_rhi->EndFrame();
+    // ---- Render: camera windows first, the main view last (it carries the vsync) ----
+    for (int vp = 1; vp < GHOST_MAX_SURFACES; vp++)
+        if (g_vp[vp].alive) RenderViewport(vp);
+    RenderViewport(0);
+    g_rhi->SetCurrentSurface(0);
 }
 
 void GhostEngine_Resize(unsigned int width, unsigned int height)
@@ -881,8 +937,9 @@ void GhostEngine_Resize(unsigned int width, unsigned int height)
     if (width == 0 || height == 0) return;
     g_width = width;
     g_height = height;
+    g_rhi->SetCurrentSurface(0);
     g_rhi->Resize(width, height);
-    GhostResizeDepthBuffer(g_rhi, g_pipeline, width, height);
+    GhostResizeDepthBuffer(g_rhi, g_pipeline, 0, width, height);
 }
 
 void GhostEngine_Shutdown()
@@ -1069,3 +1126,67 @@ void GhostEngine_SetActiveCamera(int id)
 }
 
 int GhostEngine_GetActiveCamera() { return g_scene.activeCameraId; }
+
+
+// ============================================================
+//  Exported: viewports
+// ============================================================
+int GhostEngine_CreateViewport(HWND hwnd, unsigned int width, unsigned int height, int cameraId)
+{
+    if (!g_rhi || !g_pipeline || !FindCamera(cameraId)) return 0;
+    if (width == 0) width = 1;
+    if (height == 0) height = 1;
+
+    int id = g_rhi->CreateSurface(hwnd, width, height);
+    if (id <= 0) return 0;
+    if (GhostResizeDepthBuffer(g_rhi, g_pipeline, id, width, height) != GHOST_OK)
+    {
+        g_rhi->DestroySurface(id);
+        return 0;
+    }
+    g_vp[id].alive = true;
+    g_vp[id].visible = true;
+    g_vp[id].cameraId = cameraId;
+    return id;
+}
+
+void GhostEngine_DestroyViewport(int vp)
+{
+    if (!g_rhi || !g_pipeline || vp <= 0 || vp >= GHOST_MAX_SURFACES) return;
+    g_rhi->DestroySurface(vp);
+    GhostReleaseDepth(g_pipeline, vp);
+    g_vp[vp] = EngineViewport();
+}
+
+int GhostEngine_RebindViewport(int vp, HWND hwnd, unsigned int width, unsigned int height)
+{
+    if (!g_rhi || !g_pipeline || vp < 0 || vp >= GHOST_MAX_SURFACES || !g_vp[vp].alive) return 0;
+    if (width == 0) width = 1;
+    if (height == 0) height = 1;
+    if (g_rhi->RebindSurface(vp, hwnd, width, height) != GHOST_OK) return 0;
+    GhostResizeDepthBuffer(g_rhi, g_pipeline, vp, width, height);
+    if (vp == 0) { g_width = width; g_height = height; }
+    return 1;
+}
+
+void GhostEngine_ResizeViewport(int vp, unsigned int width, unsigned int height)
+{
+    if (vp == 0) { GhostEngine_Resize(width, height); return; }
+    if (!g_rhi || !g_pipeline || vp < 0 || vp >= GHOST_MAX_SURFACES || !g_vp[vp].alive) return;
+    if (width == 0 || height == 0) return;
+    g_rhi->ResizeSurface(vp, width, height);
+    GhostResizeDepthBuffer(g_rhi, g_pipeline, vp, width, height);
+}
+
+void GhostEngine_SetViewportVisible(int vp, int visible)
+{
+    if (vp <= 0 || vp >= GHOST_MAX_SURFACES) return;       // the main view is always on
+    g_vp[vp].visible = (visible != 0);
+}
+
+void GhostEngine_SetInputViewport(int vp)
+{
+    if (vp < 0 || vp >= GHOST_MAX_SURFACES || !g_vp[vp].alive) { g_inputEnabled = false; return; }
+    g_inputEnabled = true;
+    if (GhostCamera* c = ViewportCamera(vp)) g_inputCameraId = c->id;
+}

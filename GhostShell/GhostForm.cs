@@ -23,7 +23,7 @@ namespace GhostShell
         private Microsoft.Web.WebView2.WinForms.WebView2 _ghostUI;
         private GhostEditorUI _editor = null!;
         private EditorKeyFilter _keyFilter = null!;
-
+        private bool _engineReady;
         public GhostForm()
         {
             InitializeForm();
@@ -162,6 +162,14 @@ namespace GhostShell
         // -------------------------------------------------------
         private void HookEngineEvents()
         {
+            // If WinForms ever recreates the render panel's window (docking can), give the swap chain the new one
+            _renderPanel.HandleCreated += (s, e) =>
+            {
+                if (!_engineReady) return;
+                GhostEngine.GhostEngine_RebindViewport(0, _renderPanel.Handle,
+                    (uint)Math.Max(_renderPanel.ClientSize.Width, 1),
+                    (uint)Math.Max(_renderPanel.ClientSize.Height, 1));
+            };
             // Init engine once the handle exists
             Shown += (s, e) =>
             {
@@ -177,7 +185,7 @@ namespace GhostShell
                     Close();
                     return;
                 }
-
+                _engineReady = true;
                 // Drive the render loop from the message pump idle time
                 Application.Idle += OnIdle;
             };
@@ -226,20 +234,13 @@ namespace GhostShell
             // Drain all pending Windows messages first, then tick
             while (!Win32.PeekMessageExists())
             {
-                GhostEngine.GhostEngine_SetInputEnabled(IsViewportHot() ? 1 : 0);
+                int hot = _ghostUI.Visible ? -1 : _editor.HotViewport();
+                GhostEngine.GhostEngine_SetInputViewport(hot);
                 GhostEngine.GhostEngine_Tick();
             }
         }
 
      
-        // Camera keys and right-mouse look work only while the viewport itself has keyboard focus
-        // and the cursor is over it, so typing in any panel (docked or floating) never moves the camera.
-        private bool IsViewportHot()
-        {
-            if (_ghostUI.Visible) return false;
-            if (!_renderPanel.Focused) return false;
-            return _renderPanel.ClientRectangle.Contains(_renderPanel.PointToClient(Cursor.Position));
-        }
 
         // -------------------------------------------------------
         // Menu callbacks

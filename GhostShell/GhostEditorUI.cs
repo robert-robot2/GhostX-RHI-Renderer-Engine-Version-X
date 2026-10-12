@@ -233,7 +233,12 @@ namespace GhostShell
                 else System.Media.SystemSounds.Beep.Play();     // there is always one main view camera
             }
         }
-
+        [Category("Camera"), DisplayName("Show Viewport")]
+        public bool ShowViewport
+        {
+            get => GhostViewportManager.Instance?.IsShown(_id) ?? false;
+            set => GhostViewportManager.Instance?.SetShown(_id, value);
+        }
         [Category("Camera"), DisplayName("Yaw (deg)")]
         public float Yaw { get => Get().yawDeg; set { var i = Get(); i.yawDeg = value; Set(i); } }
 
@@ -572,7 +577,7 @@ namespace GhostShell
 
         private int _dragIndex = -1;
         private Point _dragStart;
-
+        private GhostViewportManager _vp = null!;
         public GhostEditorUI(Form form, Panel viewport) { _form = form; _viewport = viewport; }
 
         // -------------------------------------------------------
@@ -700,7 +705,7 @@ namespace GhostShell
             timer.Start();
             _form.FormClosing += (s, e) => timer.Stop();
         }
-
+        public int HotViewport() => _vp.HotViewport();
         // -------------------------------------------------------
         //  Visibility + keys
         // -------------------------------------------------------
@@ -751,7 +756,7 @@ namespace GhostShell
             return false;
         }
 
-        private static bool IsTyping() => IsTypingIn(Control.FromHandle(GhostShell.Win32.GetFocus()));
+        internal static bool IsTyping() => IsTypingIn(Control.FromHandle(GhostShell.Win32.GetFocus()));
 
         // -------------------------------------------------------
         //  Docking
@@ -760,7 +765,7 @@ namespace GhostShell
         {
             _dock = new DockPanel { Dock = DockStyle.Fill, BackColor = Bg2 };
             _dock.Theme = new VS2015DarkTheme();
-
+            _vp = new GhostViewportManager(_dock, _viewport);
             // The viewport is the main document and can't be closed
             _dockViewport = new PanelDock("Viewport", "Viewport", _viewport, DockAreas.Document | DockAreas.Float, false);
             _dockPalette = new PanelDock("Palette", "Palette", _left, ToolAreas);
@@ -940,6 +945,7 @@ namespace GhostShell
                    : kind == "cam" ? GhostEngine.GhostEngine_AddCamera(x, y)
                                      : GhostEngine.GhostEngine_AddObject(type, x, y);
             if (id == 0) System.Media.SystemSounds.Beep.Play();   // scene is full (or 4 cameras already)
+            else if (kind == "cam") _vp.Open(id);
             Sync();
         }
         private void OnViewportDrag(object? sender, DragEventArgs e)
@@ -1055,6 +1061,9 @@ namespace GhostShell
             }
             _tree.EndUpdate();
             _syncing = false;
+            var camIds = new HashSet<int>();
+            for (int i = 0; i < n; i++) if (buf[i].kind == 2) camIds.Add(buf[i].id);
+            _vp.SyncCameras(camIds);                       // a deleted camera takes its window with it
         }
 
         private void SelectNode(int id)

@@ -83,7 +83,8 @@ struct GhostPipeline
     ComPtr<ID3D12Resource> sceneBuffer;
     void* sceneMappedData = nullptr;
     // ---- Depth Buffer ----
-    ComPtr<ID3D12Resource>       depthBuffer;
+    ComPtr<ID3D12Resource>       depthBuffers[GHOST_MAX_SURFACES];
+    unsigned int                 dsvIncrement = 0;
     ComPtr<ID3D12DescriptorHeap> dsvHeap; 
 
     D3D12_VIEWPORT viewport = {};
@@ -117,5 +118,7 @@ void GhostDrawMesh(IGhostRHI* rhi, GhostPipeline* pipeline, int meshId, unsigned
 void GhostDrawIcon(IGhostRHI* rhi, GhostPipeline* pipeline, unsigned int slot);
 
 // ---- Resize ----
-GhostResult GhostResizeDepthBuffer(IGhostRHI* rhi, GhostPipeline* pipeline,
+GhostResult GhostResizeDepthBuffer(IGhostRHI* rhi, GhostPipeline* pipeline, int surfaceId,
     unsigned int width, unsigned int height);
+D3D12_CPU_DESCRIPTOR_HANDLE GhostGetDSV(GhostPipeline* pipeline, int surfaceId);
+void GhostReleaseDepth(GhostPipeline* pipeline, int surfaceId);

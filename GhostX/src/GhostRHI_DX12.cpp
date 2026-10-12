@@ -7,7 +7,7 @@
 #include <d3d12.h>
 #include <dxgi1_6.h>
 #include <Windows.h>
-
+#include <utility>
 // ============================================================
 //  Factory
 // ============================================================
@@ -77,7 +77,7 @@ GhostResult GhostRHI_DX12::Init(HWND hwnd, unsigned int width, unsigned int heig
 
     // ---- RTV Heap ----
     D3D12_DESCRIPTOR_HEAP_DESC rtvDesc = {};
-    rtvDesc.NumDescriptors = FRAME_COUNT;
+    rtvDesc.NumDescriptors = FRAME_COUNT * GHOST_MAX_SURFACES;
     rtvDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
     m_device->CreateDescriptorHeap(&rtvDesc, IID_PPV_ARGS(&m_rtvHeap));
     m_rtvDescSize = m_device->GetDescriptorHandleIncrementSize(
@@ -113,7 +113,8 @@ GhostResult GhostRHI_DX12::Init(HWND hwnd, unsigned int width, unsigned int heig
     m_frameIndex = m_swapChain->GetCurrentBackBufferIndex();
 
     RebuildRTVs();
-
+    m_surfaces[0].alive = true;
+    m_cur = 0;
     return GHOST_OK;
 }
 
@@ -188,7 +189,7 @@ void GhostRHI_DX12::EndFrame()
 
     ID3D12CommandList* lists[] = { m_cmdList.Get() };
     m_cmdQueue->ExecuteCommandLists(1, lists);
-    m_swapChain->Present(1, 0);
+    m_swapChain->Present(m_cur == 0 ? 1 : 0, 0);
 
     FlushGPU();
     m_frameIndex = m_swapChain->GetCurrentBackBufferIndex();
@@ -200,6 +201,7 @@ void GhostRHI_DX12::EndFrame()
 
 void GhostRHI_DX12::Resize(unsigned int width, unsigned int height)
 {
+    if (!m_swapChain) return;
     if (width == 0 || height == 0) return;
 
     FlushGPU();
@@ -245,7 +247,7 @@ D3D12_CPU_DESCRIPTOR_HANDLE GhostRHI_DX12::GetRTV()
 {
     D3D12_CPU_DESCRIPTOR_HANDLE rtv =
         m_rtvHeap->GetCPUDescriptorHandleForHeapStart();
-    rtv.ptr += (SIZE_T)m_frameIndex * m_rtvDescSize;
+    rtv.ptr += (SIZE_T)(m_cur * FRAME_COUNT + m_frameIndex) * m_rtvDescSize;
     return rtv;
 }
 GhostResult GhostRHI_DX12::ExecuteOneShot(
@@ -282,6 +284,7 @@ void GhostRHI_DX12::RebuildRTVs()
 {
     D3D12_CPU_DESCRIPTOR_HANDLE handle =
         m_rtvHeap->GetCPUDescriptorHandleForHeapStart();
+    handle.ptr += (SIZE_T)m_cur * FRAME_COUNT * m_rtvDescSize;
 
     for (int i = 0; i < FRAME_COUNT; i++)
     {
@@ -291,4 +294,136 @@ void GhostRHI_DX12::RebuildRTVs()
             m_renderTargets[i].Get(), nullptr, handle);
         handle.ptr += m_rtvDescSize;
     }
+}
+
+// ============================================================
+//  Surfaces
+// ============================================================
+void GhostRHI_DX12::StashCurrent()
+{
+    SurfaceSlot& s = m_surfaces[m_cur];
+    s.hwnd = m_hwnd; s.width = m_width; s.height = m_height; s.frameIndex = m_frameIndex;
+    s.swapChain = std::move(m_swapChain);
+    for (int i = 0; i < FRAME_COUNT; i++) s.renderTargets[i] = std::move(m_renderTargets[i]);
+}
+
+void GhostRHI_DX12::LoadSlot(int id)
+{
+    SurfaceSlot& s = m_surfaces[id];
+    m_cur = id;
+    m_hwnd = s.hwnd; m_width = s.width; m_height = s.height; m_frameIndex = s.frameIndex;
+    m_swapChain = std::move(s.swapChain);
+    for (int i = 0; i < FRAME_COUNT; i++) m_renderTargets[i] = std::move(s.renderTargets[i]);
+}
+
+bool GhostRHI_DX12::SetCurrentSurface(int id)
+{
+    if (id < 0 || id >= GHOST_MAX_SURFACES || !m_surfaces[id].alive) return false;
+    if (id == m_cur) return true;
+    if (!m_surfaces[id].swapChain) return false;      // a failed rebind left it without a swap chain
+    StashCurrent();
+    LoadSlot(id);
+    return true;
+}
+
+bool GhostRHI_DX12::MakeSwapChain(HWND hwnd, unsigned int w, unsigned int h,
+    ComPtr<IDXGISwapChain3>& out)
+{
+    ComPtr<IDXGIFactory4> factory;
+    if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)))) return false;
+
+    DXGI_SWAP_CHAIN_DESC1 scd = {};
+    scd.BufferCount = FRAME_COUNT;
+    scd.Width = w;
+    scd.Height = h;
+    scd.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    scd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+    scd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+    scd.SampleDesc.Count = 1;
+
+    ComPtr<IDXGISwapChain1> sc1;
+    if (FAILED(factory->CreateSwapChainForHwnd(m_cmdQueue.Get(), hwnd, &scd, nullptr, nullptr, &sc1)))
+        return false;
+    return SUCCEEDED(sc1.As(&out));
+}
+
+int GhostRHI_DX12::CreateSurface(HWND hwnd, unsigned int width, unsigned int height)
+{
+    int id = -1;
+    for (int i = 1; i < GHOST_MAX_SURFACES; i++)
+        if (!m_surfaces[i].alive) { id = i; break; }
+    if (id < 0) return -1;
+    if (width == 0) width = 1;
+    if (height == 0) height = 1;
+
+    ComPtr<IDXGISwapChain3> sc;
+    if (!MakeSwapChain(hwnd, width, height, sc)) return -1;
+
+    SurfaceSlot& s = m_surfaces[id];
+    s.alive = true;
+    s.hwnd = hwnd;
+    s.width = width;
+    s.height = height;
+    s.frameIndex = sc->GetCurrentBackBufferIndex();
+    s.swapChain = sc;
+
+    int prev = m_cur;
+    SetCurrentSurface(id);
+    RebuildRTVs();
+    SetCurrentSurface(prev);
+    return id;
+}
+
+void GhostRHI_DX12::DestroySurface(int id)
+{
+    if (id <= 0 || id >= GHOST_MAX_SURFACES || !m_surfaces[id].alive) return;
+    FlushGPU();
+    if (m_cur == id) SetCurrentSurface(0);
+
+    SurfaceSlot& s = m_surfaces[id];
+    for (int i = 0; i < FRAME_COUNT; i++) s.renderTargets[i].Reset();
+    s.swapChain.Reset();
+    s.alive = false;
+    s.hwnd = nullptr;
+    s.width = s.height = 0;
+}
+
+// The window behind a surface was recreated by WinForms: give the surface a swap chain for the new one
+GhostResult GhostRHI_DX12::RebindSurface(int id, HWND hwnd, unsigned int width, unsigned int height)
+{
+    if (id < 0 || id >= GHOST_MAX_SURFACES || !m_surfaces[id].alive) return GHOST_FAIL;
+    if (width == 0) width = 1;
+    if (height == 0) height = 1;
+
+    FlushGPU();
+    int prev = m_cur;
+    SetCurrentSurface(id);
+
+    for (int i = 0; i < FRAME_COUNT; i++) m_renderTargets[i].Reset();
+    m_swapChain.Reset();
+
+    GhostResult r = GHOST_FAIL;
+    if (MakeSwapChain(hwnd, width, height, m_swapChain))
+    {
+        m_hwnd = hwnd;
+        m_width = width;
+        m_height = height;
+        m_frameIndex = m_swapChain->GetCurrentBackBufferIndex();
+        RebuildRTVs();
+        r = GHOST_OK;
+    }
+    else
+    {
+        m_width = m_height = 0;               // the engine skips a surface with no size
+    }
+    SetCurrentSurface(prev);
+    return r;
+}
+
+void GhostRHI_DX12::ResizeSurface(int id, unsigned int width, unsigned int height)
+{
+    int prev = m_cur;
+    if (!SetCurrentSurface(id)) return;
+    Resize(width, height);
+    SetCurrentSurface(prev);
 }

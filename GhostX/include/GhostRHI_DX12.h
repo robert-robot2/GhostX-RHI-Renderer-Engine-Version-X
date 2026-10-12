@@ -28,16 +28,39 @@ public:
     D3D12_CPU_DESCRIPTOR_HANDLE GetRTV()     override;
     GhostResult ExecuteOneShot(
         const std::function<void(ID3D12GraphicsCommandList*)>& record) override;
+    int          CreateSurface(HWND hwnd, unsigned int width, unsigned int height) override;
+    void         DestroySurface(int id) override;
+    GhostResult  RebindSurface(int id, HWND hwnd, unsigned int width, unsigned int height) override;
+    void         ResizeSurface(int id, unsigned int width, unsigned int height) override;
+    bool         SetCurrentSurface(int id) override;
+    int          GetCurrentSurface() override { return m_cur; }
+    unsigned int GetSurfaceWidth() override { return m_width; }
+    unsigned int GetSurfaceHeight() override { return m_height; }
+
+
+
 private:
     void FlushGPU();
     void RebuildRTVs();
+    void StashCurrent();
+    void LoadSlot(int id);
+    bool MakeSwapChain(HWND hwnd, unsigned int w, unsigned int h, ComPtr<IDXGISwapChain3>& out);
 
     HWND         m_hwnd = nullptr;
     unsigned int m_width = 0;
     unsigned int m_height = 0;
 
     static constexpr int FRAME_COUNT = 2;
-
+    struct SurfaceSlot
+    {
+        bool         alive = false;
+        HWND         hwnd = nullptr;
+        unsigned int width = 0, height = 0, frameIndex = 0;
+        ComPtr<IDXGISwapChain3> swapChain;
+        ComPtr<ID3D12Resource>  renderTargets[FRAME_COUNT];
+    };
+    SurfaceSlot m_surfaces[GHOST_MAX_SURFACES];
+    int         m_cur = 0;
     ComPtr<ID3D12Device>              m_device;
     ComPtr<ID3D12CommandQueue>        m_cmdQueue;
     ComPtr<IDXGISwapChain3>           m_swapChain;

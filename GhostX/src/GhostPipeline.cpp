@@ -108,9 +108,10 @@ bool GhostGetMeshCPU(int meshId, const GhostVertex** verts,
 
 static GhostResult CreateDepthBuffer(ID3D12Device* device,
     unsigned int width, unsigned int height,
-    GhostPipeline* p)
+    GhostPipeline* p, int surfaceId)
 {
-    p->depthBuffer.Reset();
+    if (surfaceId < 0 || surfaceId >= GHOST_MAX_SURFACES) return GHOST_FAIL;
+    p->depthBuffers[surfaceId].Reset();
 
     D3D12_HEAP_PROPERTIES depthHeapProps = {};
     depthHeapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
@@ -133,17 +134,16 @@ static GhostResult CreateDepthBuffer(ID3D12Device* device,
     HRESULT hr = device->CreateCommittedResource(
         &depthHeapProps, D3D12_HEAP_FLAG_NONE, &depthDesc,
         D3D12_RESOURCE_STATE_DEPTH_WRITE, &depthClear,
-        IID_PPV_ARGS(&p->depthBuffer));
-
+        IID_PPV_ARGS(&p->depthBuffers[surfaceId]));
     if (FAILED(hr)) return GHOST_FAIL;
 
     D3D12_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
     dsvDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
     dsvDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
-    device->CreateDepthStencilView(
-        p->depthBuffer.Get(), &dsvDesc,
-        p->dsvHeap->GetCPUDescriptorHandleForHeapStart());
 
+    D3D12_CPU_DESCRIPTOR_HANDLE h = p->dsvHeap->GetCPUDescriptorHandleForHeapStart();
+    h.ptr += (SIZE_T)surfaceId * p->dsvIncrement;
+    device->CreateDepthStencilView(p->depthBuffers[surfaceId].Get(), &dsvDesc, h);
     return GHOST_OK;
 }
 
@@ -443,12 +443,12 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
     p->srvIncrement = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     // ---- DSV Heap + Depth Buffer ----
     D3D12_DESCRIPTOR_HEAP_DESC dsvHeapDesc = {};
-    dsvHeapDesc.NumDescriptors = 1;
+    dsvHeapDesc.NumDescriptors = GHOST_MAX_SURFACES;
     dsvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
     dsvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
     device->CreateDescriptorHeap(&dsvHeapDesc, IID_PPV_ARGS(&p->dsvHeap));
-
-    CreateDepthBuffer(device, desc->width, desc->height, p);
+    p->dsvIncrement = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
+    CreateDepthBuffer(device, desc->width, desc->height, p, 0);
 
     *outPipeline = p;
     return GHOST_OK;
@@ -585,7 +585,7 @@ void GhostDrawIcon(IGhostRHI* rhi, GhostPipeline* p, unsigned int slot)
     cmd->SetGraphicsRootConstantBufferView(1, p->sceneBuffer->GetGPUVirtualAddress());
     cmd->SetGraphicsRootDescriptorTable(2, p->cbvHeap->GetGPUDescriptorHandleForHeapStart());
     D3D12_CPU_DESCRIPTOR_HANDLE rtv = rhi->GetRTV();
-    D3D12_CPU_DESCRIPTOR_HANDLE dsv = p->dsvHeap->GetCPUDescriptorHandleForHeapStart();
+    D3D12_CPU_DESCRIPTOR_HANDLE dsv = GhostGetDSV(p, rhi->GetCurrentSurface());
     cmd->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
 
     cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -611,7 +611,7 @@ void GhostDrawMesh(IGhostRHI* rhi, GhostPipeline* p, int meshId, unsigned int sl
     srv.ptr += (UINT64)textureIndex * p->srvIncrement;
     cmd->SetGraphicsRootDescriptorTable(2, srv);
     D3D12_CPU_DESCRIPTOR_HANDLE rtv = rhi->GetRTV();
-    D3D12_CPU_DESCRIPTOR_HANDLE dsv = p->dsvHeap->GetCPUDescriptorHandleForHeapStart();
+    D3D12_CPU_DESCRIPTOR_HANDLE dsv = GhostGetDSV(p, rhi->GetCurrentSurface());
     cmd->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
 
     cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -625,10 +625,22 @@ void GhostDrawMesh(IGhostRHI* rhi, GhostPipeline* p, int meshId, unsigned int sl
 //  Resize + Destroy
 // ============================================================
 
-GhostResult GhostResizeDepthBuffer(IGhostRHI* rhi, GhostPipeline* pipeline,
+GhostResult GhostResizeDepthBuffer(IGhostRHI* rhi, GhostPipeline* pipeline, int surfaceId,
     unsigned int width, unsigned int height)
 {
-    return CreateDepthBuffer(rhi->GetDevice(), width, height, pipeline);
+    return CreateDepthBuffer(rhi->GetDevice(), width, height, pipeline, surfaceId);
+}
+
+D3D12_CPU_DESCRIPTOR_HANDLE GhostGetDSV(GhostPipeline* p, int surfaceId)
+{
+    D3D12_CPU_DESCRIPTOR_HANDLE h = p->dsvHeap->GetCPUDescriptorHandleForHeapStart();
+    h.ptr += (SIZE_T)surfaceId * p->dsvIncrement;
+    return h;
+}
+
+void GhostReleaseDepth(GhostPipeline* p, int surfaceId)
+{
+    if (surfaceId >= 0 && surfaceId < GHOST_MAX_SURFACES) p->depthBuffers[surfaceId].Reset();
 }
 
 void GhostPipelineDestroy(GhostPipeline* pipeline)

@@ -107,5 +107,11 @@ extern "C"
     // Nearest object under a client position (light icons ignored). Returns 0 if none.
     // outFace = face under the cursor, or -1.
     GHOST_API int GhostEngine_PickObjectAt(int x, int y, int* outFace);
-
+    // ---- Viewports (0 = main view, created by Init; 1..4 = camera windows) ----
+    GHOST_API int  GhostEngine_CreateViewport(HWND hwnd, unsigned int width, unsigned int height, int cameraId);  // vp id, 0 = failed
+    GHOST_API void GhostEngine_DestroyViewport(int vp);
+    GHOST_API int  GhostEngine_RebindViewport(int vp, HWND hwnd, unsigned int width, unsigned int height);
+    GHOST_API void GhostEngine_ResizeViewport(int vp, unsigned int width, unsigned int height);
+    GHOST_API void GhostEngine_SetViewportVisible(int vp, int visible);
+    GHOST_API void GhostEngine_SetInputViewport(int vp);     // viewport that has keyboard focus + cursor, -1 = none
 }

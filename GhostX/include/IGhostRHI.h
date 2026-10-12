@@ -13,6 +13,8 @@ enum class RHIType
     OpenGL,   // not yet implemented
 };
 
+constexpr int GHOST_MAX_SURFACES = 5;     // surface 0 = main view, 1..4 = camera windows
+
 // ---- The interface ----
 // Nobody above this layer ever sees a ComPtr, a VkDevice, or a DXGI type.
 // GhostPipeline is the one exception: it is DX12-specific today and will
@@ -56,6 +58,16 @@ public:
 // Records into a private list, submits, and waits for the GPU. Call between frames only.
     virtual GhostResult ExecuteOneShot(
         const std::function<void(ID3D12GraphicsCommandList*)>& record) = 0;
+    // ---- Surfaces (one swap chain per viewport window) ----
+    virtual int          CreateSurface(HWND hwnd, unsigned int width, unsigned int height) = 0;   // id >= 1, or -1
+    virtual void         DestroySurface(int id) = 0;
+    virtual GhostResult  RebindSurface(int id, HWND hwnd, unsigned int width, unsigned int height) = 0;
+    virtual void         ResizeSurface(int id, unsigned int width, unsigned int height) = 0;
+    // Picks the surface that BeginFrame / EndFrame / GetRTV / Resize act on
+    virtual bool         SetCurrentSurface(int id) = 0;
+    virtual int          GetCurrentSurface() = 0;
+    virtual unsigned int GetSurfaceWidth() = 0;
+    virtual unsigned int GetSurfaceHeight() = 0;
 };
 
 // ---- Factory ----
