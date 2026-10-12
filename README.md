@@ -93,9 +93,7 @@ GhostX is a custom game engine built on a **native C++ DirectX 12 renderer (RHI-
 ### ⚙️ Engine API
 Exports for objects, lights, cameras, materials, textures, viewports, mouse input and scene versioning, each with a P/Invoke on the C# side.
 
-<img width="1920" height="1080" alt="Screenshot 2026-10-11 213043" src="https://github.com/user-attachments/assets/763ee6b5-50eb-4b87-a1d5-a8548ab45934" />
-
-
+---
 
 ## Blazor WASM Integration Instructions
 
