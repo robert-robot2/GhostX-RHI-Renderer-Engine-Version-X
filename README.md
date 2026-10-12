@@ -16,10 +16,11 @@ A Windows desktop application that fuses a raw **DirectX 12 RHI rendering engine
 - 🔗 **JS Interop Bridge** — communication between the Blazor frontend and the DX12 backend
 - 📦 **Self-contained** — no external servers, everything runs locally
 ## Recently Added 
-- Visual Studio click drag drop windows
-- Multiple Free Camera Drop and Drag Support
+- Visual Studio Docker Suite click drag drop windows
+- Multiple Free Camera Drop and Drag 
 - Texture Support
-- Primitive Object Support
+- Primitive Object 
+- Multiple Camera Viewport 
 ## 💡 LIGHTING
 - Removed the old fused directional + ambient light.
 - New lighting system, calculated per pixel: Ambient, Directional, Point, and Rect Area lights (up to 16).
