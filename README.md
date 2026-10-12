@@ -1,97 +1,148 @@
-# Ghost Version X
+<div align="center">
 
-# MOAR UPDATES FASTER 
 # 👻 GhostX Version X 👻💡🧊💡👻
-> **DirectX12 RHI Renderer · WinForms Shell · Blazor WASM UI**
 
-A Windows desktop application that fuses a raw **DirectX 12 RHI rendering engine** with a **Blazor WebAssembly UI** hosted inside a WinForms shell via WebView2. The native DX12 renderer runs alongside the Blazor frontend, enabling real-time GPU-driven graphics controlled through a modern web-based interface — all in a single application.
+**A from-scratch DirectX 12 game engine with a Visual Studio-style editor**
+
+![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-blue)
+![Graphics](https://img.shields.io/badge/graphics-DirectX%2012-green)
+![UI](https://img.shields.io/badge/editor-WinForms%20%2B%20DockPanelSuite-orange)
+![License](https://img.shields.io/badge/license-MIT-lightgrey)
+
+<img width="1920" height="1080" alt="GhostX editor" src="https://github.com/user-attachments/assets/478c682a-0084-4388-8f77-19ab7e2ab84f" />
+
+</div>
+
+GhostX is a custom game engine built on a **native C++ DirectX 12 renderer (RHI-style)** with a **C# WinForms editor shell**. Drag lights, primitives and cameras into a live scene, texture them, and fly through multiple camera viewports, all in one dockable editor.
 
 ---
 
 ## Features
 
-- 🎮 **DirectX 12 RHI Renderer** — low-level GPU rendering pipeline with full DX12 control
-- 🌐 **Blazor WASM UI** — browser-based UI layer hosted in-process via WebView2
-- 🪟 **WinForms Shell** — native Windows host with dropdown menus and window management
-- 🔗 **JS Interop Bridge** — communication between the Blazor frontend and the DX12 backend
-- 📦 **Self-contained** — no external servers, everything runs locally
-## Recently Added 
-- Visual Studio Docker Suite click drag drop windows
-- Multiple Free Camera Drop and Drag 
-- Texture Support
-- Primitive Object 
-- Multiple Camera Viewports
-- Shift Click Face Selection
-## 💡 LIGHTING
-- Removed the old fused directional + ambient light.
-- New lighting system, calculated per pixel: Ambient, Directional, Point, and Rect Area lights (up to 16).
-- Point and Rect lights have smooth range falloff.
-- Rect lights are one-sided.
-- Gamma-correct output, and back faces now light correctly.
-- Fixed the triangle mesh normals.
+- 🎮 **DirectX 12 renderer** behind an RHI interface, so other backends can be added later
+- 💡 **Per-pixel lighting:** ambient, directional, point and rect area lights (up to 16)
+- 🧊 **Textures:** import PNG/JPG/BMP, per-face materials, six UV mapping modes
+- 🎥 **Cameras:** drop up to 4 Free Cameras, each with its own live viewport window
+- 🪟 **Dockable editor:** every panel docks, tabs, floats and auto-hides, and the layout is saved
+- 🖱️ **Click, drag and drop:** select, move and spawn everything in the viewport
+- 🔗 **Native/managed bridge:** a C++ engine DLL driven from C# through P/Invoke
+- 🌐 **Blazor WASM UI (experimental):** an optional web UI hosted in WebView2
 
-## 🌎 SCENE
-- New backend-agnostic scene model: objects and lights share one ID space.
-- Per-object constant buffers (up to 256 slots) replace the four hard-coded object slots.
-- New mesh registry: Cube, Triangle, and Ship.
-- Dropped primitives default to grey.
-- Scene Settings holds the ambient color and intensity.
+## Editor at a glance
 
-## 🖥️ VIEWPORT
-- Lights now have in-scene icons: sun, bulb, and panel, plus a direction arrow for directional lights.
-- Icons stay a constant screen size, draw on top, and highlight on hover and selection.
-- Click to select any object or light, and drag it on a camera-facing plane.
-- Selected objects get an orange tint.
-- Camera keys and right-mouse look only work while the viewport has focus.
+| Panel | What it does |
+|---|---|
+| **Palette** | Lighting, Primitives and Cameras. Drag an item into the viewport, or double-click to spawn at screen center |
+| **Viewport** | The main view. Select, drag and drop, with right-mouse look and WASD |
+| **Hierarchy** | Scene Settings, objects, lights and cameras. Double-click a camera to make it the main view |
+| **Details** | Properties of the selection: transform, material, light and camera settings. Updates live while you drag |
+| **Content Browser** | Texture thumbnails, Import button, drag-and-drop from Explorer |
+| **Camera windows** | One live window per dropped camera, floating or docked |
 
-## 🎥 CAMERA
-- Fixed the mirrored X axis: LookAt handedness, strafe direction, and mouse-look yaw.
-- The projection now uses the real viewport aspect ratio, so resizing no longer stretches the image.
+## Controls
 
-## 🛠️ ENGINE UI
-- **Left Panel:** Lighting / Primitives palette. Drag an item into the viewport, or double-click to spawn it at screen center.
-- **Right Panel:** Scene hierarchy, with the selected item's details below it.
-- **Details Panel (`PropertyGrid`):** Position, Rotation and Scale, color, intensity, range, yaw/pitch, and rect size. It updates live while you drag in the viewport.
-- **Bottom Panel:** Content Browser placeholder for mesh imports.
-- Press `4` or use **View > Toggle Engine UI** to hide and show all panels.
-- Press `Delete` to remove the selection.
+| Input | Action |
+|---|---|
+| Right mouse + move | Look around |
+| `W` `A` `S` `D` | Move the active camera |
+| `Space` / `Ctrl` | Move up / down |
+| Left click | Select an object, light or camera |
+| Left drag | Move the selection on a camera-facing plane |
+| `Shift` + left click | Pick one face of an object (click again for All Faces) |
+| `Delete` | Delete the selection (the last camera can't be deleted) |
+| `4` | Hide or show all tool panels |
+| Drag a texture tile onto an object | Apply it (hold `Shift` for one face) |
 
-## ⚙️ ENGINE API
-- New exports for add/remove/select, enumerate, get/set object, get/set light, ambient, and scene version.
-- New mouse input exports: down, move, up, and leave.
-<img width="1920" height="1080" alt="Screenshot 2026-10-11 201414" src="https://github.com/user-attachments/assets/478c682a-0084-4388-8f77-19ab7e2ab84f" />
+> Camera keys only work while a viewport has focus, so typing in a panel never moves the camera.
 
-<img width="1920" height="1080" alt="Screenshot 2026-10-11 145248" src="https://github.com/user-attachments/assets/13b5d341-8699-47bb-92d2-85f466babe6a" />
+## What's New
 
+### 🪟 Docking, camera viewports and resolution
+- VS-style docking with **DockPanelSuite**: dock, tab, float, auto-hide and resize every panel
+- The layout is saved on exit and restored on launch, with a **Window** menu and **Reset Layout**
+- **One swap chain and depth buffer per camera window**, rendered live every frame
+- Click a camera window to fly that camera
+- **Per-camera resolution** (Match Window, or fixed sizes such as 1280×720 and 1920×1080) rendered offscreen and letterboxed, with picking mapped from window pixels to image pixels
 
+### 🎥 Cameras
+- **Free Camera** entities with their own icon and direction arrow
+- Position, Yaw, Pitch and FOV in Details, plus a **Main View Camera** switch
+- Limit of 4 cameras, and the last camera can never be deleted
 
+### 🧊 Textures and materials
+- Import PNG, JPG and BMP from a dialog or by dragging files from Explorer
+- Content Browser with thumbnails, and drag a tile onto an object to texture it
+- Per-face materials with mapping modes: **Mesh UV, Box, Planar XY/XZ/YZ, Cylindrical, Spherical, Cube Cross**
+- Tiling, offset, rotation, wrap, filter and tint
+- sRGB textures with generated mip chains, and a resize option that re-uploads at any size up to 4096
+- **Shift+click face selection** with a glow highlight
 
+### 💡 Lighting
+- Ambient, directional, point and rect area lights, calculated per pixel
+- Smooth range falloff, one-sided rect lights, gamma-correct output
+- Viewport icons that stay a constant screen size, with hover and selection highlights
 
+### 🌎 Scene and engine
+- Backend-agnostic scene model: objects, lights and cameras share one ID space
+- Per-object constant buffers (up to 1024 slots), and a mesh registry (Cube, Triangle, Ship)
+- Mouse-ray picking with exact ray-triangle tests for faces
+- Fixed the mirrored X axis (LookAt handedness, strafe direction, mouse-look yaw)
+- The projection uses the real viewport aspect ratio
+
+### ⚙️ Engine API
+Exports for objects, lights, cameras, materials, textures, viewports, mouse input and scene versioning, each with a P/Invoke on the C# side.
+
+<img width="1920" height="1080" alt="Screenshot 2026-10-11 213043" src="https://github.com/user-attachments/assets/763ee6b5-50eb-4b87-a1d5-a8548ab45934" />
 
 
 
 ## Blazor WASM Integration Instructions
 
 ---
+## Architecture
 
+```mermaid
+flowchart LR
+    subgraph Shell["GhostShell (C# WinForms)"]
+        UI["Editor UI<br/>DockPanelSuite"]
+        VM["Viewport manager"]
+        AS["Asset library"]
+    end
+    subgraph Engine["GhostX.dll (C++)"]
+        SC["Scene model"]
+        PL["Pipeline"]
+        RHI["IGhostRHI"]
+    end
+    DX["DirectX 12"]
+
+    UI -- "P/Invoke" --> SC
+    VM -- "viewports" --> RHI
+    AS -- "texture pixels" --> PL
+    SC --> PL --> RHI --> DX
+```
 ## Project Structure
 
 ```
-GhostXV0.0.9/
-├── GhostShell/               # C# WinForms host application
-│   ├── Program.cs            # Entry point, launches UI host and WinForms app
-│   ├── GhostForm.cs          # Main application window
-│   ├── GhostMenuBuilder.cs   # Dropdown menu construction
-│   ├── GhostUIHost.cs        # WebView2 Blazor host controller
-│   ├── GhostEngine.cs        # DirectX 12 RHI engine integration
-│   └── wwwroot/              # Published Blazor WASM output (copied here)
-├── GhostBlazorUI/            # Blazor WebAssembly frontend
-│   ├── Program.cs            # Blazor WASM entry point
-│   ├── wwwroot/
-│   │   └── index.html        # Configured for WebView2 hosting
-│   ├── Pages/                # Razor pages
-│   └── Layout/               # NavMenu and layout components
-└── GhostX.slnx               # Visual Studio solution file
+GhostX/
+├── GhostX/                        # C++ engine (GhostX.dll)
+│   ├── GhostEngine.cpp / .h       # Exported API, camera, picking, input
+│   ├── GhostScene.h               # Backend-agnostic scene model
+│   ├── GhostPipeline.cpp / .h     # Root signature, PSOs, meshes, textures, offscreen targets
+│   ├── GhostRHI_DX12.cpp / .h     # DX12 device, swap chains, surfaces
+│   ├── IGhostRHI.h                # RHI interface
+│   ├── GhostMath.h                # Vector and matrix math
+│   └── shaders/                   # GhostVS.hlsl, GhostPS.hlsl
+├── GhostShell/                    # C# WinForms editor
+│   ├── GhostForm.cs               # Main window and engine loop
+│   ├── GhostEditorUI.cs           # Palette, hierarchy, Details, docking
+│   ├── GhostDocking.cs            # Dockable window wrapper, key filter
+│   ├── GhostViewports.cs          # Camera windows
+│   ├── GhostAssets.cs             # Texture library and thumbnails
+│   ├── GhostContentBrowser.cs     # Content Browser panel
+│   ├── GhostImageLoader.cs        # Image decoding
+│   ├── GhostEngine.cs             # P/Invoke bindings
+│   └── GhostMenuBuilder.cs        # Menu bar
+└── GhostBlazorUI/                 # Blazor WASM UI (experimental)
 ```
 
 ---
@@ -105,7 +156,7 @@ GhostXV0.0.9/
   - Desktop development with C++ workload
 - [WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/)
 - DirectX 12 compatible GPU
-
+- **NuGet packages (GhostShell):** `DockPanelSuite`, `DockPanelSuite.ThemeVS2015`, `Microsoft.Web.WebView2`
 ---
 
 ## Setup & Installation
@@ -253,6 +304,34 @@ _ghostUI.CoreWebView2.WebMessageReceived += (sender, args) =>
 - The **DX12 renderer** runs in the background, rendering directly to the native window surface
 
 ---
+## Roadmap
+
+- [x] Phase 1: lighting, viewport icons, click/drag, editor panels
+- [x] Phase 2: textures and materials, Free Camera entities
+- [x] Phase 3: dockable editor, live camera viewports, per-camera resolution
+- [ ] Phase 4: FBX mesh import with materials, PBR materials, normal/specular maps, Z-up option
+- [ ] Spot lights
+- [ ] Save / load scenes
+- [ ] Shadows
+- [ ] Antialiasing and an options menu
+- [ ] Visual Studio project workflow for building and modding
+- [ ] Additional camera types
+- [ ] RHI backends: Vulkan, DX11, OpenGL, DX9
+- [ ] 2D tile map support
+
+## Known limitations
+
+- Camera windows show the scene only (no icons or selection highlight)
+- Picking and dragging work in the main view only
+- Camera windows aren't saved in the layout file
+- Viewport titles use WinForms text, since the engine has no text rendering yet
+- Property grid dropdowns use the light WinForms theme
+- 4 cameras maximum, 256 textures maximum
+
+## Credits
+
+- [DockPanelSuite](https://github.com/dockpanelsuite/dockpanelsuite) (MIT) for the docking UI
+
 
 ## License
 
