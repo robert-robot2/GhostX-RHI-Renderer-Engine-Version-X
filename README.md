@@ -21,6 +21,7 @@ A Windows desktop application that fuses a raw **DirectX 12 RHI rendering engine
 - Texture Support
 - Primitive Object 
 - Multiple Camera Viewports
+- Shift Click Face Selection
 ## 💡 LIGHTING
 - Removed the old fused directional + ambient light.
 - New lighting system, calculated per pixel: Ambient, Directional, Point, and Rect Area lights (up to 16).
