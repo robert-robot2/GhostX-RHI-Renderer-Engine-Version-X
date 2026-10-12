@@ -58,6 +58,7 @@ A Windows desktop application that fuses a raw **DirectX 12 RHI rendering engine
 ## ⚙️ ENGINE API
 - New exports for add/remove/select, enumerate, get/set object, get/set light, ambient, and scene version.
 - New mouse input exports: down, move, up, and leave.
+<img width="1920" height="1080" alt="Screenshot 2026-10-11 201414" src="https://github.com/user-attachments/assets/478c682a-0084-4388-8f77-19ab7e2ab84f" />
 
 <img width="1920" height="1080" alt="Screenshot 2026-10-11 145248" src="https://github.com/user-attachments/assets/13b5d341-8699-47bb-92d2-85f466babe6a" />
 
