@@ -44,6 +44,7 @@ namespace GhostShell
         public float yawDeg, pitchDeg;
         public float fovDeg;
         public int isActive;
+        public int resW, resH;
     }
     internal static class GhostEngine
     {
@@ -160,6 +161,23 @@ namespace GhostShell
         public static extern void GhostEngine_SetViewportVisible(int vp, int visible);
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern void GhostEngine_SetInputViewport(int vp);
+
+
+        // ---- Scene files ----
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetProjectRoot([MarshalAs(UnmanagedType.LPUTF8Str)] string path);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_SaveScene([MarshalAs(UnmanagedType.LPUTF8Str)] string path, [Out] byte[] msg, int msgSize);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_LoadScene([MarshalAs(UnmanagedType.LPUTF8Str)] string path, [Out] byte[] msg, int msgSize);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_ClearScene();
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern uint GhostEngine_GetSceneHash();
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetTexturePath(int id, [MarshalAs(UnmanagedType.LPUTF8Str)] string path);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetTexturePath(int id, [Out] byte[] buf, int bufSize);
 
     }
 }

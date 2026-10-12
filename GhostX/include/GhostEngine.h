@@ -42,6 +42,7 @@ struct GhostCameraInfo
     float yawDeg, pitchDeg;
     float fovDeg;
     int   isActive;
+    int   resW, resH;                  // 0, 0 = Match Window
 };
 
 extern "C"
@@ -114,4 +115,13 @@ extern "C"
     GHOST_API void GhostEngine_ResizeViewport(int vp, unsigned int width, unsigned int height);
     GHOST_API void GhostEngine_SetViewportVisible(int vp, int visible);
     GHOST_API void GhostEngine_SetInputViewport(int vp);     // viewport that has keyboard focus + cursor, -1 = none
+    // ---- Scene files (all paths are UTF-8) ----
+    GHOST_API void GhostEngine_SetProjectRoot(const char* path);
+    // Return 0 = failed (msg = reason), 1 = ok, 2 = ok with warnings (msg = warnings, e.g. missing textures)
+    GHOST_API int  GhostEngine_SaveScene(const char* path, char* msg, int msgSize);
+    GHOST_API int  GhostEngine_LoadScene(const char* path, char* msg, int msgSize);
+    GHOST_API void GhostEngine_ClearScene();                       // empty scene + one default camera
+    GHOST_API unsigned int GhostEngine_GetSceneHash();
+    GHOST_API void GhostEngine_SetTexturePath(int id, const char* path);   // remember where an imported texture came from
+    GHOST_API int  GhostEngine_GetTexturePath(int id, char* buf, int bufSize);
 }

@@ -112,6 +112,7 @@ static GhostResult CreateDepthBuffer(ID3D12Device* device,
 {
     if (surfaceId < 0 || surfaceId >= GHOST_MAX_SURFACES) return GHOST_FAIL;
     p->depthBuffers[surfaceId].Reset();
+    p->depthW[surfaceId] = p->depthH[surfaceId] = 0;
 
     D3D12_HEAP_PROPERTIES depthHeapProps = {};
     depthHeapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
@@ -144,6 +145,8 @@ static GhostResult CreateDepthBuffer(ID3D12Device* device,
     D3D12_CPU_DESCRIPTOR_HANDLE h = p->dsvHeap->GetCPUDescriptorHandleForHeapStart();
     h.ptr += (SIZE_T)surfaceId * p->dsvIncrement;
     device->CreateDepthStencilView(p->depthBuffers[surfaceId].Get(), &dsvDesc, h);
+    p->depthW[surfaceId] = width;
+    p->depthH[surfaceId] = height;
     return GHOST_OK;
 }
 
@@ -404,6 +407,26 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
     {
         delete p; return GHOST_FAIL;
     }
+    // ---- Blit PSO: fullscreen quad that shows an offscreen image, no depth ----
+    ComPtr<ID3DBlob> bvs, bps;
+    if (CompileShaderFromFile(L"shaders/GhostVS.hlsl", "BlitVS", "vs_5_0", &bvs) != GHOST_OK ||
+        CompileShaderFromFile(L"shaders/GhostPS.hlsl", "BlitPS", "ps_5_0", &bps) != GHOST_OK)
+    {
+        delete p; return GHOST_FAIL;
+    }
+
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC blitDesc = psoDesc;
+    blitDesc.VS = { bvs->GetBufferPointer(), bvs->GetBufferSize() };
+    blitDesc.PS = { bps->GetBufferPointer(), bps->GetBufferSize() };
+    blitDesc.InputLayout = { nullptr, 0 };
+    blitDesc.DepthStencilState.DepthEnable = FALSE;
+    blitDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+    blitDesc.DSVFormat = DXGI_FORMAT_UNKNOWN;
+
+    if (FAILED(device->CreateGraphicsPipelineState(&blitDesc, IID_PPV_ARGS(&p->blitPso))))
+    {
+        delete p; return GHOST_FAIL;
+    }
 
     D3D12_GRAPHICS_PIPELINE_STATE_DESC iconDesc = psoDesc;
     iconDesc.VS = { ivs->GetBufferPointer(), ivs->GetBufferSize() };
@@ -436,7 +459,7 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
 
     // ---- CBV Heap ----
     D3D12_DESCRIPTOR_HEAP_DESC hd = {};
-    hd.NumDescriptors = GHOST_MAX_TEXTURES;
+    hd.NumDescriptors = GHOST_MAX_TEXTURES + GHOST_MAX_SURFACES;     // textures first, then one SRV per offscreen target
     hd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
     hd.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     device->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&p->cbvHeap));
@@ -448,6 +471,14 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
     dsvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
     device->CreateDescriptorHeap(&dsvHeapDesc, IID_PPV_ARGS(&p->dsvHeap));
     p->dsvIncrement = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
+    // RTV Descriptor
+    D3D12_DESCRIPTOR_HEAP_DESC offRtvDesc = {};
+    offRtvDesc.NumDescriptors = GHOST_MAX_SURFACES;
+    offRtvDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+    offRtvDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+    device->CreateDescriptorHeap(&offRtvDesc, IID_PPV_ARGS(&p->offRtvHeap));
+    p->rtvIncrement = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+
     CreateDepthBuffer(device, desc->width, desc->height, p, 0);
 
     *outPipeline = p;
@@ -584,7 +615,7 @@ void GhostDrawIcon(IGhostRHI* rhi, GhostPipeline* p, unsigned int slot)
         0, p->constantBuffer->GetGPUVirtualAddress() + slot * GHOST_OBJECT_CB_STRIDE);
     cmd->SetGraphicsRootConstantBufferView(1, p->sceneBuffer->GetGPUVirtualAddress());
     cmd->SetGraphicsRootDescriptorTable(2, p->cbvHeap->GetGPUDescriptorHandleForHeapStart());
-    D3D12_CPU_DESCRIPTOR_HANDLE rtv = rhi->GetRTV();
+    D3D12_CPU_DESCRIPTOR_HANDLE rtv = p->rtvOverrideActive ? p->rtvOverride : rhi->GetRTV();
     D3D12_CPU_DESCRIPTOR_HANDLE dsv = GhostGetDSV(p, rhi->GetCurrentSurface());
     cmd->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
 
@@ -610,7 +641,7 @@ void GhostDrawMesh(IGhostRHI* rhi, GhostPipeline* p, int meshId, unsigned int sl
     D3D12_GPU_DESCRIPTOR_HANDLE srv = p->cbvHeap->GetGPUDescriptorHandleForHeapStart();
     srv.ptr += (UINT64)textureIndex * p->srvIncrement;
     cmd->SetGraphicsRootDescriptorTable(2, srv);
-    D3D12_CPU_DESCRIPTOR_HANDLE rtv = rhi->GetRTV();
+    D3D12_CPU_DESCRIPTOR_HANDLE rtv = p->rtvOverrideActive ? p->rtvOverride : rhi->GetRTV();
     D3D12_CPU_DESCRIPTOR_HANDLE dsv = GhostGetDSV(p, rhi->GetCurrentSurface());
     cmd->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
 
@@ -640,7 +671,11 @@ D3D12_CPU_DESCRIPTOR_HANDLE GhostGetDSV(GhostPipeline* p, int surfaceId)
 
 void GhostReleaseDepth(GhostPipeline* p, int surfaceId)
 {
-    if (surfaceId >= 0 && surfaceId < GHOST_MAX_SURFACES) p->depthBuffers[surfaceId].Reset();
+    if (surfaceId >= 0 && surfaceId < GHOST_MAX_SURFACES)
+    {
+        p->depthBuffers[surfaceId].Reset();
+        p->depthW[surfaceId] = p->depthH[surfaceId] = 0;
+    }
 }
 
 void GhostPipelineDestroy(GhostPipeline* pipeline)
@@ -651,4 +686,144 @@ void GhostPipelineDestroy(GhostPipeline* pipeline)
     if (pipeline->sceneMappedData)
         pipeline->sceneBuffer->Unmap(0, nullptr);
     delete pipeline;
+}
+
+// ============================================================
+//  Render resolution: offscreen targets + blit
+//  (every frame ends with a GPU flush, so resources can be replaced between frames)
+// ============================================================
+GhostResult GhostEnsureDepth(IGhostRHI* rhi, GhostPipeline* p, int id, unsigned int w, unsigned int h)
+{
+    if (id < 0 || id >= GHOST_MAX_SURFACES || w == 0 || h == 0) return GHOST_FAIL;
+    if (p->depthBuffers[id] && p->depthW[id] == w && p->depthH[id] == h) return GHOST_OK;
+    return CreateDepthBuffer(rhi->GetDevice(), w, h, p, id);
+}
+
+GhostResult GhostEnsureOffscreen(IGhostRHI* rhi, GhostPipeline* p, int id, unsigned int w, unsigned int h)
+{
+    if (id < 0 || id >= GHOST_MAX_SURFACES || w == 0 || h == 0) return GHOST_FAIL;
+    if (p->offTargets[id] && p->offW[id] == w && p->offH[id] == h) return GHOST_OK;
+
+    ID3D12Device* device = rhi->GetDevice();
+    p->offTargets[id].Reset();
+    p->offW[id] = p->offH[id] = 0;
+
+    D3D12_HEAP_PROPERTIES hp = {};
+    hp.Type = D3D12_HEAP_TYPE_DEFAULT;
+
+    D3D12_RESOURCE_DESC rd = {};
+    rd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    rd.Width = w;
+    rd.Height = h;
+    rd.DepthOrArraySize = 1;
+    rd.MipLevels = 1;
+    rd.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    rd.SampleDesc.Count = 1;
+    rd.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    rd.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+
+    if (FAILED(device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd,
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr, IID_PPV_ARGS(&p->offTargets[id]))))
+        return GHOST_FAIL;
+
+    D3D12_CPU_DESCRIPTOR_HANDLE rtv = GhostGetOffscreenRTV(p, id);
+    device->CreateRenderTargetView(p->offTargets[id].Get(), nullptr, rtv);
+
+    D3D12_SHADER_RESOURCE_VIEW_DESC sd = {};
+    sd.Format = rd.Format;
+    sd.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    sd.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    sd.Texture2D.MipLevels = 1;
+    D3D12_CPU_DESCRIPTOR_HANDLE srv = p->cbvHeap->GetCPUDescriptorHandleForHeapStart();
+    srv.ptr += (SIZE_T)(GHOST_MAX_TEXTURES + id) * p->srvIncrement;
+    device->CreateShaderResourceView(p->offTargets[id].Get(), &sd, srv);
+
+    p->offW[id] = w;
+    p->offH[id] = h;
+    return GHOST_OK;
+}
+
+void GhostReleaseOffscreen(GhostPipeline* p, int id)
+{
+    if (id < 0 || id >= GHOST_MAX_SURFACES) return;
+    p->offTargets[id].Reset();
+    p->offW[id] = p->offH[id] = 0;
+}
+
+D3D12_CPU_DESCRIPTOR_HANDLE GhostGetOffscreenRTV(GhostPipeline* p, int id)
+{
+    D3D12_CPU_DESCRIPTOR_HANDLE h = p->offRtvHeap->GetCPUDescriptorHandleForHeapStart();
+    h.ptr += (SIZE_T)id * p->rtvIncrement;
+    return h;
+}
+
+void GhostBeginOffscreen(IGhostRHI* rhi, GhostPipeline* p, int id,
+    const GhostColor* clear, unsigned int w, unsigned int h)
+{
+    auto* cmd = rhi->GetCmdList();
+
+    D3D12_RESOURCE_BARRIER b = {};
+    b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    b.Transition.pResource = p->offTargets[id].Get();
+    b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    b.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    b.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+    cmd->ResourceBarrier(1, &b);
+
+    D3D12_CPU_DESCRIPTOR_HANDLE rtv = GhostGetOffscreenRTV(p, id);
+    D3D12_CPU_DESCRIPTOR_HANDLE dsv = GhostGetDSV(p, id);
+    float c[4] = { clear->r, clear->g, clear->b, clear->a };
+    cmd->ClearRenderTargetView(rtv, c, 0, nullptr);
+    cmd->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
+
+    D3D12_VIEWPORT vp = { 0.0f, 0.0f, (float)w, (float)h, 0.0f, 1.0f };
+    D3D12_RECT sc = { 0, 0, (LONG)w, (LONG)h };
+    cmd->RSSetViewports(1, &vp);
+    cmd->RSSetScissorRects(1, &sc);
+
+    p->rtvOverride = rtv;
+    p->rtvOverrideActive = true;
+}
+
+void GhostEndOffscreen(IGhostRHI* rhi, GhostPipeline* p, int id)
+{
+    auto* cmd = rhi->GetCmdList();
+
+    D3D12_RESOURCE_BARRIER b = {};
+    b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    b.Transition.pResource = p->offTargets[id].Get();
+    b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    b.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+    b.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    cmd->ResourceBarrier(1, &b);
+
+    p->rtvOverrideActive = false;
+}
+
+// Draws the offscreen image into the surface's back buffer, inside the rect (x, y, w, h)
+void GhostDrawBlit(IGhostRHI* rhi, GhostPipeline* p, int id, float x, float y, float w, float h)
+{
+    auto* cmd = rhi->GetCmdList();
+
+    ID3D12DescriptorHeap* heaps[] = { p->cbvHeap.Get() };
+    cmd->SetDescriptorHeaps(1, heaps);
+    cmd->SetPipelineState(p->blitPso.Get());
+    cmd->SetGraphicsRootSignature(p->rootSignature.Get());
+    cmd->SetGraphicsRootConstantBufferView(0, p->constantBuffer->GetGPUVirtualAddress());
+    cmd->SetGraphicsRootConstantBufferView(1, p->sceneBuffer->GetGPUVirtualAddress());
+
+    D3D12_GPU_DESCRIPTOR_HANDLE srv = p->cbvHeap->GetGPUDescriptorHandleForHeapStart();
+    srv.ptr += (UINT64)(GHOST_MAX_TEXTURES + id) * p->srvIncrement;
+    cmd->SetGraphicsRootDescriptorTable(2, srv);
+
+    D3D12_CPU_DESCRIPTOR_HANDLE rtv = rhi->GetRTV();            // the window's back buffer
+    cmd->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+
+    D3D12_VIEWPORT vp = { x, y, w, h, 0.0f, 1.0f };
+    D3D12_RECT sc = { (LONG)x, (LONG)y, (LONG)(x + w), (LONG)(y + h) };
+    cmd->RSSetViewports(1, &vp);
+    cmd->RSSetScissorRects(1, &sc);
+
+    cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    cmd->DrawInstanced(6, 1, 0, 0);
 }

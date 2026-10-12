@@ -257,3 +257,16 @@ float4 IconPS(IconPSInput input) : SV_TARGET
     if (ring)       col = float3(1.0f, 0.62f, 0.1f);           // selected
     return float4(col, 1.0f);
 }
+
+// ---------------- Blit ----------------
+struct BlitPSInput
+{
+    float4 pos : SV_POSITION;
+    float2 uv : TEXCOORD0;
+};
+
+float4 BlitPS(BlitPSInput input) : SV_TARGET
+{
+    // The offscreen image already holds gamma-encoded colors, so it is copied as is
+    return float4(gTexture.Sample(sLinClamp, input.uv).rgb, 1.0f);
+}

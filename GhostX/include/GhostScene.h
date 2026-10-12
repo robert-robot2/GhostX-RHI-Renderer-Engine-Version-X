@@ -10,6 +10,7 @@ enum class GhostLightType : int { Directional = 0, Point = 1, RectArea = 2 };
 constexpr unsigned int GHOST_MAX_LIGHTS = 16;
 constexpr unsigned int GHOST_MAX_CAMERAS = 4;
 constexpr int GHOST_MAX_FACES = 6;
+constexpr int GHOST_FIRST_USER_TEXTURE = 3;     // ids 0..2 are the built-ins
 
 struct GhostMaterial
 {
@@ -57,6 +58,7 @@ struct GhostTextureInfo
     int          id = 0;           // doubles as the SRV slot index in the pipeline
     std::string  name;
     unsigned int width = 0, height = 0;
+    std::string  path;             // absolute UTF-8 source file ("" for built-ins)
 };
 
 struct GhostObject
@@ -90,6 +92,7 @@ struct GhostCamera
     GhostVec3   position = { 0.0f, 0.75f, -2.0f };   // the old fly-cam start
     float       yawDeg = 0.0f, pitchDeg = 0.0f;
     float       fovDeg = 45.0f;
+    int         resW = 0, resH = 0;                  // 0 = Match Window
 };
 struct GhostScene
 {

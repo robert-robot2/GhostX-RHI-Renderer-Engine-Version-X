@@ -151,16 +151,22 @@ d3dcompiler.lib;Comdlg32.lib;%(AdditionalDependencies)</AdditionalDependencies>
   <ItemGroup>
     <ClInclude Include="include\Ghost3D1.h" />
     <ClInclude Include="include\GhostEngine.h" />
+    <ClInclude Include="include\GhostImage.h" />
     <ClInclude Include="include\GhostMath.h" />
     <ClInclude Include="include\GhostPipeline.h" />
     <ClInclude Include="include\GhostRHI_DX12.h" />
     <ClInclude Include="include\GhostScene.h" />
+    <ClInclude Include="include\GhostSceneIO.h" />
     <ClInclude Include="include\IGhostRHI.h" />
+    <ClInclude Include="include\json.hpp" />
+    <ClInclude Include="include\stb_image.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\GhostEngine.cpp" />
+    <ClCompile Include="src\GhostImage.cpp" />
     <ClCompile Include="src\GhostPipeline.cpp" />
     <ClCompile Include="src\GhostRHI_DX12.cpp" />
+    <ClCompile Include="src\GhostSceneIO.cpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="shaders\GhostPS.hlsl">

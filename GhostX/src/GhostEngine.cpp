@@ -5,6 +5,8 @@
 #include "../include/GhostMath.h"
 #include "../include/GhostPipeline.h"
 #include "../include/GhostScene.h"
+#include "../include/GhostSceneIO.h"
+#include "../include/GhostImage.h"
 #include <string.h>
 // ---- Engine state ----
 static IGhostRHI* g_rhi = nullptr;
@@ -42,7 +44,32 @@ struct EngineViewport { bool alive = false; bool visible = true; int cameraId = 
 static EngineViewport g_vp[GHOST_MAX_SURFACES];
 static int            g_inputCameraId = 0;               // the camera WASD / right-mouse look drives
 static GhostVec3      g_mainEye = { 0, 0, 0 };           // main view position, for picking rays
+// Main view render size and where it sits inside the window (for mapping the mouse)
+static int   g_mainRW = 1280, g_mainRH = 720;
+static float g_fitX = 0.0f, g_fitY = 0.0f, g_fitW = 1280.0f, g_fitH = 720.0f;
 
+// Window pixel -> render pixel. clampOut = keep dragging when the cursor is over the bars.
+static bool PanelToRender(int px, int py, int& rx, int& ry, bool clampOut)
+{
+    if (g_fitW < 1.0f || g_fitH < 1.0f) return false;
+    float u = ((float)px - g_fitX) / g_fitW;
+    float v = ((float)py - g_fitY) / g_fitH;
+    if (!clampOut && (u < 0.0f || u >= 1.0f || v < 0.0f || v >= 1.0f)) return false;
+    u = u < 0.0f ? 0.0f : (u > 0.9999f ? 0.9999f : u);
+    v = v < 0.0f ? 0.0f : (v > 0.9999f ? 0.9999f : v);
+    rx = (int)(u * (float)g_mainRW);
+    ry = (int)(v * (float)g_mainRH);
+    return true;
+}
+
+// Spawn coordinates arrive in window pixels; -1, -1 = screen center
+static void SpawnCoords(int& sx, int& sy)
+{
+    if (sx < 0 || sy < 0) { sx = sy = -1; return; }
+    int rx, ry;
+    if (PanelToRender(sx, sy, rx, ry, false)) { sx = rx; sy = ry; }
+    else { sx = sy = -1; }
+}
 
 static const float ICON_HALF_PX = 18.0f;
 static const float ICON_PICK_PX = ICON_HALF_PX + 4.0f;
@@ -264,9 +291,9 @@ static GhostMat4 ObjectInverse(const GhostObject& o)
 
 static bool ScreenRay(int sx, int sy, GhostVec3& origin, GhostVec3& dir)
 {
-    if (!g_haveCam || g_width == 0 || g_height == 0) return false;
-    float xn = 2.0f * (float)sx / (float)g_width - 1.0f;
-    float yn = 1.0f - 2.0f * (float)sy / (float)g_height;
+    if (!g_haveCam || g_mainRW == 0 || g_mainRH == 0) return false;
+    float xn = 2.0f * (float)sx / (float)g_mainRW - 1.0f;
+    float yn = 1.0f - 2.0f * (float)sy / (float)g_mainRH;
     dir = (g_camR * (xn / g_proj.m[0][0]) + g_camU * (yn / g_proj.m[1][1]) + g_camF).Normalize();
     origin = g_mainEye;                                  // was g_eye
     return true;
@@ -278,8 +305,8 @@ static bool WorldToScreen(const GhostVec3& p, float& sx, float& sy)
     if (v.z < 0.1f) return false;
     float nx = g_proj.m[0][0] * v.x / v.z;
     float ny = g_proj.m[1][1] * v.y / v.z;
-    sx = (nx * 0.5f + 0.5f) * (float)g_width;
-    sy = (1.0f - (ny * 0.5f + 0.5f)) * (float)g_height;
+    sx = (nx * 0.5f + 0.5f) * (float)g_mainRW;
+    sy = (1.0f - (ny * 0.5f + 0.5f)) * (float)g_mainRH;
     return true;
 }
 
@@ -429,7 +456,7 @@ static int PickFace(const GhostObject& ob, int sx, int sy)
 // Ground-plane (y = 0) hit under a screen position, or a point 5 units ahead if the ray misses
 static GhostVec3 SpawnPoint(int sx, int sy)
 {
-    if (sx < 0 || sy < 0) { sx = (int)g_width / 2; sy = (int)g_height / 2; }
+    if (sx < 0 || sy < 0) { sx = (int)g_mainRW / 2; sy = (int)g_mainRH / 2; }
     GhostVec3 o, d;
     if (!ScreenRay(sx, sy, o, d)) return { 0, 0, 0 };
     if (d.y < -1e-4f)
@@ -446,7 +473,7 @@ static void DrawIcon(unsigned int& slot, int iconType, const GhostVec3& pos, con
     if (slot >= GHOST_MAX_OBJECTS) return;
     GhostObjectCB cb = {};
     cb.model.m[0][0] = pos.x; cb.model.m[0][1] = pos.y; cb.model.m[0][2] = pos.z; cb.model.m[0][3] = (float)iconType;
-    cb.model.m[1][0] = (float)g_width; cb.model.m[1][1] = (float)g_height;
+    cb.model.m[1][0] = (float)g_mainRW; cb.model.m[1][1] = (float)g_mainRH;
     cb.model.m[1][2] = (float)state;   cb.model.m[1][3] = ICON_HALF_PX;
     cb.model.m[2][0] = dir.x; cb.model.m[2][1] = dir.y; cb.model.m[2][2] = dir.z;
     cb.view = view;
@@ -462,9 +489,11 @@ static void DrawIcon(unsigned int& slot, int iconType, const GhostVec3& pos, con
 // ============================================================
 void GhostEngine_SetInputEnabled(int enabled) { g_inputEnabled = (enabled != 0); }
 
-void GhostEngine_MouseDown(int x, int y, int button)
+void GhostEngine_MouseDown(int px, int py, int button)
 {
     if (button != 0 || g_looking || !g_haveCam) return;
+    int x, y;
+    if (!PanelToRender(px, py, x, y, false)) return;          // clicked the dark bars
 
     int id = PickAt(x, y);
 
@@ -497,18 +526,21 @@ void GhostEngine_MouseDown(int x, int y, int button)
     g_dragging = true;
 }
 
-void GhostEngine_MouseMove(int x, int y)
+void GhostEngine_MouseMove(int px, int py)
 {
     if (g_looking || !g_haveCam) { g_hoverId = 0; return; }
 
+    int x, y;
     if (g_dragging)
     {
+        PanelToRender(px, py, x, y, true);                    // clamped, so a drag can run over the bars
         GhostVec3* pos = EntityPosition(g_dragId);
         GhostVec3 o, d, hit;
         if (pos && ScreenRay(x, y, o, d) && RayPlane(o, d, g_dragPlanePoint, hit))
             *pos = hit + g_dragOffset;
         return;
     }
+    if (!PanelToRender(px, py, x, y, false)) { g_hoverId = 0; return; }
     g_hoverId = PickAt(x, y);
 }
 
@@ -530,7 +562,7 @@ int GhostEngine_AddObject(int meshId, int sx, int sy)
     if (g_scene.objects.size() >= MAX_SCENE_OBJECT_COUNT) return 0;
     GhostObject* o = GhostScene_AddObject(g_scene, meshId);
     if (!o) return 0;
-
+    SpawnCoords(sx, sy);
     GhostVec3 p = SpawnPoint(sx, sy);
     p.y += -kMeshMin[meshId].y * o->scale.y;       // rest the mesh on the ground
     o->position = p;
@@ -543,7 +575,7 @@ int GhostEngine_AddLight(int lightType, int sx, int sy)
     if (lightType < 0 || lightType > 2) return 0;
     GhostLight* l = GhostScene_AddLight(g_scene, (GhostLightType)lightType);
     if (!l) return 0;
-
+    SpawnCoords(sx, sy);
     GhostVec3 p = SpawnPoint(sx, sy);
     p.y += 1.5f;
     l->position = p;
@@ -756,14 +788,33 @@ static void RenderViewport(int vp)
 
     const bool  mainView = (vp == 0);
     const float d2r = GHOST_PI / 180.0f;
+    // ---- Render resolution: the camera's setting, or the window size ("Match Window") ----
+    const bool         custom = (cam->resW > 0 && cam->resH > 0);
+    const unsigned int rw = custom ? (unsigned int)cam->resW : w;
+    const unsigned int rh = custom ? (unsigned int)cam->resH : h;
 
+    // Where the image sits in the window: aspect kept, centered
+    float fx = 0.0f, fy = 0.0f, fw = (float)w, fh = (float)h;
+    if (custom)
+    {
+        float s = fminf((float)w / (float)rw, (float)h / (float)rh);
+        fw = fmaxf(floorf((float)rw * s), 1.0f);
+        fh = fmaxf(floorf((float)rh * s), 1.0f);
+        fx = floorf(((float)w - fw) * 0.5f);
+        fy = floorf(((float)h - fh) * 0.5f);
+    }
+
+    // GPU targets follow the render size (between frames the GPU is idle)
+    if (custom) { if (GhostEnsureOffscreen(g_rhi, g_pipeline, vp, rw, rh) != GHOST_OK) return; }
+    else        GhostReleaseOffscreen(g_pipeline, vp);
+    if (GhostEnsureDepth(g_rhi, g_pipeline, vp, rw, rh) != GHOST_OK) return;
     // ---- Matrices ----
     GhostVec3 eye = cam->position;
     GhostVec3 forward = AnglesToDir(cam->yawDeg, cam->pitchDeg);
     GhostVec3 worldUp = { 0.0f, 1.0f, 0.0f };
     GhostVec3 right = worldUp.Cross(forward).Normalize();
     GhostMat4 view = GhostMat4::LookAtLH(eye, eye + forward, worldUp);
-    GhostMat4 proj = GhostMat4::PerspectiveFovLH(cam->fovDeg * d2r, (float)w / (float)h, 0.1f, 100.0f);
+    GhostMat4 proj = GhostMat4::PerspectiveFovLH(cam->fovDeg * d2r, (float)rw / (float)rh, 0.1f, 100.0f);
 
     if (mainView)                                   // picking and dragging use the main view only
     {
@@ -774,11 +825,22 @@ static void RenderViewport(int vp)
         g_camU = forward.Cross(right);
         g_camF = forward;
         g_haveCam = true;
+        g_mainRW = (int)rw;  g_mainRH = (int)rh;
+        g_fitX = fx;  g_fitY = fy;  g_fitW = fw;  g_fitH = fh;
     }
 
     // ---- Begin frame ----
     D3D12_CPU_DESCRIPTOR_HANDLE dsv = GhostGetDSV(g_pipeline, vp);
-    g_rhi->BeginFrame(&g_clearColor, dsv);
+    if (custom)
+    {
+        const GhostColor bars = { 0.06f, 0.06f, 0.07f, 1.0f };
+        g_rhi->BeginFrame(&bars, dsv);                                      // window (the bars) + depth
+        GhostBeginOffscreen(g_rhi, g_pipeline, vp, &g_clearColor, rw, rh);  // scene goes into the offscreen image
+    }
+    else
+    {
+        g_rhi->BeginFrame(&g_clearColor, dsv);
+    }
 
     GhostSceneCB sceneCB;
     BuildSceneCB(g_scene, sceneCB);
@@ -847,7 +909,11 @@ static void RenderViewport(int vp)
             DrawIcon(slot, 3, c.position, fwd, kCamColor, state, view, proj);   // direction arrow
         }
     }
-
+    if (custom)
+    {
+        GhostEndOffscreen(g_rhi, g_pipeline, vp);
+        GhostDrawBlit(g_rhi, g_pipeline, vp, fx, fy, fw, fh);
+    }
     g_rhi->EndFrame();
 }
 
@@ -1059,9 +1125,11 @@ static int PickObjectAt(int sx, int sy)
     return bestId;
 }
 
-int GhostEngine_PickObjectAt(int x, int y, int* outFace)
+int GhostEngine_PickObjectAt(int px, int py, int* outFace)
 {
     if (outFace) *outFace = -1;
+    int x, y;
+    if (!PanelToRender(px, py, x, y, false)) return 0;
     int id = PickObjectAt(x, y);
     if (id == 0) return 0;
     if (outFace)
@@ -1076,7 +1144,7 @@ int GhostEngine_AddCamera(int sx, int sy)
 {
     GhostCamera* c = GhostScene_AddCamera(g_scene);
     if (!c) return 0;
-
+    SpawnCoords(sx, sy);
     GhostVec3 p = SpawnPoint(sx, sy);
     p.y += 1.5f;
     c->position = p;
@@ -1095,7 +1163,8 @@ int GhostEngine_GetCamera(int id, GhostCameraInfo* out)
         if (c.id == id)
         {
             *out = { c.id, c.position.x, c.position.y, c.position.z,
-                     c.yawDeg, c.pitchDeg, c.fovDeg, c.id == g_scene.activeCameraId ? 1 : 0 };
+         c.yawDeg, c.pitchDeg, c.fovDeg, c.id == g_scene.activeCameraId ? 1 : 0,
+         c.resW, c.resH };
             return 1;
         }
     return 0;
@@ -1111,6 +1180,12 @@ void GhostEngine_SetCamera(const GhostCameraInfo* in)
             c.yawDeg = in->yawDeg;
             c.pitchDeg = in->pitchDeg < -88.0f ? -88.0f : (in->pitchDeg > 88.0f ? 88.0f : in->pitchDeg);
             c.fovDeg = in->fovDeg < 10.0f ? 10.0f : (in->fovDeg > 120.0f ? 120.0f : in->fovDeg);
+            if (in->resW <= 0 || in->resH <= 0) { c.resW = 0; c.resH = 0; }
+            else
+            {
+                c.resW = in->resW < 16 ? 16 : (in->resW > 4096 ? 4096 : in->resW);
+                c.resH = in->resH < 16 ? 16 : (in->resH > 4096 ? 4096 : in->resH);
+            }
             return;
         }
 }
@@ -1155,6 +1230,7 @@ void GhostEngine_DestroyViewport(int vp)
     if (!g_rhi || !g_pipeline || vp <= 0 || vp >= GHOST_MAX_SURFACES) return;
     g_rhi->DestroySurface(vp);
     GhostReleaseDepth(g_pipeline, vp);
+    GhostReleaseOffscreen(g_pipeline, vp);
     g_vp[vp] = EngineViewport();
 }
 
@@ -1189,4 +1265,104 @@ void GhostEngine_SetInputViewport(int vp)
     if (vp < 0 || vp >= GHOST_MAX_SURFACES || !g_vp[vp].alive) { g_inputEnabled = false; return; }
     g_inputEnabled = true;
     if (GhostCamera* c = ViewportCamera(vp)) g_inputCameraId = c->id;
+}
+
+// ============================================================
+//  Exported: scene files
+// ============================================================
+static std::string g_projectRoot;
+
+static void CopyMsg(const std::string& m, char* buf, int size)
+{
+    if (buf && size > 0) strncpy_s(buf, size, m.c_str(), _TRUNCATE);
+}
+
+// Used by the scene loader: reuse a texture that is already on the GPU, otherwise decode and upload it
+static int LoadSceneTexture(const std::string& absPath, const std::string& name)
+{
+    for (const GhostTextureInfo& t : g_scene.textures)
+        if (t.id >= GHOST_FIRST_USER_TEXTURE && !t.path.empty() && _stricmp(t.path.c_str(), absPath.c_str()) == 0)
+            return t.id;
+
+    std::vector<unsigned char> px;
+    unsigned int w = 0, h = 0;
+    if (!GhostImage_Load(absPath, 4096, px, w, h)) return 0;
+
+    int id = RegisterTexture(name.c_str(), px.data(), w, h);
+    if (id < 0) return 0;
+    g_scene.textures[id].path = absPath;
+    return id;
+}
+
+void GhostEngine_SetProjectRoot(const char* path)
+{
+    g_projectRoot = GhostPath_Normalize(path ? path : "");
+}
+
+int GhostEngine_SaveScene(const char* path, char* msg, int msgSize)
+{
+    std::string err;
+    if (!path || !GhostScene_Save(g_scene, g_projectRoot, path, err))
+    {
+        CopyMsg(err.empty() ? "Save failed." : err, msg, msgSize);
+        return 0;
+    }
+    return 1;
+}
+
+int GhostEngine_LoadScene(const char* path, char* msg, int msgSize)
+{
+    if (!g_rhi || !g_pipeline || !path) { CopyMsg("The engine is not ready.", msg, msgSize); return 0; }
+
+    GhostScene backup = g_scene;
+    std::string err, warn;
+    bool ok = GhostScene_Load(g_scene, g_projectRoot, path, LoadSceneTexture,
+        MAX_SCENE_OBJECT_COUNT, err, warn);
+    if (!ok)
+    {
+        // Restore everything except the texture registry: textures loaded during the attempt stay on the GPU
+        std::vector<GhostTextureInfo> tex = g_scene.textures;
+        g_scene = backup;
+        g_scene.textures = tex;
+        CopyMsg(err, msg, msgSize);
+        return 0;
+    }
+
+    g_hoverId = 0; g_dragging = false; g_dragId = 0; g_inputCameraId = 0;
+    g_scene.version++;
+    CopyMsg(warn, msg, msgSize);
+    return warn.empty() ? 1 : 2;
+}
+
+void GhostEngine_ClearScene()
+{
+    g_scene.objects.clear();
+    g_scene.lights.clear();
+    g_scene.cameras.clear();
+    g_scene.ambientColor[0] = g_scene.ambientColor[1] = g_scene.ambientColor[2] = 1.0f;
+    g_scene.ambientIntensity = 0.15f;
+    g_scene.nextId = 1;
+    g_scene.selectedId = 0;
+    g_scene.selectedFace = -1;
+    g_scene.activeCameraId = 0;
+    GhostScene_AddCamera(g_scene);            // the default camera, id 1
+    g_hoverId = 0; g_dragging = false; g_dragId = 0; g_inputCameraId = 0;
+    g_scene.version++;
+}
+
+unsigned int GhostEngine_GetSceneHash() { return GhostScene_Hash(g_scene); }
+
+void GhostEngine_SetTexturePath(int id, const char* path)
+{
+    if (id < GHOST_FIRST_USER_TEXTURE || id >= (int)g_scene.textures.size() || !path) return;
+    g_scene.textures[id].path = GhostPath_Normalize(path);
+}
+
+int GhostEngine_GetTexturePath(int id, char* buf, int bufSize)
+{
+    if (!buf || bufSize <= 0) return 0;
+    buf[0] = 0;
+    if (id < 0 || id >= (int)g_scene.textures.size()) return 0;
+    CopyMsg(g_scene.textures[id].path, buf, bufSize);
+    return g_scene.textures[id].path.empty() ? 0 : 1;
 }

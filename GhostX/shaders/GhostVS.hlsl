@@ -114,3 +114,18 @@ IconPSInput IconVS(uint vid : SV_VertexID)
     o.pos = float4(clipC.xy + ndcOffset * clipC.w, 0.0f, clipC.w);
     return o;
 }
+// ---------------- Blit: fullscreen quad that shows the offscreen image ----------------
+struct BlitPSInput
+{
+    float4 pos : SV_POSITION;
+    float2 uv : TEXCOORD0;
+};
+
+BlitPSInput BlitVS(uint vid : SV_VertexID)
+{
+    float2 c = kCorners[vid];
+    BlitPSInput o;
+    o.pos = float4(c, 0.0f, 1.0f);
+    o.uv = float2(c.x * 0.5f + 0.5f, 0.5f - c.y * 0.5f);
+    return o;
+}

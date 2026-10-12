@@ -77,6 +77,7 @@ namespace GhostShell
                 MaxSize = maxSize,
                 Thumb = MakeThumb(path),
             };
+            GhostEngine.GhostEngine_SetTexturePath(id, Path.GetFullPath(path));   // so scenes can save and re-load it
             Changed?.Invoke();
             return id;
         }
@@ -159,5 +160,62 @@ namespace GhostShell
             }
             return b;
         }
+
+        // After a scene load the engine may have loaded textures C# doesn't know yet: register them
+        public static void SyncFromEngine()
+        {
+            int n = GhostEngine.GhostEngine_GetTextureCount();
+            bool changed = false;
+            for (int id = 3; id < n; id++)
+            {
+                if (_byId.ContainsKey(id)) continue;
+
+                var buf = new byte[1024];
+                if (GhostEngine.GhostEngine_GetTexturePath(id, buf, buf.Length) == 0) continue;
+                int len = Array.IndexOf(buf, (byte)0);
+                string path = System.Text.Encoding.UTF8.GetString(buf, 0, len < 0 ? buf.Length : len);
+
+                GhostEngine.GhostEngine_GetTextureInfo(id, new System.Text.StringBuilder(8), 8, out uint w, out uint h);
+                try
+                {
+                    _byId[id] = new TextureAsset
+                    {
+                        Id = id,
+                        Name = Path.GetFileName(path),
+                        Path = path,
+                        OrigW = (int)w,
+                        OrigH = (int)h,
+                        MaxSize = 0,
+                        Thumb = MakeThumb(path),
+                    };
+                    changed = true;
+                }
+                catch { /* unreadable thumbnail: the texture still works, it just has no tile */ }
+            }
+            if (changed) Changed?.Invoke();
+        }
+
+        public static int FindByPath(string path)
+        {
+            string full = Path.GetFullPath(path);
+            foreach (TextureAsset a in _byId.Values)
+                if (a.Path != null && string.Equals(Path.GetFullPath(a.Path), full, StringComparison.OrdinalIgnoreCase))
+                    return a.Id;
+            return -1;
+        }
+
+        // Reuses the texture if this file is already loaded, otherwise imports it
+        public static int ImportOrGet(string path)
+        {
+            int id = FindByPath(path);
+            return id >= 0 ? id : Import(path);
+        }
+
+        public static Bitmap? TryMakeThumb(string path)
+        {
+            try { return MakeThumb(path); } catch { return null; }
+        }
+
+
     }
 }

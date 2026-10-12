@@ -110,7 +110,7 @@ namespace GhostShell
 
             try
             {
-                int tex = GhostAssets.Import(dlg.FileName);
+                int tex = GhostAssets.ImportOrGet(GhostProject.EnsureInContent(dlg.FileName, null));
                 if (tex < 0)
                     MessageBox.Show("The engine could not create the texture (too large, or the texture limit was reached).",
                         "Import failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -206,6 +206,16 @@ namespace GhostShell
         public override StandardValuesCollection GetStandardValues(ITypeDescriptorContext? context)
             => new StandardValuesCollection(Names);
     }
+
+    internal class ResolutionConverter : FixedListConverter
+    {
+        public static readonly string[] Names =
+            { "Match Window", "640 x 360", "1280 x 720", "1920 x 1080", "2560 x 1440", "3840 x 2160", "1024 x 768", "800 x 600" };
+        public static readonly (int w, int h)[] Sizes =
+            { (0, 0), (640, 360), (1280, 720), (1920, 1080), (2560, 1440), (3840, 2160), (1024, 768), (800, 600) };
+        protected override string[] Items => Names;
+    }
+
     internal class CameraProxy
     {
         private readonly int _id;
@@ -249,6 +259,29 @@ namespace GhostShell
         public float Fov { get => Get().fovDeg; set { var i = Get(); i.fovDeg = value; Set(i); } }
 
         [Category("Transform")] public Vec3Edit Position { get; }
+
+        [Category("Camera"), DisplayName("Resolution")]
+        [TypeConverter(typeof(ResolutionConverter))]
+        public string Resolution
+        {
+            get
+            {
+                var i = Get();
+                for (int k = 0; k < ResolutionConverter.Sizes.Length; k++)
+                    if (ResolutionConverter.Sizes[k] == (i.resW, i.resH)) return ResolutionConverter.Names[k];
+                return $"{i.resW} x {i.resH}";
+            }
+            set
+            {
+                int k = Array.IndexOf(ResolutionConverter.Names, value);
+                if (k < 0) return;
+                var i = Get();
+                i.resW = ResolutionConverter.Sizes[k].w;
+                i.resH = ResolutionConverter.Sizes[k].h;
+                Set(i);
+            }
+        }
+
     }
     internal class ObjectProxy
     {
@@ -587,6 +620,10 @@ namespace GhostShell
             // ---- Bottom: content browser ----
             var browser = new GhostContentBrowser { Dock = DockStyle.Fill };
             browser.ApplyRequested += ApplyTextureToSelection;
+            browser.OpenSceneRequested += path =>
+            {
+                if (GhostSceneFile.ConfirmDiscard(_form)) GhostSceneFile.Open(path);
+            };
             _bottom = browser;
 
             // ---- Left: palette ----

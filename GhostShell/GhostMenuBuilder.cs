@@ -24,6 +24,17 @@ namespace GhostShell
         public event EventHandler? OnVersion;
         public event EventHandler? OnToggleGhostUI;
         public event EventHandler? OnToggleEditorUI;
+        public event EventHandler? OnNewScene;
+        public event EventHandler? OnOpenScene;
+        public event EventHandler? OnSaveScene;
+        public event EventHandler? OnSaveSceneAs;
+        public event EventHandler? OnNewProject;
+        public event EventHandler? OnOpenProject;
+        public event EventHandler? OnOpenInVS;
+        public event EventHandler? OnSetSolution;
+        public event Action<string>? OnOpenRecent;
+
+        private ToolStripMenuItem _recentMenu = null!;
 
         public GhostMenuBuilder(Color menuBgColor, Color menuTextColor)
         {
@@ -45,6 +56,35 @@ namespace GhostShell
 
             // ---- File ----
             var fileMenu = new ToolStripMenuItem("File");
+            var newScene = MakeItem("New Scene", (s, e) => OnNewScene?.Invoke(s, e));
+            newScene.ShortcutKeys = Keys.Control | Keys.N;
+            var openScene = MakeItem("Open Scene...", (s, e) => OnOpenScene?.Invoke(s, e));
+            openScene.ShortcutKeys = Keys.Control | Keys.O;
+            var saveScene = MakeItem("Save Scene", (s, e) => OnSaveScene?.Invoke(s, e));
+            saveScene.ShortcutKeys = Keys.Control | Keys.S;
+            var saveSceneAs = MakeItem("Save Scene As...", (s, e) => OnSaveSceneAs?.Invoke(s, e));
+            saveSceneAs.ShortcutKeys = Keys.Control | Keys.Shift | Keys.S;
+            var newProject = MakeItem("New Project...", (s, e) => OnNewProject?.Invoke(s, e));
+            newProject.ShortcutKeys = Keys.Control | Keys.Shift | Keys.N;
+            var openProject = MakeItem("Open Project...", (s, e) => OnOpenProject?.Invoke(s, e));
+            openProject.ShortcutKeys = Keys.Control | Keys.Shift | Keys.O;
+
+            _recentMenu = new ToolStripMenuItem("Recent Projects");
+            _recentMenu.DropDownItems.Add(new ToolStripMenuItem("(none)") { Enabled = false });
+            _recentMenu.DropDownOpening += (s, e) => FillRecent();
+
+            fileMenu.DropDownItems.Add(newProject);
+            fileMenu.DropDownItems.Add(openProject);
+            fileMenu.DropDownItems.Add(_recentMenu);
+            fileMenu.DropDownItems.Add(new ToolStripSeparator());
+            fileMenu.DropDownItems.Add(newScene);
+            fileMenu.DropDownItems.Add(openScene);
+            fileMenu.DropDownItems.Add(new ToolStripSeparator());
+            fileMenu.DropDownItems.Add(saveScene);
+            fileMenu.DropDownItems.Add(saveSceneAs);
+            fileMenu.DropDownItems.Add(new ToolStripSeparator());
+            fileMenu.DropDownItems.Add(MakeItem("Open in Visual Studio", (s, e) => OnOpenInVS?.Invoke(s, e)));
+            fileMenu.DropDownItems.Add(new ToolStripSeparator());
             fileMenu.DropDownItems.Add(MakeItem("Exit", (s, e) => OnExit?.Invoke(s, e)));
             // ---- Settings ----
             var settingsMenu = new ToolStripMenuItem("Settings");
@@ -58,6 +98,7 @@ namespace GhostShell
             settingsMenu.DropDownItems.Add(new ToolStripSeparator());
 
             settingsMenu.DropDownItems.Add(MakeItem("Toggle Ghost UI", (s, e) => OnToggleGhostUI?.Invoke(s, e)));
+            settingsMenu.DropDownItems.Add(MakeItem("Set Visual Studio Solution...", (s, e) => OnSetSolution?.Invoke(s, e)));
             // ---- View ----
             var viewMenu = new ToolStripMenuItem("View");
             viewMenu.DropDownItems.Add(MakeItem("Toggle Engine UI  (4)", (s, e) => OnToggleEditorUI?.Invoke(s, e)));
@@ -85,7 +126,22 @@ namespace GhostShell
             _menuStrip.Renderer = new GhostMenuRenderer(_menuBgColor, _menuTextColor);
             _menuStrip.Invalidate(true);
         }
-
+        private void FillRecent()
+        {
+            _recentMenu.DropDownItems.Clear();
+            var list = GhostSettings.Data.RecentProjects;
+            if (list.Count == 0)
+            {
+                _recentMenu.DropDownItems.Add(new ToolStripMenuItem("(none)") { Enabled = false });
+                return;
+            }
+            foreach (string p in list.ToArray())
+            {
+                string path = p;
+                _recentMenu.DropDownItems.Add(
+                    MakeItem($"{Path.GetFileNameWithoutExtension(path)}    -    {path}", (s, e) => OnOpenRecent?.Invoke(path)));
+            }
+        }
         // -------------------------------------------------------
         // Helper
         // -------------------------------------------------------

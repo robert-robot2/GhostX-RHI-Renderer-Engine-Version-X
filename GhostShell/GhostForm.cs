@@ -141,7 +141,31 @@ namespace GhostShell
             _editor.Build();
             _menuBuilder.OnToggleEditorUI += (s, e) => _editor.ToggleVisible();
 
-           
+            _menuBuilder.OnNewScene += (s, e) => { if (GhostSceneFile.ConfirmDiscard(this)) GhostSceneFile.New(); };
+            _menuBuilder.OnOpenScene += (s, e) => GhostSceneFile.OpenInteractive(this);
+            _menuBuilder.OnSaveScene += (s, e) => GhostSceneFile.SaveInteractive(this);
+            _menuBuilder.OnSaveSceneAs += (s, e) => GhostSceneFile.SaveAs(this);
+            _menuBuilder.OnNewProject += (s, e) => GhostProjectFlow.NewProject(this);
+            _menuBuilder.OnOpenProject += (s, e) => GhostProjectFlow.OpenProject(this);
+            _menuBuilder.OnOpenRecent += p => GhostProjectFlow.OpenProjectPath(this, p);
+            _menuBuilder.OnOpenInVS += (s, e) => GhostProjectFlow.OpenInVisualStudio(this);
+            _menuBuilder.OnSetSolution += (s, e) => GhostProjectFlow.PickSolution(this);
+            // Title bar: scene name, with * when there are unsaved changes
+            var titleTimer = new System.Windows.Forms.Timer { Interval = 500 };
+            titleTimer.Tick += (s, e) =>
+            {
+                if (_engineReady)
+                {
+                    // this may be incorrect
+                    string star = GhostSceneFile.IsDirty ? "*" : "";
+                    Text = GhostProject.IsOpen
+                        ? $"GhostX Shell - {GhostProject.DisplayName} - {GhostSceneFile.DisplayName}{star}"
+                        : $"GhostX Shell - {GhostSceneFile.DisplayName}{star}";
+                }
+            };
+            titleTimer.Start();
+
+
             // Restore the saved layout once the form handle exists
             Load += (s, e) => _editor.RestoreLayout();
 
@@ -156,7 +180,11 @@ namespace GhostShell
 
 
         }
-
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            if (_engineReady && !GhostSceneFile.ConfirmDiscard(this)) { e.Cancel = true; return; }
+            base.OnFormClosing(e);
+        }
         // -------------------------------------------------------
         // Engine lifecycle hooks
         // -------------------------------------------------------
@@ -186,6 +214,7 @@ namespace GhostShell
                     return;
                 }
                 _engineReady = true;
+                GhostSceneFile.MarkClean();       // the starting scene counts as saved
                 // Drive the render loop from the message pump idle time
                 Application.Idle += OnIdle;
             };

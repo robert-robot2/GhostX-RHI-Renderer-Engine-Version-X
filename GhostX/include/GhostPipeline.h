@@ -85,6 +85,16 @@ struct GhostPipeline
     // ---- Depth Buffer ----
     ComPtr<ID3D12Resource>       depthBuffers[GHOST_MAX_SURFACES];
     unsigned int                 dsvIncrement = 0;
+    unsigned int                 depthW[GHOST_MAX_SURFACES] = {}, depthH[GHOST_MAX_SURFACES] = {};
+
+    // ---- Offscreen render targets (one per surface, only used for fixed resolutions) ----
+    ComPtr<ID3D12DescriptorHeap> offRtvHeap;
+    ComPtr<ID3D12Resource>       offTargets[GHOST_MAX_SURFACES];
+    unsigned int                 offW[GHOST_MAX_SURFACES] = {}, offH[GHOST_MAX_SURFACES] = {};
+    unsigned int                 rtvIncrement = 0;
+    ComPtr<ID3D12PipelineState>  blitPso;
+    bool                         rtvOverrideActive = false;
+    D3D12_CPU_DESCRIPTOR_HANDLE  rtvOverride = {};
     ComPtr<ID3D12DescriptorHeap> dsvHeap; 
 
     D3D12_VIEWPORT viewport = {};
@@ -122,3 +132,14 @@ GhostResult GhostResizeDepthBuffer(IGhostRHI* rhi, GhostPipeline* pipeline, int 
     unsigned int width, unsigned int height);
 D3D12_CPU_DESCRIPTOR_HANDLE GhostGetDSV(GhostPipeline* pipeline, int surfaceId);
 void GhostReleaseDepth(GhostPipeline* pipeline, int surfaceId);
+
+// ---- Render resolution ----
+GhostResult GhostEnsureDepth(IGhostRHI* rhi, GhostPipeline* pipeline, int surfaceId, unsigned int w, unsigned int h);
+GhostResult GhostEnsureOffscreen(IGhostRHI* rhi, GhostPipeline* pipeline, int surfaceId, unsigned int w, unsigned int h);
+void GhostReleaseOffscreen(GhostPipeline* pipeline, int surfaceId);
+D3D12_CPU_DESCRIPTOR_HANDLE GhostGetOffscreenRTV(GhostPipeline* pipeline, int surfaceId);
+void GhostBeginOffscreen(IGhostRHI* rhi, GhostPipeline* pipeline, int surfaceId,
+    const GhostColor* clear, unsigned int w, unsigned int h);
+void GhostEndOffscreen(IGhostRHI* rhi, GhostPipeline* pipeline, int surfaceId);
+void GhostDrawBlit(IGhostRHI* rhi, GhostPipeline* pipeline, int surfaceId,
+    float x, float y, float w, float h);

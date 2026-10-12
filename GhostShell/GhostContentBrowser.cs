@@ -17,9 +17,21 @@ namespace GhostShell
 
         private readonly FlowLayoutPanel _flow;
         private readonly ToolTip _tip = new();
-        private readonly Dictionary<int, Panel> _tiles = new();
-        private int _selectedId = -1;
-        private int _pressId = -1;
+        private readonly Dictionary<string, Panel> _tiles = new();
+        private string _selectedKey = "";
+        private string _pressKey = "";
+
+        private string? _folder;                  // current folder in project mode (null = no project)
+        private Label _hint = null!;
+        private Button _up = null!;
+        private FileSystemWatcher? _watch;
+        private bool _rebuildQueued, _inDrag, _pending;
+
+        private static readonly Dictionary<string, Bitmap> ThumbCache = new(StringComparer.OrdinalIgnoreCase);
+        private static Bitmap? _folderIcon, _sceneIcon, _blankIcon;
+
+        // Double-click on a scene tile
+        public event Action<string>? OpenSceneRequested;
         private Point _pressPoint;
 
         // Double-click on a tile: apply that texture to the selected object
@@ -30,7 +42,7 @@ namespace GhostShell
             BackColor = Bg;
 
             var bar = new Panel { Dock = DockStyle.Top, Height = 30, BackColor = Bg };
-            var hint = new Label
+            var _hint = new Label
             {
                 Dock = DockStyle.Fill,
                 ForeColor = Color.Gray,
@@ -50,9 +62,21 @@ namespace GhostShell
             };
             import.FlatAppearance.BorderColor = Color.FromArgb(0x3A, 0x3A, 0x40);
             import.Click += (s, e) => ImportDialog();
-            bar.Controls.Add(hint);       // Fill first, then Left
+            bar.Controls.Add(_hint);       // Fill first, then Left
             bar.Controls.Add(import);
-
+            _up = new Button
+            {
+                Dock = DockStyle.Left,
+                Width = 56,
+                Text = "Up",
+                FlatStyle = FlatStyle.Flat,
+                ForeColor = Fg,
+                BackColor = Bg2,
+                Visible = false,
+            };
+            _up.FlatAppearance.BorderColor = Color.FromArgb(0x3A, 0x3A, 0x40);
+            _up.Click += (s, e) => GoUp();
+            bar.Controls.Add(_up);
             _flow = new FlowLayoutPanel
             {
                 Dock = DockStyle.Fill,
@@ -64,12 +88,18 @@ namespace GhostShell
             Controls.Add(_flow);          // Fill first, then Top
             Controls.Add(bar);
 
-            foreach (Control c in new Control[] { this, bar, hint, import, _flow })
+            foreach (Control c in new Control[] { this, bar, _hint, import, _flow })
                 WireFileDrop(c);
 
-            GhostAssets.Changed += Rebuild;
-            Disposed += (s, e) => GhostAssets.Changed -= Rebuild;
-            Rebuild();
+            GhostAssets.Changed += QueueRebuild;
+            GhostProject.Changed += OnProjectChanged;
+            Disposed += (s, e) =>
+            {
+                GhostAssets.Changed -= QueueRebuild;
+                GhostProject.Changed -= OnProjectChanged;
+                _watch?.Dispose();
+            };
+            OnProjectChanged();
         }
 
         // -------------------------------------------------------
@@ -94,7 +124,8 @@ namespace GhostShell
                 if (!GhostAssets.IsImage(f)) continue;
                 try
                 {
-                    if (GhostAssets.Import(f) < 0)
+                    string local = GhostProject.EnsureInContent(f, _folder);   // copied into Content/ when a project is open
+                    if (GhostAssets.ImportOrGet(local) < 0)
                         failed.Add($"{Path.GetFileName(f)}: the engine refused it (texture limit reached?)");
                 }
                 catch (Exception ex) { failed.Add($"{Path.GetFileName(f)}: {ex.Message}"); }
@@ -128,19 +159,159 @@ namespace GhostShell
         // -------------------------------------------------------
         //  Tiles
         // -------------------------------------------------------
+
+
+        // -------------------------------------------------------
+        //  Tiles
+        // -------------------------------------------------------
+        private sealed class Entry
+        {
+            public string Key = "", Label = "", Tip = "";
+            public Bitmap Thumb = null!;
+            public int TexId = -1;          // built-in or already-loaded texture
+            public string? Path;            // file or folder on disk
+            public bool IsFolder, IsScene;
+        }
+
+        // Rebuilding while a tile is being clicked or dragged would dispose that tile, so it's deferred
+        private void QueueRebuild()
+        {
+            if (!IsHandleCreated) { Rebuild(); return; }
+            if (_rebuildQueued) return;
+            _rebuildQueued = true;
+            try
+            {
+                BeginInvoke(new Action(() =>
+                {
+                    _rebuildQueued = false;
+                    if (_inDrag) { _pending = true; return; }
+                    Rebuild();
+                }));
+            }
+            catch { _rebuildQueued = false; }
+        }
+
+        private void OnProjectChanged()
+        {
+            _watch?.Dispose();
+            _watch = null;
+            _folder = GhostProject.ContentDir;
+
+            if (_folder != null && Directory.Exists(_folder))
+            {
+                _watch = new FileSystemWatcher(_folder)
+                {
+                    IncludeSubdirectories = true,
+                    NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName,
+                    EnableRaisingEvents = true,
+                };
+                FileSystemEventHandler h = (s, e) => QueueRebuild();
+                _watch.Created += h;
+                _watch.Deleted += h;
+                _watch.Renamed += (s, e) => QueueRebuild();
+            }
+            Rebuild();
+        }
+
+        private bool AtRoot()
+        {
+            string? root = GhostProject.ContentDir;
+            return _folder == null || root == null || string.Equals(
+                Path.TrimEndingDirectorySeparator(_folder), Path.TrimEndingDirectorySeparator(root),
+                StringComparison.OrdinalIgnoreCase);
+        }
+
+        private void GoUp()
+        {
+            if (_folder == null) return;
+            string? parent = Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(_folder));
+            string? root = GhostProject.ContentDir;
+            _folder = (parent != null && root != null &&
+                       parent.Length >= Path.TrimEndingDirectorySeparator(root).Length) ? parent : root;
+            Rebuild();
+        }
+
+        private static Entry FromAsset(TextureAsset a) => new Entry
+        {
+            Key = "t:" + a.Id,
+            Label = a.Name,
+            Tip = a.Path ?? $"{a.Name} (built-in)",
+            Thumb = a.Thumb,
+            TexId = a.Id,
+        };
+
         private void Rebuild()
         {
+            string? root = GhostProject.ContentDir;
+            if (_folder != null && !Directory.Exists(_folder)) _folder = root;
+
+            var entries = new List<Entry>();
+            bool atRoot = AtRoot();
+
+            if (_folder == null)
+            {
+                foreach (TextureAsset a in GhostAssets.All) entries.Add(FromAsset(a));       // no project: every loaded texture
+            }
+            else
+            {
+                if (atRoot)
+                    foreach (TextureAsset a in GhostAssets.All.Where(x => x.Id <= 2)) entries.Add(FromAsset(a));   // built-ins
+
+                try
+                {
+                    foreach (string d in Directory.GetDirectories(_folder).OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+                        entries.Add(new Entry
+                        {
+                            Key = "d:" + d,
+                            Label = Path.GetFileName(d),
+                            Tip = d,
+                            Thumb = FolderIcon(),
+                            Path = d,
+                            IsFolder = true
+                        });
+
+                    foreach (string f in Directory.GetFiles(_folder).OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+                    {
+                        if (GhostAssets.IsImage(f))
+                            entries.Add(new Entry
+                            {
+                                Key = "f:" + f,
+                                Label = Path.GetFileName(f),
+                                Tip = f,
+                                Thumb = ThumbFor(f),
+                                Path = f
+                            });
+                        else if (f.EndsWith(".ghostscene", StringComparison.OrdinalIgnoreCase))
+                            entries.Add(new Entry
+                            {
+                                Key = "f:" + f,
+                                Label = Path.GetFileNameWithoutExtension(f),
+                                Tip = f,
+                                Thumb = SceneIcon(),
+                                Path = f,
+                                IsScene = true
+                            });
+                    }
+                }
+                catch { /* folder vanished or is unreadable: show what we have */ }
+
+                string rel = Path.GetRelativePath(root ?? _folder, _folder);
+                rel = rel == "." ? "" : "/" + rel.Replace('\\', '/');
+                _hint.Text = "Content" + rel + "   -   drop images here to import   -   double-click a scene to open it   -   drag a tile onto an object (Shift = one face)";
+            }
+            _up.Visible = _folder != null && !atRoot;
+
             _flow.SuspendLayout();
             var old = _flow.Controls.Cast<Control>().ToArray();
             _flow.Controls.Clear();
             foreach (Control c in old) c.Dispose();
             _tiles.Clear();
 
-            foreach (TextureAsset a in GhostAssets.All)
+            foreach (Entry e in entries)
             {
-                Panel tile = MakeTile(a);
+                Panel tile = MakeTile(e);
                 _flow.Controls.Add(tile);
-                _tiles[a.Id] = tile;
+                _tiles[e.Key] = tile;
             }
             _flow.ResumeLayout();
             Highlight();
@@ -149,15 +320,34 @@ namespace GhostShell
         private void Highlight()
         {
             foreach (var kv in _tiles)
-                kv.Value.BackColor = (kv.Key == _selectedId) ? SelColor : Bg;
+                kv.Value.BackColor = (kv.Key == _selectedKey) ? SelColor : Bg;
         }
 
-        private Panel MakeTile(TextureAsset a)
+        // Built-in / loaded textures already have an id; a file on disk is imported the first time it's used
+        private static int ResolveTexture(Entry e)
+        {
+            if (e.TexId >= 0) return e.TexId;
+            try
+            {
+                int id = GhostAssets.ImportOrGet(e.Path!);
+                if (id < 0)
+                    MessageBox.Show("The engine could not create the texture (too large, or the texture limit was reached).",
+                        "Import failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return id;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ex.Message, "Import failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return -1;
+            }
+        }
+
+        private Panel MakeTile(Entry e)
         {
             var tile = new Panel { Width = 108, Height = 130, Margin = new Padding(4), BackColor = Bg, Cursor = Cursors.Hand };
             var pic = new PictureBox
             {
-                Image = a.Thumb,
+                Image = e.Thumb,
                 SizeMode = PictureBoxSizeMode.Zoom,
                 Location = new Point(6, 6),
                 Size = new Size(96, 96),
@@ -165,7 +355,7 @@ namespace GhostShell
             };
             var lbl = new Label
             {
-                Text = a.Name,
+                Text = e.Label,
                 AutoEllipsis = true,
                 Location = new Point(2, 106),
                 Size = new Size(104, 20),
@@ -175,32 +365,99 @@ namespace GhostShell
             tile.Controls.Add(pic);
             tile.Controls.Add(lbl);
 
-            string tip = a.Path ?? $"{a.Name} (built-in)";
             foreach (Control c in new Control[] { tile, pic, lbl })
             {
-                _tip.SetToolTip(c, tip);
+                _tip.SetToolTip(c, e.Tip);
                 WireFileDrop(c);                                   // dropping files on a tile still imports them
 
-                c.MouseDown += (s, e) =>
+                c.MouseDown += (s, ev) =>
                 {
-                    if (e.Button != MouseButtons.Left) return;
-                    _pressId = a.Id;
+                    if (ev.Button != MouseButtons.Left) return;
+                    _pressKey = e.Key;
                     _pressPoint = Control.MousePosition;
-                    _selectedId = a.Id;
+                    _selectedKey = e.Key;
                     Highlight();
                 };
-                c.MouseMove += (s, e) =>
+                c.MouseMove += (s, ev) =>
                 {
-                    if (e.Button != MouseButtons.Left || _pressId != a.Id) return;
+                    if (ev.Button != MouseButtons.Left || _pressKey != e.Key || e.IsFolder || e.IsScene) return;
                     Size d = SystemInformation.DragSize;
                     Point p = Control.MousePosition;
                     if (Math.Abs(p.X - _pressPoint.X) < d.Width && Math.Abs(p.Y - _pressPoint.Y) < d.Height) return;
-                    _pressId = -1;
-                    DoDragDrop($"ghost:tex:{a.Id}", DragDropEffects.Copy);
+                    _pressKey = "";
+
+                    int id = ResolveTexture(e);
+                    if (id < 0) return;
+                    _inDrag = true;
+                    try { DoDragDrop($"ghost:tex:{id}", DragDropEffects.Copy); }
+                    finally
+                    {
+                        _inDrag = false;
+                        if (_pending) { _pending = false; QueueRebuild(); }
+                    }
                 };
-                c.DoubleClick += (s, e) => ApplyRequested?.Invoke(a.Id);
+                c.DoubleClick += (s, ev) =>
+                {
+                    if (e.IsFolder)
+                        BeginInvoke(new Action(() => { _folder = e.Path; Rebuild(); }));
+                    else if (e.IsScene)
+                        BeginInvoke(new Action(() => OpenSceneRequested?.Invoke(e.Path!)));
+                    else
+                    {
+                        int id = ResolveTexture(e);
+                        if (id >= 0) ApplyRequested?.Invoke(id);
+                    }
+                };
             }
             return tile;
         }
+
+        // ---------------- thumbnails and icons ----------------
+        private static Bitmap ThumbFor(string path)
+        {
+            if (ThumbCache.TryGetValue(path, out Bitmap? b)) return b;
+            Bitmap? t = GhostAssets.TryMakeThumb(path);       // null while the file is still being copied: not cached
+            if (t == null) return BlankIcon();
+            ThumbCache[path] = t;
+            return t;
+        }
+
+        private static Bitmap FolderIcon() => _folderIcon ??= DrawIcon(0);
+        private static Bitmap SceneIcon() => _sceneIcon ??= DrawIcon(1);
+        private static Bitmap BlankIcon() => _blankIcon ??= DrawIcon(2);
+
+        private static Bitmap DrawIcon(int kind)
+        {
+            var b = new Bitmap(96, 96);
+            using var g = Graphics.FromImage(b);
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            g.Clear(Color.FromArgb(0x2A, 0x2A, 0x30));
+            if (kind == 0)                                    // folder
+            {
+                using var br = new SolidBrush(Color.FromArgb(0xE0, 0xB0, 0x40));
+                g.FillRectangle(br, 14, 26, 32, 14);
+                g.FillRectangle(br, 14, 36, 68, 40);
+            }
+            else if (kind == 1)                               // scene
+            {
+                using var br = new SolidBrush(Color.FromArgb(0x5A, 0x9B, 0xE6));
+                g.FillRectangle(br, 18, 22, 60, 52);
+                using var f = new Font("Segoe UI", 10f, FontStyle.Bold);
+                g.DrawString("SCENE", f, Brushes.White, 22, 40);
+            }
+            else                                              // unreadable image
+            {
+                using var br = new SolidBrush(Color.FromArgb(0x55, 0x55, 0x5A));
+                g.FillRectangle(br, 22, 22, 52, 52);
+            }
+            return b;
+        }
+
+
+
+
+
+
+
     }
 }
