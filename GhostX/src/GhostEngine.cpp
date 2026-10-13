@@ -85,8 +85,8 @@ static const unsigned int MAX_SCENE_OBJECTS = GHOST_MAX_OBJECTS - 2 * GHOST_MAX_
 // worst case an object needs one draw per face
 static const unsigned int MAX_SCENE_OBJECT_COUNT = MAX_SCENE_OBJECTS / GHOST_MAX_FACES;
 // local-space bounds of each mesh (picking only)
-static const GhostVec3 kMeshMin[GHOST_MESH_COUNT] = { { -0.5f, -0.5f, -0.5f }, { -0.5f, 0.0f, -0.05f }, { -3.2f, -1.0f, -3.0f } };
-static const GhostVec3 kMeshMax[GHOST_MESH_COUNT] = { {  0.5f,  0.5f,  0.5f }, {  0.5f, 1.0f,  0.05f }, {  3.2f,  3.0f, 11.0f } };
+static const GhostVec3 kMeshMin[GHOST_MESH_COUNT] = { { -0.5f, -0.5f, -0.5f }, { -0.5f, 0.0f, -0.05f }, { -3.2f, -1.0f, -3.0f }, { -0.5f, -0.5f, -0.5f } };
+static const GhostVec3 kMeshMax[GHOST_MESH_COUNT] = { {  0.5f,  0.5f,  0.5f }, {  0.5f, 1.0f,  0.05f }, {  3.2f,  3.0f, 11.0f }, {  0.5f,  0.5f,  0.5f } };
 static GhostColor g_clearColor = { 0.0f, 0.0f, 0.0f, 1.0f };
 
 // Creates the GPU texture and records it in the scene's registry (id == pipeline slot)
@@ -861,6 +861,7 @@ static void RenderViewport(int vp)
     unsigned int slot = 0;
     for (const GhostObject& o : g_scene.objects)
     {
+        if (!o.visible && g_playState != GhostPlayState::Editing) continue;   // hidden in game
         const int       faceCount = GhostMesh_FaceCount(o.meshId);
         const GhostMat4 model = GhostObjectModel(o);
         const bool      selected = overlays && (o.id == g_scene.selectedId);
@@ -1438,3 +1439,46 @@ void GhostEngine_SetPaused(int paused)
 }
 
 int GhostEngine_GetPlayState() { return (int)g_playState; }
+
+// ============================================================
+//  Exported: gameplay data
+// ============================================================
+int GhostEngine_GetGameplay(int objectId, GhostGameplayInfo* out)
+{
+    GhostObject* o = FindObject(objectId);
+    if (!o || !out) return 0;
+    *out = { o->id, o->role, o->collider ? 1 : 0,
+             o->colliderSize.x, o->colliderSize.y, o->colliderSize.z, o->visible ? 1 : 0 };
+    return 1;
+}
+
+void GhostEngine_SetGameplay(const GhostGameplayInfo* in)
+{
+    if (!in) return;
+    GhostObject* o = FindObject(in->id);
+    if (!o) return;
+    auto size = [](float v) { v = fabsf(v); return v < 0.01f ? 0.01f : v; };
+    o->role = in->role < 0 ? 0 : (in->role >= GHOST_ROLE_COUNT ? GHOST_ROLE_COUNT - 1 : in->role);
+    o->collider = (in->collider != 0);
+    o->colliderSize = { size(in->csx), size(in->csy), size(in->csz) };
+    o->visible = (in->visible != 0);
+}
+
+int GhostEngine_GetCustomTag(int objectId, char* buf, int bufSize)
+{
+    if (!buf || bufSize <= 0) return 0;
+    buf[0] = 0;
+    GhostObject* o = FindObject(objectId);
+    if (!o) return 0;
+    CopyMsg(o->customTag, buf, bufSize);
+    return 1;
+}
+
+void GhostEngine_SetCustomTag(int objectId, const char* utf8Tag)
+{
+    GhostObject* o = FindObject(objectId);
+    if (!o) return;
+    std::string t = utf8Tag ? utf8Tag : "";
+    if (t.size() > 31) t.resize(31);
+    o->customTag = t;
+}

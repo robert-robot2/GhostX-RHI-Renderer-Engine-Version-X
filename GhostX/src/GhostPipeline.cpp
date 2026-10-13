@@ -91,6 +91,7 @@ bool GhostGetMeshCPU(int meshId, const GhostVertex** verts,
     switch (meshId)
     {
     case GHOST_MESH_CUBE:
+    case GHOST_MESH_SQUARE:
         *verts = CubeVertices; *indices = CubeIndices;
         *indexCount = sizeof(CubeIndices) / sizeof(CubeIndices[0]); return true;
     case GHOST_MESH_TRIANGLE:
@@ -620,6 +621,8 @@ GhostResult GhostUploadMeshes(IGhostRHI* rhi, GhostPipeline* p)
         TriangleVertices, sizeof(TriangleVertices), TriangleIndices, sizeof(TriangleIndices)) != GHOST_OK) return GHOST_FAIL;
     if (UploadMesh(d, p->meshes[GHOST_MESH_SHIP],
         ShipVertices, sizeof(ShipVertices), ShipIndices, sizeof(ShipIndices)) != GHOST_OK) return GHOST_FAIL;
+    if (UploadMesh(d, p->meshes[GHOST_MESH_SQUARE],
+        CubeVertices, sizeof(CubeVertices), CubeIndices, sizeof(CubeIndices)) != GHOST_OK) return GHOST_FAIL;
     return GHOST_OK;
 }
 void GhostDrawIcon(IGhostRHI* rhi, GhostPipeline* p, unsigned int slot)

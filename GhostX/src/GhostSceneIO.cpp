@@ -138,6 +138,11 @@ bool GhostScene_Save(const GhostScene& s, const std::string& root, const std::st
             jo["rotation"] = V3(o.rotationDeg);
             jo["scale"] = V3(o.scale);
             jo["vertexColor"] = o.useVertexColor;
+            jo["role"] = o.role;
+            jo["customTag"] = o.customTag;
+            jo["collider"] = o.collider;
+            jo["colliderSize"] = V3(o.colliderSize);
+            jo["visible"] = o.visible;
             json faces = json::array();
             const int n = GhostMesh_FaceCount(o.meshId);
             for (int f = 0; f < n; f++) faces.push_back(MatToJson(o.faces[f], saved));
@@ -292,6 +297,12 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
                 ReadV3(jo, "rotation", o.rotationDeg);
                 ReadV3(jo, "scale", o.scale);
                 o.useVertexColor = jo.value("vertexColor", false);
+                o.role = Clampi(jo.value("role", 0), 0, GHOST_ROLE_COUNT - 1);
+                o.customTag = jo.value("customTag", std::string());
+                if (o.customTag.size() > 31) o.customTag.resize(31);
+                o.collider = jo.value("collider", false);
+                ReadV3(jo, "colliderSize", o.colliderSize);
+                o.visible = jo.value("visible", true);
                 if (jo.contains("faces") && jo["faces"].is_array())
                 {
                     const int n = GhostMesh_FaceCount(mesh);
@@ -376,6 +387,7 @@ unsigned int GhostScene_Hash(const GhostScene& s)
         I(o.id); I(o.meshId); S(o.name);
         V(o.position); V(o.rotationDeg); V(o.scale);
         I(o.useVertexColor ? 1 : 0);
+        I(o.role); S(o.customTag); I(o.collider ? 1 : 0); V(o.colliderSize); I(o.visible ? 1 : 0);
         const int n = GhostMesh_FaceCount(o.meshId);
         for (int f = 0; f < n; f++) mix(&o.faces[f], sizeof(GhostMaterial));
     }

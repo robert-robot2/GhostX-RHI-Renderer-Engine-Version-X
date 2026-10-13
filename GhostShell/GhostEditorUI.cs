@@ -283,6 +283,12 @@ namespace GhostShell
         }
 
     }
+
+    internal class RoleConverter : FixedListConverter
+    {
+        public static readonly string[] Names = { "Static", "Player", "Enemy", "Coin", "Block", "Goal", "Custom" };
+        protected override string[] Items => Names;
+    }
     internal class ObjectProxy
     {
         private readonly int _id;
@@ -305,6 +311,9 @@ namespace GhostShell
             Offset = new Vec2Edit(
                 () => { var m = ReadMat(); return (m.offsetU, m.offsetV); },
                 (u, v) => EditMat((ref GhostMaterialInfo m) => { m.offsetU = u; m.offsetV = v; }));
+            ColliderSize = new Vec3Edit(
+    () => { var g = GetG(); return (g.csx, g.csy, g.csz); },
+    (x, y, z) => { var g = GetG(); g.csx = x; g.csy = y; g.csz = z; SetG(g); });
         }
 
         private GhostObjectInfo Get() { var i = new GhostObjectInfo(); GhostEngine.GhostEngine_GetObject(_id, ref i); return i; }
@@ -468,6 +477,52 @@ namespace GhostShell
         {
             get { var m = ReadMat(); return GhostColorUtil.ToColor(m.r, m.g, m.b); }
             set => EditMat((ref GhostMaterialInfo m) => { m.r = value.R / 255f; m.g = value.G / 255f; m.b = value.B / 255f; });
+        }
+
+        // ---- Gameplay ----
+        private GhostGameplayInfo GetG() { var g = new GhostGameplayInfo(); GhostEngine.GhostEngine_GetGameplay(_id, ref g); return g; }
+        private void SetG(GhostGameplayInfo g) => GhostEngine.GhostEngine_SetGameplay(ref g);
+
+        [Category("Gameplay")]
+        [TypeConverter(typeof(RoleConverter))]
+        public string Role
+        {
+            get => RoleConverter.Names[Math.Clamp(GetG().role, 0, RoleConverter.Names.Length - 1)];
+            set
+            {
+                int i = Array.IndexOf(RoleConverter.Names, value);
+                if (i >= 0) { var g = GetG(); g.role = i; SetG(g); }
+            }
+        }
+
+        [Category("Gameplay"), DisplayName("Custom Tag (when Role = Custom)")]
+        public string CustomTag
+        {
+            get
+            {
+                var b = new byte[64];
+                GhostEngine.GhostEngine_GetCustomTag(_id, b, b.Length);
+                int n = Array.IndexOf(b, (byte)0);
+                return Encoding.UTF8.GetString(b, 0, n < 0 ? b.Length : n);
+            }
+            set => GhostEngine.GhostEngine_SetCustomTag(_id, value ?? "");
+        }
+
+        [Category("Gameplay")]
+        public bool Collider
+        {
+            get => GetG().collider != 0;
+            set { var g = GetG(); g.collider = value ? 1 : 0; SetG(g); }
+        }
+
+        [Category("Gameplay"), DisplayName("Collider Size")]
+        public Vec3Edit ColliderSize { get; }
+
+        [Category("Gameplay"), DisplayName("Visible In Game")]
+        public bool VisibleInGame
+        {
+            get => GetG().visible != 0;
+            set { var g = GetG(); g.visible = value ? 1 : 0; SetG(g); }
         }
     }
 
@@ -948,6 +1003,7 @@ namespace GhostShell
                 Add("Cube", "obj", 0);
                 Add("Triangle", "obj", 1);
                 Add("Ship", "obj", 2);
+                Add("Square", "obj", 3);
             }
             else
             {

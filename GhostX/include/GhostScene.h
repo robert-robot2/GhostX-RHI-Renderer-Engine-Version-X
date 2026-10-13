@@ -5,7 +5,11 @@
 #include <string>
 #include <string.h>
 
-enum GhostMeshId { GHOST_MESH_CUBE = 0, GHOST_MESH_TRIANGLE, GHOST_MESH_SHIP, GHOST_MESH_COUNT };
+enum GhostMeshId { GHOST_MESH_CUBE = 0, GHOST_MESH_TRIANGLE, GHOST_MESH_SHIP, GHOST_MESH_SQUARE, GHOST_MESH_COUNT };
+enum GhostRole {
+    GHOST_ROLE_STATIC = 0, GHOST_ROLE_PLAYER, GHOST_ROLE_ENEMY, GHOST_ROLE_COIN,
+    GHOST_ROLE_BLOCK, GHOST_ROLE_GOAL, GHOST_ROLE_CUSTOM, GHOST_ROLE_COUNT
+};
 enum class GhostLightType : int { Directional = 0, Point = 1, RectArea = 2 };
 constexpr unsigned int GHOST_MAX_LIGHTS = 16;
 constexpr unsigned int GHOST_MAX_CAMERAS = 4;
@@ -70,9 +74,21 @@ struct GhostObject
     GhostVec3 rotationDeg = { 0, 0, 0 };
     GhostVec3 scale = { 1, 1, 1 };
     GhostMaterial faces[GHOST_MAX_FACES];        // one material per face (cube 6, triangle 1, ship 6)
+    int         role = 0;                     // GhostRole
+    std::string customTag;                    // used when role == GHOST_ROLE_CUSTOM (max 31 chars)
+    bool        collider = false;
+    GhostVec3   colliderSize = { 1, 1, 1 };   // world size = colliderSize * scale
+    bool        visible = true;               // false = hidden while playing
     bool      useVertexColor = false;
 };
-
+// The tag the game module searches by: the role's name, or the custom text
+inline std::string GhostObject_Tag(const GhostObject& o)
+{
+    static const char* names[] = { "", "Player", "Enemy", "Coin", "Block", "Goal" };
+    if (o.role == GHOST_ROLE_CUSTOM) return o.customTag;
+    if (o.role >= 1 && o.role <= 5) return names[o.role];
+    return "";
+}
 struct GhostLight
 {
     int            id = 0;
@@ -113,13 +129,15 @@ struct GhostScene
 inline GhostObject* GhostScene_AddObject(GhostScene& s, int meshId)
 {
     if (meshId < 0 || meshId >= GHOST_MESH_COUNT) return nullptr;
-    static const char* names[GHOST_MESH_COUNT] = { "Cube", "Triangle", "Ship" };
-    static const float defScale[GHOST_MESH_COUNT] = { 1.0f, 1.0f, 0.1f };  // ship mesh is ~10 units long
+    static const char* names[GHOST_MESH_COUNT] = { "Cube", "Triangle", "Ship", "Square" };
+    static const GhostVec3 defScale[GHOST_MESH_COUNT] =
+    { { 1, 1, 1 }, { 1, 1, 1 }, { 0.1f, 0.1f, 0.1f }, { 1, 1, 0.25f } };    // ship mesh is ~10 units long; squares are flat
 
     GhostObject o;
     o.id = s.nextId++;
     o.meshId = meshId;
-    o.scale = { defScale[meshId], defScale[meshId], defScale[meshId] };
+    o.scale = defScale[meshId];
+    if (meshId == GHOST_MESH_SQUARE || meshId == GHOST_MESH_CUBE) o.collider = true;
     o.name = std::string(names[meshId]) + " " + std::to_string(o.id);
     s.objects.push_back(o);
     s.version++;

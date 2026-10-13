@@ -46,6 +46,14 @@ namespace GhostShell
         public int isActive;
         public int resW, resH;
     }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GhostGameplayInfo
+    {
+        public int id, role, collider;
+        public float csx, csy, csz;
+        public int visible;
+    }
     internal static class GhostEngine
     {
         private const string DllName = "GhostX.dll";
@@ -187,6 +195,15 @@ namespace GhostShell
         public static extern void GhostEngine_SetPaused(int paused);
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern int GhostEngine_GetPlayState();
+        // ---- Gameplay data ----
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetGameplay(int objectId, ref GhostGameplayInfo info);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetGameplay(ref GhostGameplayInfo info);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetCustomTag(int objectId, [Out] byte[] buf, int bufSize);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetCustomTag(int objectId, [MarshalAs(UnmanagedType.LPUTF8Str)] string tag);
 
     }
 }

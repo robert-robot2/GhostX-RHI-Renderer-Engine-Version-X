@@ -44,7 +44,14 @@ struct GhostCameraInfo
     int   isActive;
     int   resW, resH;                  // 0, 0 = Match Window
 };
-
+struct GhostGameplayInfo
+{
+    int   id;
+    int   role;                 // 0 static, 1 player, 2 enemy, 3 coin, 4 block, 5 goal, 6 custom
+    int   collider;
+    float csx, csy, csz;        // collider size (multiplied by the object's scale)
+    int   visible;
+};
 extern "C"
 {
     GHOST_API int  GhostEngine_Init(HWND hwnd, unsigned int width, unsigned int height);
@@ -129,4 +136,9 @@ extern "C"
     GHOST_API void GhostEngine_Stop();                 // restores the snapshot
     GHOST_API void GhostEngine_SetPaused(int paused);
     GHOST_API int  GhostEngine_GetPlayState();         // 0 editing, 1 playing, 2 paused
+    // ---- Gameplay data ----
+    GHOST_API int  GhostEngine_GetGameplay(int objectId, GhostGameplayInfo* out);
+    GHOST_API void GhostEngine_SetGameplay(const GhostGameplayInfo* in);
+    GHOST_API int  GhostEngine_GetCustomTag(int objectId, char* buf, int bufSize);
+    GHOST_API void GhostEngine_SetCustomTag(int objectId, const char* utf8Tag);
 }
