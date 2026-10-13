@@ -28,7 +28,7 @@ struct GameState
     float camYaw = 0.0f;
     float camPos[3] = { 0, 0, 0 };
     bool  camSnap = true;
-
+    bool  orbit = false;               // the engine moves the camera (Orbit mode)
     int   coins = 0, totalCoins = 0;
     int   enemiesDown = 0, totalEnemies = 0;
     int   deaths = 0;

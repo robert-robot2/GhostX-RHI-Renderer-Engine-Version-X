@@ -72,6 +72,14 @@ extern "C" {
         int (*SetActiveCamera)(int cameraId);
         int (*GetCamera)(int cameraId, float* outPos3, float* outYawPitchDeg2, float* outFovDeg);
         int (*SetCamera)(int cameraId, const float* pos3, const float* yawPitchDeg2, const float* fovDeg);
+        // ---- mouse (while the right button is held during Play, the cursor is captured and these report its movement) ----
+        void  (*GetMouseDelta)(float* outDxDy2);          // pixels moved since the previous step
+        float (*GetMouseWheel)(void);                     // wheel notches since the previous step (+ = away from you)
+
+        // ---- orbit cameras (the engine moves them: right-drag orbits, wheel zooms) ----
+        int (*GetCameraMode)(int cameraId);               // 0 = free, 1 = orbit, -1 = no such camera
+        int (*GetCameraTarget)(int cameraId);             // orbit target object id, 0 = none
+        int (*SetCameraTarget)(int cameraId, int objectId);   // 0 clears it
     } GhostGameAPI;
 
     // A game module must export:

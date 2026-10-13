@@ -16,7 +16,15 @@ void Game_Restart(bool died)
 static void Camera_Update(float dt)
 {
     if (!S.camId || !S.player) return;
-
+    // Orbit camera: the engine follows the target and handles right-drag and wheel.
+// The game only needs the camera's heading for camera-relative movement.
+    S.orbit = (G->GetCameraMode(S.camId) == 1);
+    if (S.orbit)
+    {
+        float yp[2];
+        if (G->GetCamera(S.camId, nullptr, yp, nullptr)) S.camYaw = yp[0];
+        return;
+    }
     if (G->KeyDown('Q')) S.camYaw -= Cfg::CamTurnSpeed * dt;     // until 4D adds mouse orbit
     if (G->KeyDown('E')) S.camYaw += Cfg::CamTurnSpeed * dt;
 
@@ -51,8 +59,9 @@ static void Hud()
         snprintf(t, sizeof t, "LEVEL COMPLETE!  Coins %d/%d  Enemies %d/%d  Deaths %d  |  R: play again",
             S.coins, S.totalCoins, S.enemiesDown, S.totalEnemies, S.deaths);
     else
-        snprintf(t, sizeof t, "Coins %d/%d | Enemies %d/%d | %s | Deaths %d | WASD move, Shift run, Space jump, Q/E camera, R restart",
-            S.coins, S.totalCoins, S.enemiesDown, S.totalEnemies, S.big ? "BIG" : "small", S.deaths);
+        snprintf(t, sizeof t, "Coins %d/%d | Enemies %d/%d | %s | Deaths %d | WASD move, Shift run, Space jump, %s, R restart",
+            S.coins, S.totalCoins, S.enemiesDown, S.totalEnemies, S.big ? "BIG" : "small", S.deaths,
+            S.orbit ? "right-drag orbit, wheel zoom" : "Q/E camera");
     G->SetHudText(t);
 }
 
@@ -68,7 +77,8 @@ GHOST_GAME_EXPORT int GhostGame_Init(const GhostGameAPI* api)
     S.camId = G->GetActiveCamera();
     float pos[3], yp[2];
     if (S.camId && G->GetCamera(S.camId, pos, yp, nullptr)) S.camYaw = yp[0];    // start behind the player, facing the way the camera did
-
+    if (S.camId && G->GetCameraMode(S.camId) == 1 && G->GetCameraTarget(S.camId) == 0)
+        G->SetCameraTarget(S.camId, S.player);       // an orbit camera with no target follows the player
     Level_Init();
     Player_Init();
     Player_Reset();

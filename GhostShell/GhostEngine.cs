@@ -45,6 +45,9 @@ namespace GhostShell
         public float fovDeg;
         public int isActive;
         public int resW, resH;
+        public int mode, targetId;
+        public float distance, heightOffset, minDist, maxDist;
+        public float minPitchDeg, maxPitchDeg, smoothing;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -146,7 +149,17 @@ namespace GhostShell
 
         // ---- Cameras ----
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        public static extern int GhostEngine_AddCamera(int screenX, int screenY);
+        public static extern int GhostEngine_AddCamera(int mode, int screenX, int screenY);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetCameraTargetTag(int id, [Out] byte[] buf, int bufSize);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetCameraTargetTag(int id, [MarshalAs(UnmanagedType.LPUTF8Str)] string tag);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetGameStartCamera();
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetGameStartCamera(int cameraId);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_MouseWheel(int delta);
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern int GhostEngine_GetCamera(int id, ref GhostCameraInfo info);
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]

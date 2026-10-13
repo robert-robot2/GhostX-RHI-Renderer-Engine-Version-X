@@ -284,6 +284,7 @@ namespace GhostShell
                     GhostEngine.GhostEngine_MouseDown(e.X, e.Y, 0);
             };
             _renderPanel.MouseMove += (s, e) => GhostEngine.GhostEngine_MouseMove(e.X, e.Y);
+            _renderPanel.MouseWheel += (s, e) => GhostEngine.GhostEngine_MouseWheel(e.Delta);
             _renderPanel.MouseUp += (s, e) =>
             {
                 if (e.Button == MouseButtons.Left)

@@ -42,7 +42,10 @@ struct GhostCameraInfo
     float yawDeg, pitchDeg;
     float fovDeg;
     int   isActive;
-    int   resW, resH;                  // 0, 0 = Match Window
+    int   resW, resH;
+    int   mode, targetId;                 // mode: 0 free, 1 orbit
+    float distance, heightOffset, minDist, maxDist;
+    float minPitchDeg, maxPitchDeg, smoothing;
 };
 struct GhostGameplayInfo
 {
@@ -73,7 +76,12 @@ extern "C"
     GHOST_API int  GhostEngine_RemoveEntity(int id);      // returns 1 if removed (0 = refused, e.g. the last camera)
 
     // ---- Cameras ----
-    GHOST_API int  GhostEngine_AddCamera(int screenX, int screenY);   // id, or 0 if at the limit of 4
+    GHOST_API int  GhostEngine_AddCamera(int mode, int screenX, int screenY);   // mode 0 free, 1 orbit (locks to an object under the drop point)
+    GHOST_API int  GhostEngine_GetCameraTargetTag(int cameraId, char* buf, int bufSize);
+    GHOST_API void GhostEngine_SetCameraTargetTag(int cameraId, const char* utf8Tag);
+    GHOST_API int  GhostEngine_GetGameStartCamera();                 // 0 = keep the current main view camera
+    GHOST_API void GhostEngine_SetGameStartCamera(int cameraId);
+    GHOST_API void GhostEngine_MouseWheel(int delta);                // WinForms e.Delta (120 per notch)
     GHOST_API int  GhostEngine_GetCamera(int id, GhostCameraInfo* out);
     GHOST_API void GhostEngine_SetCamera(const GhostCameraInfo* in);  // isActive is ignored
     GHOST_API void GhostEngine_SetActiveCamera(int id);

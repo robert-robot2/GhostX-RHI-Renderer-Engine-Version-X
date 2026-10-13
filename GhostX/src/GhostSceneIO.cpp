@@ -107,7 +107,7 @@ bool GhostScene_Save(const GhostScene& s, const std::string& root, const std::st
         j["version"] = GHOSTSCENE_VERSION;
         j["nextId"] = s.nextId;
         j["activeCamera"] = s.activeCameraId;
-
+        j["gameStartCamera"] = s.gameStartCameraId;
         json amb;
         amb["color"] = F3(s.ambientColor);
         amb["intensity"] = s.ambientIntensity;
@@ -182,6 +182,16 @@ bool GhostScene_Save(const GhostScene& s, const std::string& root, const std::st
             jc["fov"] = c.fovDeg;
             jc["resW"] = c.resW;
             jc["resH"] = c.resH;
+            jc["mode"] = c.mode;
+            jc["targetId"] = c.targetId;
+            jc["targetTag"] = c.targetTag;
+            jc["distance"] = c.distance;
+            jc["heightOffset"] = c.heightOffset;
+            jc["minDist"] = c.minDist;
+            jc["maxDist"] = c.maxDist;
+            jc["minPitch"] = c.minPitchDeg;
+            jc["maxPitch"] = c.maxPitchDeg;
+            jc["smoothing"] = c.smoothing;
             cams.push_back(jc);
         }
         j["cameras"] = cams;
@@ -346,6 +356,17 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
                 c.fovDeg = jc.value("fov", 45.0f);
                 c.resW = jc.value("resW", 0);
                 c.resH = jc.value("resH", 0);
+                c.mode = Clampi(jc.value("mode", 0), 0, 1);
+                c.targetId = jc.value("targetId", 0);
+                c.targetTag = jc.value("targetTag", std::string());
+                if (c.targetTag.size() > 31) c.targetTag.resize(31);
+                c.distance = jc.value("distance", 7.0f);
+                c.heightOffset = jc.value("heightOffset", 0.6f);
+                c.minDist = jc.value("minDist", 2.0f);
+                c.maxDist = jc.value("maxDist", 20.0f);
+                c.minPitchDeg = jc.value("minPitch", -70.0f);
+                c.maxPitchDeg = jc.value("maxPitch", 40.0f);
+                c.smoothing = jc.value("smoothing", 10.0f);
                 s.cameras.push_back(c);
             }
         s.nextId = (std::max)(s.nextId, maxId + 1);
@@ -354,6 +375,9 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
         int active = j.value("activeCamera", 0);
         s.activeCameraId = s.cameras.front().id;
         for (const GhostCamera& c : s.cameras) if (c.id == active) s.activeCameraId = active;
+        s.gameStartCameraId = 0;
+        int gs = j.value("gameStartCamera", 0);
+        for (const GhostCamera& c : s.cameras) if (c.id == gs) s.gameStartCameraId = gs;
         return true;
     }
     catch (const std::exception& e)
@@ -380,6 +404,7 @@ unsigned int GhostScene_Hash(const GhostScene& s)
     auto S = [&](const std::string& t) { mix(t.data(), t.size()); I((int)t.size()); };
 
     I(s.activeCameraId);
+    I(s.gameStartCameraId);
     F(s.ambientColor[0]); F(s.ambientColor[1]); F(s.ambientColor[2]); F(s.ambientIntensity);
 
     for (const GhostObject& o : s.objects)
@@ -401,7 +426,14 @@ unsigned int GhostScene_Hash(const GhostScene& s)
     for (const GhostCamera& c : s.cameras)
     {
         I(c.id); S(c.name); F(c.fovDeg); I(c.resW); I(c.resH);
-        if (c.id != s.activeCameraId) { V(c.position); F(c.yawDeg); F(c.pitchDeg); }   // flying the main camera isn't an edit
+        I(c.mode); I(c.targetId); S(c.targetTag);
+        F(c.distance); F(c.heightOffset); F(c.minDist); F(c.maxDist);
+        F(c.minPitchDeg); F(c.maxPitchDeg); F(c.smoothing);
+        if (c.id != s.activeCameraId)               // flying the main camera isn't an edit
+        {
+            if (c.mode != 1) V(c.position);         // an orbit camera's position is computed, so it isn't an edit either
+            F(c.yawDeg); F(c.pitchDeg);
+        }
     }
     return h;
 }

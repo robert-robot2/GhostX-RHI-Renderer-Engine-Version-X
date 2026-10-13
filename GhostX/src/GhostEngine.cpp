@@ -42,6 +42,7 @@ static GhostVec3  g_dragOffset;
 static GhostVec3  g_dragPlanePoint;
 static GhostObject* FindObject(int id);
 static int          CurrentFace();
+static int PickObjectAt(int sx, int sy);
 struct EngineViewport { bool alive = false; bool visible = true; int cameraId = 0; };
 static EngineViewport g_vp[GHOST_MAX_SURFACES];
 static int            g_inputCameraId = 0;               // the camera WASD / right-mouse look drives
@@ -54,7 +55,8 @@ static GhostInput      g_input;
 static double          g_playTime = 0.0;
 static std::string     g_hudText, g_gameModulePath, g_playMessage, g_playFault;
 static GhostGameAPI    g_gameApi;
-
+static float g_mouseAccumX = 0.0f, g_mouseAccumY = 0.0f, g_wheelAccum = 0.0f;   // collected between steps
+static float g_apiMouseDX = 0.0f, g_apiMouseDY = 0.0f, g_apiWheel = 0.0f;       // what the game reads
 // Main view render size and where it sits inside the window (for mapping the mouse)
 static int   g_mainRW = 1280, g_mainRH = 720;
 static float g_fitX = 0.0f, g_fitY = 0.0f, g_fitW = 1280.0f, g_fitH = 720.0f;
@@ -933,6 +935,42 @@ static void RenderViewport(int vp)
     g_rhi->EndFrame();
 }
 
+// ---- Orbit cameras ----
+static bool ResolveOrbitTarget(const GhostCamera& c, GhostVec3& out)
+{
+    if (c.targetId)
+        for (const GhostObject& o : g_scene.objects)
+            if (o.id == c.targetId) { out = o.position; return true; }
+    if (!c.targetTag.empty())
+        for (const GhostObject& o : g_scene.objects)
+            if (GhostObject_Tag(o) == c.targetTag) { out = o.position; return true; }
+    return false;
+}
+
+// smooth = true while a game is running; in the editor the camera snaps so it follows a dragged target exactly
+static void UpdateOrbitCameras(float dt, bool smooth)
+{
+    for (GhostCamera& c : g_scene.cameras)
+    {
+        if (c.mode != 1) continue;
+        GhostVec3 t;
+        if (!ResolveOrbitTarget(c, t)) continue;       // no target: it behaves like a free camera
+
+        t.y += c.heightOffset;
+        GhostVec3 want = t - AnglesToDir(c.yawDeg, c.pitchDeg) * c.distance;
+
+        if (!smooth || c.smoothing <= 0.0f || !c.orbitValid) { c.orbitPos = want; c.orbitValid = true; }
+        else
+        {
+            float k = 1.0f - expf(-c.smoothing * dt);
+            c.orbitPos = c.orbitPos + (want - c.orbitPos) * k;
+        }
+        c.position = c.orbitPos;
+        if (smooth && c.position.y < 0.3f) c.position.y = 0.3f;     // never below the ground while playing
+    }
+}
+
+
 void GhostEngine_Tick()
 {
     if (!g_rhi || !g_pipeline) return;
@@ -947,6 +985,11 @@ void GhostEngine_Tick()
     if (g_playState == GhostPlayState::Playing)
     {
         const int steps = g_stepper.Advance(dt);
+        if (steps > 0)                               // hand the mouse movement collected since the last step to the game
+        {
+            g_apiMouseDX = g_mouseAccumX; g_apiMouseDY = g_mouseAccumY; g_apiWheel = g_wheelAccum;
+            g_mouseAccumX = g_mouseAccumY = 0.0f; g_wheelAccum = 0.0f;
+        }
         bool faulted = false;
         for (int i = 0; i < steps; i++)
         {
@@ -959,6 +1002,7 @@ void GhostEngine_Tick()
             }
             g_playTime += GHOST_FIXED_DT;
             g_input.EndStep();
+            g_apiMouseDX = g_apiMouseDY = 0.0f; g_apiWheel = 0.0f;    // only the first step of a frame sees the movement
         }
         if (faulted) GhostEngine_Stop();
     }
@@ -975,7 +1019,14 @@ void GhostEngine_Tick()
     const float lookSens = 0.0025f;
     const float moveSpeed = 3.5f;
 
-    if (flyEnabled && (GetAsyncKeyState(VK_RBUTTON) & 0x8000))
+    const bool orbitCam = cam && cam->mode == 1;
+    const bool editing = g_playState == GhostPlayState::Editing;
+    const bool playing = g_playState == GhostPlayState::Playing;
+    const bool lookEnabled = g_inputEnabled && (editing || playing);
+    const bool applyLook = editing || orbitCam;      // while playing, only an orbit camera is turned by the engine
+    const float toRad = GHOST_PI / 180.0f;
+
+    if (lookEnabled && (GetAsyncKeyState(VK_RBUTTON) & 0x8000))
     {
         if (!g_looking)
         {
@@ -989,11 +1040,17 @@ void GhostEngine_Tick()
             GetCursorPos(&cur);
             int dx = cur.x - g_lastMouse.x;
             int dy = cur.y - g_lastMouse.y;
-            g_yaw += dx * lookSens;     // was -=
-            g_pitch -= dy * lookSens;
-            const float limit = 3.1415926535f * 0.49f;
-            if (g_pitch > limit) g_pitch = limit;
-            if (g_pitch < -limit) g_pitch = -limit;
+            if (playing) { g_mouseAccumX += (float)dx; g_mouseAccumY += (float)dy; }     // the game can read it too
+
+            if (applyLook)
+            {
+                g_yaw += dx * lookSens;
+                g_pitch -= dy * lookSens;
+                float hi = orbitCam ? cam->maxPitchDeg * toRad : GHOST_PI * 0.49f;
+                float lo = orbitCam ? cam->minPitchDeg * toRad : -GHOST_PI * 0.49f;
+                if (g_pitch > hi) g_pitch = hi;
+                if (g_pitch < lo) g_pitch = lo;
+            }
             SetCursorPos(g_lastMouse.x, g_lastMouse.y);
         }
     }
@@ -1002,6 +1059,8 @@ void GhostEngine_Tick()
         g_looking = false;
         ShowCursor(TRUE);
     }
+
+
     auto down = [&](int vk) { return flyEnabled && (GetAsyncKeyState(vk) & 0x8000) != 0; };
     // ---- Movement ----
     GhostVec3 forward = {
@@ -1027,6 +1086,7 @@ void GhostEngine_Tick()
         cam->yawDeg = fmodf(g_yaw * (180.0f / GHOST_PI), 360.0f);
         cam->pitchDeg = g_pitch * (180.0f / GHOST_PI);
     }
+    UpdateOrbitCameras(dt, g_playState != GhostPlayState::Editing);
     // ---- Render: camera windows first, the main view last (it carries the vsync) ----
     for (int vp = 1; vp < GHOST_MAX_SURFACES; vp++)
         if (g_vp[vp].alive) RenderViewport(vp);
@@ -1178,11 +1238,12 @@ int GhostEngine_PickObjectAt(int px, int py, int* outFace)
 // ============================================================
 //  Exported: cameras
 // ============================================================
-int GhostEngine_AddCamera(int sx, int sy)
+int GhostEngine_AddCamera(int mode, int sx, int sy)
 {
     if (g_playState != GhostPlayState::Editing) return 0;
     GhostCamera* c = GhostScene_AddCamera(g_scene);
     if (!c) return 0;
+
     SpawnCoords(sx, sy);
     GhostVec3 p = SpawnPoint(sx, sy);
     p.y += 1.5f;
@@ -1190,6 +1251,16 @@ int GhostEngine_AddCamera(int sx, int sy)
     if (const GhostCamera* a = ActiveCamera())          // face the same way as the main view
     {
         c->yawDeg = a->yawDeg; c->pitchDeg = a->pitchDeg; c->fovDeg = a->fovDeg;
+    }
+    if (mode == 1)
+    {
+        c->mode = 1;
+        c->name = "Orbit Camera " + std::to_string(c->id);
+        if (sx >= 0)                                    // dropped onto an object: lock to it
+        {
+            int hit = PickObjectAt(sx, sy);
+            if (hit) c->targetId = hit;
+        }
     }
     g_scene.selectedId = c->id;
     return c->id;
@@ -1202,8 +1273,11 @@ int GhostEngine_GetCamera(int id, GhostCameraInfo* out)
         if (c.id == id)
         {
             *out = { c.id, c.position.x, c.position.y, c.position.z,
-         c.yawDeg, c.pitchDeg, c.fovDeg, c.id == g_scene.activeCameraId ? 1 : 0,
-         c.resW, c.resH };
+                     c.yawDeg, c.pitchDeg, c.fovDeg, c.id == g_scene.activeCameraId ? 1 : 0,
+                     c.resW, c.resH,
+                     c.mode, c.targetId,
+                     c.distance, c.heightOffset, c.minDist, c.maxDist,
+                     c.minPitchDeg, c.maxPitchDeg, c.smoothing };
             return 1;
         }
     return 0;
@@ -1212,19 +1286,26 @@ int GhostEngine_GetCamera(int id, GhostCameraInfo* out)
 void GhostEngine_SetCamera(const GhostCameraInfo* in)
 {
     if (!in) return;
+    auto clampf = [](float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); };
     for (GhostCamera& c : g_scene.cameras)
         if (c.id == in->id)
         {
             c.position = { in->px, in->py, in->pz };
             c.yawDeg = in->yawDeg;
-            c.pitchDeg = in->pitchDeg < -88.0f ? -88.0f : (in->pitchDeg > 88.0f ? 88.0f : in->pitchDeg);
-            c.fovDeg = in->fovDeg < 10.0f ? 10.0f : (in->fovDeg > 120.0f ? 120.0f : in->fovDeg);
+            c.pitchDeg = clampf(in->pitchDeg, -88.0f, 88.0f);
+            c.fovDeg = clampf(in->fovDeg, 10.0f, 120.0f);
             if (in->resW <= 0 || in->resH <= 0) { c.resW = 0; c.resH = 0; }
-            else
-            {
-                c.resW = in->resW < 16 ? 16 : (in->resW > 4096 ? 4096 : in->resW);
-                c.resH = in->resH < 16 ? 16 : (in->resH > 4096 ? 4096 : in->resH);
-            }
+            else { c.resW = (int)clampf((float)in->resW, 16.0f, 4096.0f); c.resH = (int)clampf((float)in->resH, 16.0f, 4096.0f); }
+
+            c.mode = in->mode == 1 ? 1 : 0;
+            c.targetId = in->targetId > 0 ? in->targetId : 0;
+            c.minDist = clampf(in->minDist, 0.3f, 100.0f);
+            c.maxDist = clampf(in->maxDist, c.minDist, 100.0f);
+            c.distance = clampf(in->distance, c.minDist, c.maxDist);
+            c.heightOffset = clampf(in->heightOffset, -20.0f, 20.0f);
+            c.minPitchDeg = clampf(in->minPitchDeg, -88.0f, 88.0f);
+            c.maxPitchDeg = clampf(in->maxPitchDeg, c.minPitchDeg, 88.0f);
+            c.smoothing = clampf(in->smoothing, 0.0f, 50.0f);
             return;
         }
 }
@@ -1424,6 +1505,21 @@ static int Api_KeyDown(int vk) { return (vk > 0 && vk < 256 && g_input.down[vk])
 static int Api_KeyPressed(int vk) { return (vk > 0 && vk < 256 && g_input.pressed[vk]) ? 1 : 0; }
 static int Api_KeyReleased(int vk) { return (vk > 0 && vk < 256 && g_input.released[vk]) ? 1 : 0; }
 
+// is this correct palceemnts?
+static void  Api_GetMouseDelta(float* v) { if (v) { v[0] = g_apiMouseDX; v[1] = g_apiMouseDY; } }
+static float Api_GetMouseWheel() { return g_apiWheel; }
+static int   Api_GetCameraMode(int id) { GhostCamera* c = FindCamera(id); return c ? c->mode : -1; }
+static int   Api_GetCameraTarget(int id) { GhostCamera* c = FindCamera(id); return c ? c->targetId : 0; }
+static int   Api_SetCameraTarget(int id, int obj)
+{
+    GhostCamera* c = FindCamera(id);
+    if (!c || (obj != 0 && !FindObject(obj))) return 0;
+    c->targetId = obj;
+    c->orbitValid = false;
+    return 1;
+}
+// end
+
 static int Api_FindByTag(const char* tag)
 {
     if (!tag) return 0;
@@ -1605,6 +1701,8 @@ static void BuildGameApi()
     a.Spawn = Api_Spawn;  a.Destroy = Api_Destroy;
     a.GetActiveCamera = Api_GetActiveCamera;  a.SetActiveCamera = Api_SetActiveCamera;
     a.GetCamera = Api_GetCamera;  a.SetCamera = Api_SetCamera;
+    a.GetMouseDelta = Api_GetMouseDelta;  a.GetMouseWheel = Api_GetMouseWheel;
+    a.GetCameraMode = Api_GetCameraMode;  a.GetCameraTarget = Api_GetCameraTarget;  a.SetCameraTarget = Api_SetCameraTarget;
 }
 // ============================================================
 //  Exported: play mode
@@ -1615,6 +1713,12 @@ int GhostEngine_Play()
     if (g_playState != GhostPlayState::Editing) return 1;
 
     g_playBackup = g_scene;                          // Stop puts this back
+    if (g_scene.gameStartCameraId && FindCamera(g_scene.gameStartCameraId))
+        g_scene.activeCameraId = g_scene.gameStartCameraId;      // Stop restores the backup, so your editor camera comes back
+    for (GhostCamera& c : g_scene.cameras) c.orbitValid = false; // orbit cameras snap to their target on the first frame
+    g_mouseAccumX = g_mouseAccumY = g_apiMouseDX = g_apiMouseDY = 0.0f;
+    g_wheelAccum = g_apiWheel = 0.0f;
+    g_scene.version++;                                           // the hierarchy shows the new (Main View)
     g_stepper.Reset();
     g_input.Reset();
     g_playTime = 0.0;
@@ -1747,4 +1851,45 @@ int GhostEngine_DuplicateEntity(int id)
     g_scene.selectedFace = -1;
     g_scene.version++;
     return copy.id;
+}
+
+int GhostEngine_GetCameraTargetTag(int id, char* buf, int size)
+{
+    if (!buf || size <= 0) return 0;
+    buf[0] = 0;
+    GhostCamera* c = FindCamera(id);
+    if (!c) return 0;
+    CopyMsg(c->targetTag, buf, size);
+    return 1;
+}
+
+void GhostEngine_SetCameraTargetTag(int id, const char* tag)
+{
+    GhostCamera* c = FindCamera(id);
+    if (!c) return;
+    std::string t = tag ? tag : "";
+    if (t.size() > 31) t.resize(31);
+    c->targetTag = t;
+    c->orbitValid = false;
+}
+
+int GhostEngine_GetGameStartCamera() { return g_scene.gameStartCameraId; }
+
+void GhostEngine_SetGameStartCamera(int id)
+{
+    g_scene.gameStartCameraId = (id != 0 && FindCamera(id)) ? id : 0;
+}
+
+void GhostEngine_MouseWheel(int delta)
+{
+    if (g_playState != GhostPlayState::Playing || !g_inputEnabled) return;
+    const float notches = (float)delta / 120.0f;
+    g_wheelAccum += notches;                       // the game can read it too
+
+    GhostCamera* c = InputCamera();
+    if (c && c->mode == 1)
+    {
+        float d = c->distance - notches;
+        c->distance = d < c->minDist ? c->minDist : (d > c->maxDist ? c->maxDist : d);
+    }
 }

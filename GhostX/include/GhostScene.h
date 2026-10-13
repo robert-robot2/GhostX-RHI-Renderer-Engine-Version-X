@@ -109,6 +109,15 @@ struct GhostCamera
     float       yawDeg = 0.0f, pitchDeg = 0.0f;
     float       fovDeg = 45.0f;
     int         resW = 0, resH = 0;                  // 0 = Match Window
+    int         mode = 0;                         // 0 Free, 1 Orbit
+    int         targetId = 0;                     // orbit target object (0 = none)
+    std::string targetTag;                        // used when targetId is 0 (e.g. "Player")
+    float       distance = 7.0f, heightOffset = 0.6f;
+    float       minDist = 2.0f, maxDist = 20.0f;
+    float       minPitchDeg = -70.0f, maxPitchDeg = 40.0f;
+    float       smoothing = 10.0f;                // 0 = snap
+    GhostVec3   orbitPos = { 0, 0, 0 };           // runtime only, not saved
+    bool        orbitValid = false;               // runtime only
 };
 struct GhostScene
 {
@@ -116,6 +125,7 @@ struct GhostScene
     std::vector<GhostLight>  lights;
     std::vector<GhostCamera> cameras;
     int activeCameraId = 0;              // the camera the main view renders through
+    int gameStartCameraId = 0;           // 0 = Play keeps the current main view camera
     std::vector<GhostTextureInfo> textures;     // id 0 = White, id 1 = Checkerboard, then imports
     float        ambientColor[3] = { 1, 1, 1 };
     float        ambientIntensity = 0.15f;
@@ -184,6 +194,7 @@ inline bool GhostScene_Remove(GhostScene& s, int id)
             bool wasActive = (s.activeCameraId == id);
             s.cameras.erase(s.cameras.begin() + i);
             if (wasActive) s.activeCameraId = s.cameras.front().id;
+            if (s.gameStartCameraId == id) s.gameStartCameraId = 0;
             goto removed;
         }
     return false;

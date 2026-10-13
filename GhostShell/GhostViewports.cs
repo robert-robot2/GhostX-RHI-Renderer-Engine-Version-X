@@ -110,7 +110,7 @@ namespace GhostShell
                 w.Panel.Select();
                 if (e.Button == MouseButtons.Left) GhostEngine.GhostEngine_SelectEntity(w.CameraId);
             };
-
+            w.Panel.MouseWheel += (s, e) => GhostEngine.GhostEngine_MouseWheel(e.Delta);
             w.Window = new PanelDock("Camera:" + cameraId, GhostNames.Of(cameraId), w.Panel, Areas);
             _windows[cameraId] = w;
 

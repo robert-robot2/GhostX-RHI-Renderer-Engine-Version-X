@@ -215,10 +215,53 @@ namespace GhostShell
             { (0, 0), (640, 360), (1280, 720), (1920, 1080), (2560, 1440), (3840, 2160), (1024, 768), (800, 600) };
         protected override string[] Items => Names;
     }
+    internal static class GhostEntityList
+    {
+        // kind: 0 object, 1 light, 2 camera
+        public static List<(int id, string name)> Of(int kind)
+        {
+            var list = new List<(int, string)>();
+            var buf = new GhostEntityInfo[512];
+            int n = GhostEngine.GhostEngine_GetEntities(buf, buf.Length);
+            for (int i = 0; i < n; i++)
+                if (buf[i].kind == kind) list.Add((buf[i].id, GhostNames.Of(buf[i].id)));
+            return list;
+        }
+    }
 
+    internal class CameraModeConverter : FixedListConverter
+    {
+        public static readonly string[] Names = { "Free", "Orbit" };
+        protected override string[] Items => Names;
+    }
+
+    internal class OrbitTargetConverter : StringConverter
+    {
+        public override bool GetStandardValuesSupported(ITypeDescriptorContext? context) => true;
+        public override bool GetStandardValuesExclusive(ITypeDescriptorContext? context) => true;
+        public override StandardValuesCollection GetStandardValues(ITypeDescriptorContext? context)
+        {
+            var list = new List<string> { "None" };
+            foreach (var (_, name) in GhostEntityList.Of(0)) list.Add(name);
+            return new StandardValuesCollection(list);
+        }
+    }
+
+    internal class StartCameraConverter : StringConverter
+    {
+        public const string CurrentLabel = "Current Main View";
+        public override bool GetStandardValuesSupported(ITypeDescriptorContext? context) => true;
+        public override bool GetStandardValuesExclusive(ITypeDescriptorContext? context) => true;
+        public override StandardValuesCollection GetStandardValues(ITypeDescriptorContext? context)
+        {
+            var list = new List<string> { CurrentLabel };
+            foreach (var (_, name) in GhostEntityList.Of(2)) list.Add(name);
+            return new StandardValuesCollection(list);
+        }
+    }
     internal class CameraProxy
     {
-        private readonly int _id;
+        protected readonly int _id;
 
         public CameraProxy(int id)
         {
@@ -228,8 +271,8 @@ namespace GhostShell
                 (x, y, z) => { var i = Get(); i.px = x; i.py = y; i.pz = z; Set(i); });
         }
 
-        private GhostCameraInfo Get() { var i = new GhostCameraInfo(); GhostEngine.GhostEngine_GetCamera(_id, ref i); return i; }
-        private void Set(GhostCameraInfo i) => GhostEngine.GhostEngine_SetCamera(ref i);
+        protected GhostCameraInfo Get() { var i = new GhostCameraInfo(); GhostEngine.GhostEngine_GetCamera(_id, ref i); return i; }
+        protected void Set(GhostCameraInfo i) => GhostEngine.GhostEngine_SetCamera(ref i);
 
         [Category("Details")] public string Name => GhostNames.Of(_id);
 
@@ -243,6 +286,15 @@ namespace GhostShell
                 else System.Media.SystemSounds.Beep.Play();     // there is always one main view camera
             }
         }
+        [Category("Camera")]
+        [TypeConverter(typeof(CameraModeConverter))]
+        public string Mode
+        {
+            get => Get().mode == 1 ? "Orbit" : "Free";
+            set { var i = Get(); i.mode = value == "Orbit" ? 1 : 0; Set(i); }
+        }
+
+        [Browsable(false)] public virtual bool IsOrbit => false;
         [Category("Camera"), DisplayName("Show Viewport")]
         public bool ShowViewport
         {
@@ -283,7 +335,64 @@ namespace GhostShell
         }
 
     }
+    // Shown instead of CameraProxy while the camera's Mode is Orbit
+    internal class OrbitCameraProxy : CameraProxy
+    {
+        public OrbitCameraProxy(int id) : base(id) { }
 
+        [Browsable(false)] public override bool IsOrbit => true;
+
+        [Category("Orbit")]
+        [TypeConverter(typeof(OrbitTargetConverter))]
+        public string Target
+        {
+            get
+            {
+                int t = Get().targetId;
+                string n = t == 0 ? "" : GhostNames.Of(t);
+                return n.Length > 0 ? n : "None";
+            }
+            set
+            {
+                int id = 0;
+                foreach (var (oid, name) in GhostEntityList.Of(0)) if (name == value) id = oid;
+                var i = Get(); i.targetId = id; Set(i);
+            }
+        }
+
+        [Category("Orbit"), DisplayName("Target Tag (when Target = None)")]
+        public string TargetTag
+        {
+            get
+            {
+                var b = new byte[64];
+                GhostEngine.GhostEngine_GetCameraTargetTag(_id, b, b.Length);
+                int n = Array.IndexOf(b, (byte)0);
+                return Encoding.UTF8.GetString(b, 0, n < 0 ? b.Length : n);
+            }
+            set => GhostEngine.GhostEngine_SetCameraTargetTag(_id, value ?? "");
+        }
+
+        [Category("Orbit")] public float Distance { get => Get().distance; set { var i = Get(); i.distance = value; Set(i); } }
+
+        [Category("Orbit"), DisplayName("Height Offset")]
+        public float HeightOffset { get => Get().heightOffset; set { var i = Get(); i.heightOffset = value; Set(i); } }
+
+        [Category("Orbit"), DisplayName("Min Distance")]
+        public float MinDistance { get => Get().minDist; set { var i = Get(); i.minDist = value; Set(i); } }
+
+        [Category("Orbit"), DisplayName("Max Distance")]
+        public float MaxDistance { get => Get().maxDist; set { var i = Get(); i.maxDist = value; Set(i); } }
+
+        [Category("Orbit"), DisplayName("Min Pitch (deg)")]
+        public float MinPitch { get => Get().minPitchDeg; set { var i = Get(); i.minPitchDeg = value; Set(i); } }
+
+        [Category("Orbit"), DisplayName("Max Pitch (deg)")]
+        public float MaxPitch { get => Get().maxPitchDeg; set { var i = Get(); i.maxPitchDeg = value; Set(i); } }
+
+        [Category("Orbit"), DisplayName("Smoothing (0 = snap)")]
+        public float Smoothing { get => Get().smoothing; set { var i = Get(); i.smoothing = value; Set(i); } }
+    }
     internal class RoleConverter : FixedListConverter
     {
         public static readonly string[] Names = { "Static", "Player", "Enemy", "Coin", "Block", "Goal", "Custom" };
@@ -612,6 +721,24 @@ namespace GhostShell
             {
                 GhostEngine.GhostEngine_GetAmbient(out float r, out float g, out float b, out _);
                 GhostEngine.GhostEngine_SetAmbient(r, g, b, value);
+            }
+        }
+
+        [Category("Game"), DisplayName("Game Start Camera")]
+        [TypeConverter(typeof(StartCameraConverter))]
+        public string GameStartCamera
+        {
+            get
+            {
+                int id = GhostEngine.GhostEngine_GetGameStartCamera();
+                string n = id == 0 ? "" : GhostNames.Of(id);
+                return n.Length > 0 ? n : StartCameraConverter.CurrentLabel;
+            }
+            set
+            {
+                int id = 0;
+                foreach (var (cid, name) in GhostEntityList.Of(2)) if (name == value) id = cid;
+                GhostEngine.GhostEngine_SetGameStartCamera(id);
             }
         }
     }
@@ -1017,6 +1144,7 @@ namespace GhostShell
             else
             {
                 Add("Free Camera", "cam", 0);
+                Add("Orbit Camera", "cam", 1);
             }
             void Add(string text, string kind, int type) =>
                 _palette.Items.Add(new PaletteItem { Text = text, Kind = kind, Type = type });
@@ -1044,7 +1172,7 @@ namespace GhostShell
         private void Spawn(string kind, int type, int x, int y)
         {
             int id = kind == "light" ? GhostEngine.GhostEngine_AddLight(type, x, y)
-                   : kind == "cam" ? GhostEngine.GhostEngine_AddCamera(x, y)
+                                      : kind == "cam" ? GhostEngine.GhostEngine_AddCamera(type, x, y)
                                      : GhostEngine.GhostEngine_AddObject(type, x, y);
             if (id == 0) System.Media.SystemSounds.Beep.Play();   // scene is full (or 4 cameras already)
             else if (kind == "cam") _vp.Open(id);
@@ -1126,13 +1254,17 @@ namespace GhostShell
                 _lastSnap = Snapshot(sel);
                 return;
             }
-
+                      
             // Same selection: refresh the grid only if the values changed (viewport drag)
             object? snap = Snapshot(sel);
             if (!Equals(snap, _lastSnap))
             {
                 _lastSnap = snap;
-                _grid.Refresh();
+                // Free <-> Orbit swaps which properties exist, so rebuild the grid instead of refreshing it
+                if (snap is GhostCameraInfo ci && _grid.SelectedObject is CameraProxy cp && cp.IsOrbit != (ci.mode == 1))
+                    ShowDetails(sel);
+                else
+                    _grid.Refresh();
             }
         }
 
@@ -1199,7 +1331,8 @@ namespace GhostShell
                 else
                 {
                     var c = new GhostCameraInfo();
-                    if (GhostEngine.GhostEngine_GetCamera(id, ref c) != 0) proxy = new CameraProxy(id);
+                    if (GhostEngine.GhostEngine_GetCamera(id, ref c) != 0)
+                        proxy = c.mode == 1 ? new OrbitCameraProxy(id) : new CameraProxy(id);
                 }
             }
             _grid.SelectedObject = proxy;
@@ -1210,7 +1343,7 @@ namespace GhostShell
             if (id == 0)
             {
                 GhostEngine.GhostEngine_GetAmbient(out float r, out float g, out float b, out float k);
-                return (r, g, b, k);
+                return (r, g, b, k, GhostEngine.GhostEngine_GetGameStartCamera());
             }
             var o = new GhostObjectInfo();
             if (GhostEngine.GhostEngine_GetObject(id, ref o) != 0)
