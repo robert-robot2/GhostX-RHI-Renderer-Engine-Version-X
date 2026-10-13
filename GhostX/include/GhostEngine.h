@@ -145,4 +145,5 @@ extern "C"
     GHOST_API int  GhostEngine_GetPlayMessage(char* buf, int bufSize);   // last module message (path, or why it failed)
     GHOST_API int  GhostEngine_GetHudText(char* buf, int bufSize);       // what the game set with SetHudText
     GHOST_API int  GhostEngine_TakePlayFault(char* buf, int bufSize);    // 1 once if the module crashed (message in buf)
+    GHOST_API int GhostEngine_DuplicateEntity(int id);     // objects only. New id, 0 = failed (or playing)
 }

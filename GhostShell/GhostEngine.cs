@@ -212,6 +212,8 @@ namespace GhostShell
         public static extern int GhostEngine_GetHudText([Out] byte[] buf, int bufSize);
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern int GhostEngine_TakePlayFault([Out] byte[] buf, int bufSize);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_DuplicateEntity(int id);
 
     }
 }

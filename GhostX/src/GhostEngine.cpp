@@ -1725,3 +1725,26 @@ int GhostEngine_TakePlayFault(char* buf, int size)
     g_playFault.clear();
     return 1;
 }
+int GhostEngine_DuplicateEntity(int id)
+{
+    if (g_playState != GhostPlayState::Editing) return 0;
+    GhostObject* src = FindObject(id);
+    if (!src || g_scene.objects.size() >= MAX_SCENE_OBJECT_COUNT) return 0;
+
+    GhostObject copy = *src;                         // copy first: push_back can move the vector
+    copy.id = g_scene.nextId++;
+
+    std::string base = copy.name;                    // "Cube 4" -> "Cube", then add the new id
+    size_t sp = base.find_last_of(' ');
+    if (sp != std::string::npos && sp + 1 < base.size() &&
+        base.find_first_not_of("0123456789", sp + 1) == std::string::npos)
+        base.resize(sp);
+    copy.name = base + " " + std::to_string(copy.id);
+    copy.position.x += fabsf(copy.scale.x) + 0.25f;  // lands beside the original
+
+    g_scene.objects.push_back(copy);
+    g_scene.selectedId = copy.id;
+    g_scene.selectedFace = -1;
+    g_scene.version++;
+    return copy.id;
+}

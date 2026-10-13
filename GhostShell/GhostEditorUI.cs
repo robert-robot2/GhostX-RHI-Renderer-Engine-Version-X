@@ -820,7 +820,8 @@ namespace GhostShell
         // Returns true if the key was consumed
         public bool HandleKey(Keys key, bool repeat)
         {
-            if (key != Keys.D4 && key != Keys.NumPad4 && key != Keys.Delete) return false;
+            bool ctrlD = key == Keys.D && Control.ModifierKeys == Keys.Control;
+            if (key != Keys.D4 && key != Keys.NumPad4 && key != Keys.Delete && !ctrlD) return false;
 
             Control? focus = Control.FromHandle(GhostShell.Win32.GetFocus());
             if (focus == null) return false;          // a native dialog (file / color picker) has focus
@@ -836,7 +837,15 @@ namespace GhostShell
                 Sync();
                 return true;
             }
-
+            if (ctrlD)
+            {
+                int sel = GhostEngine.GhostEngine_GetSelected();
+                if (sel == 0) return false;
+                if (GhostEngine.GhostEngine_DuplicateEntity(sel) == 0)
+                    System.Media.SystemSounds.Beep.Play();         // not an object, scene full, or playing
+                Sync();
+                return true;
+            }
             ToggleVisible();
             return true;
         }

@@ -1,89 +1,95 @@
-#include <Windows.h>
-#include <math.h>
-#include <stdio.h>
-#include "GhostGameAPI.h"
+#include "Game.h"
 
-static const GhostGameAPI* g = nullptr;
-static int   g_player = 0;
-static int   g_spawned = 0;
-static float g_groundY = 0.0f;
-static float g_vy = 0.0f;
+const GhostGameAPI* G = nullptr;
+GameState S;
+
+void Game_Restart(bool died)
+{
+    if (died) S.deaths++;
+    S.coins = 0; S.enemiesDown = 0;
+    S.big = false; S.invuln = 0.0f; S.complete = false;
+    Level_Reset();
+    Player_Reset();
+    S.camSnap = true;
+}
+
+static void Camera_Update(float dt)
+{
+    if (!S.camId || !S.player) return;
+
+    if (G->KeyDown('Q')) S.camYaw -= Cfg::CamTurnSpeed * dt;     // until 4D adds mouse orbit
+    if (G->KeyDown('E')) S.camYaw += Cfg::CamTurnSpeed * dt;
+
+    float p[3];
+    if (!G->GetPosition(S.player, p)) return;
+
+    const float d2r = 0.0174532925f;
+    float yaw = S.camYaw * d2r, pitch = Cfg::CamPitch * d2r;
+    float fx = cosf(pitch) * sinf(yaw), fy = sinf(pitch), fz = cosf(pitch) * cosf(yaw);
+    float want[3] = { p[0] - fx * Cfg::CamDistance,
+                      p[1] + Cfg::CamTargetHeight - fy * Cfg::CamDistance,
+                      p[2] - fz * Cfg::CamDistance };
+
+    if (S.camSnap) { memcpy(S.camPos, want, sizeof want); S.camSnap = false; }
+    else
+    {
+        float k = 1.0f - expf(-Cfg::CamSmooth * dt);
+        for (int i = 0; i < 3; i++) S.camPos[i] += (want[i] - S.camPos[i]) * k;
+    }
+
+    float pos[3] = { S.camPos[0], S.camPos[1] < 0.4f ? 0.4f : S.camPos[1], S.camPos[2] };   // never below the ground
+    float yp[2] = { S.camYaw, Cfg::CamPitch };
+    G->SetCamera(S.camId, pos, yp, nullptr);
+}
+
+static void Hud()
+{
+    char t[240];
+    if (S.error)
+        snprintf(t, sizeof t, "%s", S.error);
+    else if (S.complete)
+        snprintf(t, sizeof t, "LEVEL COMPLETE!  Coins %d/%d  Enemies %d/%d  Deaths %d  |  R: play again",
+            S.coins, S.totalCoins, S.enemiesDown, S.totalEnemies, S.deaths);
+    else
+        snprintf(t, sizeof t, "Coins %d/%d | Enemies %d/%d | %s | Deaths %d | WASD move, Shift run, Space jump, Q/E camera, R restart",
+            S.coins, S.totalCoins, S.enemiesDown, S.totalEnemies, S.big ? "BIG" : "small", S.deaths);
+    G->SetHudText(t);
+}
 
 GHOST_GAME_EXPORT int GhostGame_Init(const GhostGameAPI* api)
 {
     if (!api || api->version != GHOST_GAME_API_VERSION || api->size < (int)sizeof(GhostGameAPI)) return 0;
-    g = api;
-    g_spawned = 0;
-    g_vy = 0.0f;
+    G = api;
+    S = GameState();
 
-    g_player = g->FindByTag("Player");
-    if (g_player)
-    {
-        float p[3];
-        g->GetPosition(g_player, p);
-        g_groundY = p[1];
-        g->Log("GhostGame: found the Player");
-    }
-    else g->Log("GhostGame: no object with Role = Player");
+    S.player = G->FindByTag("Player");
+    if (!S.player) { G->Log("Adventures of Cube: no object with Role = Player"); return 1; }
+
+    S.camId = G->GetActiveCamera();
+    float pos[3], yp[2];
+    if (S.camId && G->GetCamera(S.camId, pos, yp, nullptr)) S.camYaw = yp[0];    // start behind the player, facing the way the camera did
+
+    Level_Init();
+    Player_Init();
+    Player_Reset();
+    S.camSnap = true;
+    G->Log("Adventures of Cube: Level 1 ready");
     return 1;
 }
 
 GHOST_GAME_EXPORT void GhostGame_Update(float dt)
 {
-    if (!g_player) { g->SetHudText("No object with Role = Player in this scene"); return; }
+    if (!S.player) { G->SetHudText("No object with Role = Player in this scene"); return; }
 
-    float p[3];
-    if (!g->GetPosition(g_player, p)) { g_player = 0; return; }
+    if (G->KeyPressed('R')) Game_Restart(false);
 
-    float dx = 0.0f, dz = 0.0f;
-    if (g->KeyDown('W')) dz += 1.0f;
-    if (g->KeyDown('S')) dz -= 1.0f;
-    if (g->KeyDown('D')) dx += 1.0f;
-    if (g->KeyDown('A')) dx -= 1.0f;
-    float len = sqrtf(dx * dx + dz * dz);
-    if (len > 0.0f) { dx /= len; dz /= len; }
-
-    const float speed = g->KeyDown(VK_SHIFT) ? 6.0f : 3.0f;
-    p[0] += dx * speed * dt;
-    p[2] += dz * speed * dt;
-
-    const bool grounded = p[1] <= g_groundY + 0.001f;
-    if (grounded && g->KeyPressed(VK_SPACE)) g_vy = 6.0f;
-    if (!grounded || g_vy > 0.0f)
-    {
-        g_vy -= 18.0f * dt;
-        p[1] += g_vy * dt;
-        if (p[1] <= g_groundY) { p[1] = g_groundY; g_vy = 0.0f; }
-    }
-    g->SetPosition(g_player, p);
-
-    // E spawns an orange cube above the player, Q destroys it
-    if (g->KeyPressed('E') && !g_spawned)
-    {
-        float sp[3] = { p[0], p[1] + 2.5f, p[2] };
-        g_spawned = g->Spawn(GHOST_API_MESH_CUBE, sp);
-        const float orange[3] = { 1.0f, 0.55f, 0.1f };
-        if (g_spawned) g->SetColor(g_spawned, orange);
-    }
-    if (g->KeyPressed('Q') && g_spawned) { g->Destroy(g_spawned); g_spawned = 0; }
-
-    // How many other colliders overlap the player?
-    int touching = 0;
-    float bmin[3], bmax[3];
-    if (g->GetBounds(g_player, bmin, bmax))
-    {
-        int ids[32];
-        int n = g->QueryBox(bmin, bmax, ids, 32);
-        for (int i = 0; i < n; i++) if (ids[i] != g_player) touching++;
-    }
-
-    char hud[200];
-    snprintf(hud, sizeof hud, "Pos %.1f %.1f %.1f | touching %d | t=%.1fs | E spawn, Q destroy",
-        p[0], p[1], p[2], touching, g->GetTime());
-    g->SetHudText(hud);
+    if (!S.complete) Player_Update(dt);
+    Entities_Update(dt);
+    Camera_Update(dt);
+    Hud();
 }
 
 GHOST_GAME_EXPORT void GhostGame_Shutdown(void)
 {
-    if (g) g->Log("GhostGame: Shutdown");
+    if (G) G->Log("Adventures of Cube: shutdown");
 }
