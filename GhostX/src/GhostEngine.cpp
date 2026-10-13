@@ -9,6 +9,7 @@
 #include "../include/GhostImage.h"
 #include "../include/GhostRuntime.h"
 #include "../include/GhostGameModule.h"
+#include "../include/GhostUI.h"
 #include <string.h>
 // ---- Engine state ----
 static IGhostRHI* g_rhi = nullptr;
@@ -57,6 +58,13 @@ static std::string     g_hudText, g_gameModulePath, g_playMessage, g_playFault;
 static GhostGameAPI    g_gameApi;
 static float g_mouseAccumX = 0.0f, g_mouseAccumY = 0.0f, g_wheelAccum = 0.0f;   // collected between steps
 static float g_apiMouseDX = 0.0f, g_apiMouseDY = 0.0f, g_apiWheel = 0.0f;       // what the game reads
+static std::vector<GhostUIQuad> g_uiQuads;
+static std::vector<GhostUIAsset> g_uiAssets;                    // handle = index + 1
+static float g_uiMouseX = -1.0f, g_uiMouseY = -1.0f;            // cursor in reference units
+static bool  g_uiMouseInside = false;
+static GhostFont                g_font;
+static float                    g_uiRefW = 1920.0f;       // reference width of the main view (height is 1080)
+static std::string g_projectRoot;
 // Main view render size and where it sits inside the window (for mapping the mouse)
 static int   g_mainRW = 1280, g_mainRH = 720;
 static float g_fitX = 0.0f, g_fitY = 0.0f, g_fitW = 1280.0f, g_fitH = 720.0f;
@@ -94,6 +102,10 @@ static const unsigned int MAX_SCENE_OBJECT_COUNT = MAX_SCENE_OBJECTS / GHOST_MAX
 static const GhostVec3 kMeshMin[GHOST_MESH_COUNT] = { { -0.5f, -0.5f, -0.5f }, { -0.5f, 0.0f, -0.05f }, { -3.2f, -1.0f, -3.0f }, { -0.5f, -0.5f, -0.5f } };
 static const GhostVec3 kMeshMax[GHOST_MESH_COUNT] = { {  0.5f,  0.5f,  0.5f }, {  0.5f, 1.0f,  0.05f }, {  3.2f,  3.0f, 11.0f }, {  0.5f,  0.5f,  0.5f } };
 static GhostColor g_clearColor = { 0.0f, 0.0f, 0.0f, 1.0f };
+
+// may be incorrect
+static int LoadSceneTexture(const std::string& absPath, const std::string& name);
+
 
 // Creates the GPU texture and records it in the scene's registry (id == pipeline slot)
 static int RegisterTexture(const char* name, const unsigned char* rgba,
@@ -496,7 +508,28 @@ static void DrawIcon(unsigned int& slot, int iconType, const GhostVec3& pos, con
     GhostDrawIcon(g_rhi, g_pipeline, slot);
     slot++;
 }
+// ---- UI mouse: window pixels -> reference units, forwarded to every loaded UI ----
+// ev: 0 move, 1 left down, 2 left up, 3 leave
+static void UiMouseEvent(int ev, int px, int py)
+{
+    if (g_playState != GhostPlayState::Playing) return;
 
+    float ux = -1.0f, uy = -1.0f;
+    bool inside = false;
+    if (ev != 3)
+    {
+        int rx, ry;
+        inside = PanelToRender(px, py, rx, ry, false);
+        if (inside)
+        {
+            const float s = 1080.0f / (float)g_mainRH;
+            ux = (float)rx * s;
+            uy = (float)ry * s;
+        }
+    }
+    g_uiMouseX = ux; g_uiMouseY = uy; g_uiMouseInside = inside;
+    for (GhostUIAsset& a : g_uiAssets) GhostUI_Mouse(a, ev, ux, uy, inside);
+}
 // ============================================================
 //  Exported: input
 // ============================================================
@@ -504,6 +537,7 @@ void GhostEngine_SetInputEnabled(int enabled) { g_inputEnabled = (enabled != 0);
 
 void GhostEngine_MouseDown(int px, int py, int button)
 {
+    if (button == 0) UiMouseEvent(1, px, py);
     if (button != 0 || g_looking || !g_haveCam || g_playState != GhostPlayState::Editing) return;
     int x, y;
     if (!PanelToRender(px, py, x, y, false)) return;          // clicked the dark bars
@@ -541,6 +575,7 @@ void GhostEngine_MouseDown(int px, int py, int button)
 
 void GhostEngine_MouseMove(int px, int py)
 {
+    UiMouseEvent(0, px, py);
     if (g_looking || !g_haveCam || g_playState != GhostPlayState::Editing) { g_hoverId = 0; return; }
 
     int x, y;
@@ -559,13 +594,14 @@ void GhostEngine_MouseMove(int px, int py)
 
 void GhostEngine_MouseUp(int x, int y, int button)
 {
+    if (button == 0) UiMouseEvent(2, x, y);
     (void)x; (void)y;
     if (button != 0) return;
     g_dragging = false;
     g_dragId = 0;
 }
 
-void GhostEngine_MouseLeave() { g_hoverId = 0; }
+void GhostEngine_MouseLeave() { g_hoverId = 0; UiMouseEvent(3, 0, 0); }
 
 // ============================================================
 //  Exported: scene
@@ -927,6 +963,23 @@ static void RenderViewport(int vp)
             DrawIcon(slot, 3, c.position, fwd, kCamColor, state, view, proj);   // direction arrow
         }
     }
+    // ---- 2D game UI: main view, while a game is running. Retained widgets first, then the game's immediate quads ----
+    if (mainView && g_playState != GhostPlayState::Editing)
+    {
+        g_uiRefW = 1080.0f * (float)rw / (float)rh;
+
+        static std::vector<GhostUIQuad> frameQuads;
+        frameQuads.clear();
+        for (GhostUIAsset& a : g_uiAssets)
+        {
+            GhostUI_Layout(a, g_uiRefW, 1080.0f);
+            GhostUI_Build(a, g_font, frameQuads);
+        }
+        frameQuads.insert(frameQuads.end(), g_uiQuads.begin(), g_uiQuads.end());
+        if (frameQuads.size() > GHOST_UI_MAX_QUADS) frameQuads.resize(GHOST_UI_MAX_QUADS);
+
+        GhostDrawUI(g_rhi, g_pipeline, frameQuads, rw, rh, (float)rh / 1080.0f);
+    }
     if (custom)
     {
         GhostEndOffscreen(g_rhi, g_pipeline, vp);
@@ -993,6 +1046,7 @@ void GhostEngine_Tick()
         bool faulted = false;
         for (int i = 0; i < steps; i++)
         {
+            g_uiQuads.clear();                       // each step redraws the whole HUD; a frame with no step keeps the last one
             if (!GhostGameModule_Update(GHOST_FIXED_DT))
             {
                 g_playFault = "The game module crashed inside GhostGame_Update, so Play was stopped.\n"
@@ -1390,7 +1444,7 @@ void GhostEngine_SetInputViewport(int vp)
 // ============================================================
 //  Exported: scene files
 // ============================================================
-static std::string g_projectRoot;
+
 
 static void CopyMsg(const std::string& m, char* buf, int size)
 {
@@ -1682,6 +1736,134 @@ static int Api_SetCamera(int id, const float* pos, const float* yp, const float*
     if (fov) c->fovDeg = *fov < 10.0f ? 10.0f : (*fov > 120.0f ? 120.0f : *fov);
     return 1;
 }
+static const float kUIWhite[4] = { 1, 1, 1, 1 };
+
+static void PushQuad(int tex, float x, float y, float w, float h, const float* c)
+{
+    if (g_uiQuads.size() >= GHOST_UI_MAX_QUADS) return;
+    if (!c) c = kUIWhite;
+    GhostUIQuad q;
+    q.x = x; q.y = y; q.w = w; q.h = h;
+    q.u0 = 0.0f; q.v0 = 0.0f; q.u1 = 1.0f; q.v1 = 1.0f;
+    q.color[0] = c[0]; q.color[1] = c[1]; q.color[2] = c[2]; q.color[3] = c[3];
+    q.textureId = tex;
+    g_uiQuads.push_back(q);
+}
+
+static void  Api_UIRect(float x, float y, float w, float h, const float* c) { PushQuad(0, x, y, w, h, c); }
+static void  Api_UIImage(int tex, float x, float y, float w, float h, const float* c) { PushQuad(tex, x, y, w, h, c); }
+static void  Api_UIText(float x, float y, float size, const char* t, const float* c)
+{
+    if (!t) return;
+    GhostText_Draw(g_uiQuads, g_font, x, y, size, t, c ? c : kUIWhite);
+}
+static float Api_UIMeasure(const char* t, float size) { return GhostText_Measure(g_font, size, t); }
+static void  Api_UIScreenSize(float* wh) { if (wh) { wh[0] = g_uiRefW; wh[1] = 1080.0f; } }
+
+static int Api_LoadTexture(const char* rel)
+{
+    if (!rel || !*rel) return 0;
+    std::string p = rel;
+    const bool absolute = p.size() > 1 && (p[1] == ':' || p[0] == '\\' || p[0] == '/');
+    if (!absolute && !g_projectRoot.empty()) p = g_projectRoot + "\\" + p;
+    p = GhostPath_Normalize(p);
+    const size_t sl = p.find_last_of("\\/");
+    return LoadSceneTexture(p, sl == std::string::npos ? p : p.substr(sl + 1));
+}
+
+static GhostUIAsset* UiAsset(int h)
+{
+    return (h >= 1 && h <= (int)g_uiAssets.size()) ? &g_uiAssets[(size_t)h - 1] : nullptr;
+}
+
+static GhostWidget* UiWidget(int h, const char* name)
+{
+    GhostUIAsset* a = UiAsset(h);
+    if (!a || !name) return nullptr;
+    for (GhostWidget& w : a->widgets) if (w.name == name) return &w;
+    return nullptr;
+}
+
+static int Api_UILoad(const char* rel)
+{
+    if (!rel || !*rel) return 0;
+    std::string p = rel;
+    const bool absolute = p.size() > 1 && (p[1] == ':' || p[0] == '\\' || p[0] == '/');
+    if (!absolute && !g_projectRoot.empty()) p = g_projectRoot + "\\" + p;
+    p = GhostPath_Normalize(p);
+
+    for (size_t i = 0; i < g_uiAssets.size(); i++)                        // the same file twice = the same handle
+        if (_stricmp(g_uiAssets[i].path.c_str(), p.c_str()) == 0) return (int)i + 1;
+    if (g_uiAssets.size() >= 16) return 0;
+
+    GhostUIAsset a;
+    std::string err, warn;
+    if (!GhostUI_Load(a, g_projectRoot, p, LoadSceneTexture, err, warn))
+    {
+        Api_Log(("UILoad failed: " + err).c_str());
+        return 0;
+    }
+    if (!warn.empty()) Api_Log(("UILoad: " + warn).c_str());
+    a.path = p;
+    g_uiAssets.push_back(std::move(a));
+    return (int)g_uiAssets.size();
+}
+
+static void Api_UIShow(int h, int vis) { if (GhostUIAsset* a = UiAsset(h)) a->shown = (vis != 0); }
+
+static int Api_UISetText(int h, const char* name, const char* t)
+{
+    GhostWidget* w = UiWidget(h, name);
+    if (!w) return 0;
+    std::string s = t ? t : "";
+    if (s.size() > 255) s.resize(255);
+    w->text = s;
+    return 1;
+}
+
+static int Api_UISetProgress(int h, const char* name, float v)
+{
+    GhostWidget* w = UiWidget(h, name);
+    if (!w) return 0;
+    w->value = v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
+    return 1;
+}
+
+static int Api_UISetVisible(int h, const char* name, int vis)
+{
+    GhostWidget* w = UiWidget(h, name);
+    if (!w) return 0;
+    w->visible = (vis != 0);
+    return 1;
+}
+
+static int Api_UISetColor(int h, const char* name, const float* c)
+{
+    GhostWidget* w = UiWidget(h, name);
+    if (!w || !c) return 0;
+    for (int i = 0; i < 4; i++) w->color[i] = c[i];
+    return 1;
+}
+
+static int Api_UIButtonClicked(int h, const char* name)
+{
+    GhostWidget* w = UiWidget(h, name);
+    if (!w || !w->clicked) return 0;
+    w->clicked = false;
+    return 1;
+}
+
+static int Api_UIButtonDown(int h, const char* name)
+{
+    GhostWidget* w = UiWidget(h, name);
+    return (w && w->pressed) ? 1 : 0;
+}
+
+static int Api_UIGetMouse(float* xy)
+{
+    if (xy) { xy[0] = g_uiMouseX; xy[1] = g_uiMouseY; }
+    return g_uiMouseInside ? 1 : 0;
+}
 
 static void BuildGameApi()
 {
@@ -1703,6 +1885,11 @@ static void BuildGameApi()
     a.GetCamera = Api_GetCamera;  a.SetCamera = Api_SetCamera;
     a.GetMouseDelta = Api_GetMouseDelta;  a.GetMouseWheel = Api_GetMouseWheel;
     a.GetCameraMode = Api_GetCameraMode;  a.GetCameraTarget = Api_GetCameraTarget;  a.SetCameraTarget = Api_SetCameraTarget;
+    a.UIRect = Api_UIRect;  a.UIImage = Api_UIImage;  a.UIText = Api_UIText;
+    a.UIMeasureText = Api_UIMeasure;  a.UIGetScreenSize = Api_UIScreenSize;  a.LoadTexture = Api_LoadTexture;
+    a.UILoad = Api_UILoad;  a.UIShow = Api_UIShow;  a.UISetText = Api_UISetText;  a.UISetProgress = Api_UISetProgress;
+    a.UISetVisible = Api_UISetVisible;  a.UISetColor = Api_UISetColor;
+    a.UIButtonClicked = Api_UIButtonClicked;  a.UIButtonDown = Api_UIButtonDown;  a.UIGetMouse = Api_UIGetMouse;
 }
 // ============================================================
 //  Exported: play mode
@@ -1722,7 +1909,9 @@ int GhostEngine_Play()
     g_stepper.Reset();
     g_input.Reset();
     g_playTime = 0.0;
-    g_hudText.clear(); g_playMessage.clear(); g_playFault.clear();
+    g_hudText.clear(); g_uiQuads.clear(); g_playMessage.clear(); g_playFault.clear();
+    g_uiAssets.clear();
+    g_uiMouseX = g_uiMouseY = -1.0f; g_uiMouseInside = false;
     g_hoverId = 0; g_dragging = false; g_dragId = 0;
     g_playState = GhostPlayState::Playing;
 
@@ -1742,7 +1931,9 @@ void GhostEngine_Stop()
 {
     if (g_playState == GhostPlayState::Editing) return;
     GhostGameModule_Unload();                        // Shutdown, then free the temp copy
-    g_hudText.clear();
+    g_hudText.clear(); g_uiQuads.clear();
+    g_uiAssets.clear();
+    g_uiMouseX = g_uiMouseY = -1.0f; g_uiMouseInside = false;
     // Textures loaded during play stay on the GPU, so keep the registry. Everything else goes back.
     std::vector<GhostTextureInfo> tex = g_scene.textures;
     unsigned int version = g_scene.version;
@@ -1892,4 +2083,21 @@ void GhostEngine_MouseWheel(int delta)
         float d = c->distance - notches;
         c->distance = d < c->minDist ? c->minDist : (d > c->maxDist ? c->maxDist : d);
     }
+}
+
+int GhostEngine_SetFont(int tex, int aw, int ah, float cw, float ch, float pad, float lh, const float* adv)
+{
+    if (!adv || tex < 0 || tex >= (int)g_scene.textures.size() || aw <= 0 || ah <= 0 ||
+        cw <= 0.0f || ch <= 0.0f || lh <= 0.0f) return 0;
+
+    GhostFont f;
+    f.textureId = tex;
+    f.atlasW = aw; f.atlasH = ah;
+    f.cellW = cw;  f.cellH = ch;
+    f.pad = pad;   f.lineHeight = lh;
+    memcpy(f.advance, adv, 95 * sizeof(float));
+    f.advance[95] = 0.0f;
+    f.ready = true;
+    g_font = f;
+    return 1;
 }

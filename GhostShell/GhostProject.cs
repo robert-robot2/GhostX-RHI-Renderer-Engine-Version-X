@@ -55,6 +55,7 @@ namespace GhostShell
         {
             string dir = Path.Combine(parent, name);
             Directory.CreateDirectory(Path.Combine(dir, "Content"));
+            Directory.CreateDirectory(Path.Combine(dir, "Content", "UI"));
             Directory.CreateDirectory(Path.Combine(dir, "Scenes"));
             Directory.CreateDirectory(Path.Combine(dir, "Binaries"));
 

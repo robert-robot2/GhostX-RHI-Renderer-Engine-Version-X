@@ -2,6 +2,7 @@
 
 const GhostGameAPI* G = nullptr;
 GameState S;
+static int g_ui = 0;                // handle of Content/UI/HUD.ghostui (0 = failed to load)
 
 void Game_Restart(bool died)
 {
@@ -50,19 +51,60 @@ static void Camera_Update(float dt)
     G->SetCamera(S.camId, pos, yp, nullptr);
 }
 
+static void Label(float x, float y, float size, const char* s, const float* c)
+{
+    const float shadow[4] = { 0.0f, 0.0f, 0.0f, 0.65f };
+    G->UIText(x + size * 0.05f, y + size * 0.05f, size, s, shadow);
+    G->UIText(x, y, size, s, c);
+}
+
 static void Hud()
 {
-    char t[240];
+    float scr[2] = { 1920.0f, 1080.0f };
+    G->UIGetScreenSize(scr);
+    const float W = scr[0], H = scr[1];
+    const float red[4] = { 1.0f, 0.35f, 0.3f, 1.0f };
+
+    if (!g_ui)
+    {
+        if (S.error) { Label(40.0f, 40.0f, 40.0f, S.error, red); return; }
+        Label(40.0f, 40.0f, 36.0f, "Content/UI/HUD.ghostui could not be loaded (see the Output window)", red);
+        return;
+    }
+
     if (S.error)
-        snprintf(t, sizeof t, "%s", S.error);
-    else if (S.complete)
-        snprintf(t, sizeof t, "LEVEL COMPLETE!  Coins %d/%d  Enemies %d/%d  Deaths %d  |  R: play again",
+    {
+        G->UIShow(g_ui, 0);
+        const float panel[4] = { 0.0f, 0.0f, 0.0f, 0.45f };
+        G->UIRect(0.0f, H * 0.5f - 60.0f, W, 120.0f, panel);
+        float tw = G->UIMeasureText(S.error, 44.0f);
+        Label((W - tw) * 0.5f, H * 0.5f - 24.0f, 44.0f, S.error, red);
+        return;
+    }
+    G->UIShow(g_ui, 1);
+
+    const float green[4] = { 0.4f, 1.0f, 0.5f, 1.0f }, grey[4] = { 0.8f, 0.8f, 0.8f, 1.0f };
+    char t[160];
+
+    snprintf(t, sizeof t, "Coins %d / %d", S.coins, S.totalCoins);           G->UISetText(g_ui, "CoinText", t);
+    snprintf(t, sizeof t, "Enemies %d / %d", S.enemiesDown, S.totalEnemies); G->UISetText(g_ui, "EnemyText", t);
+    snprintf(t, sizeof t, "Deaths %d", S.deaths);                            G->UISetText(g_ui, "DeathText", t);
+    G->UISetProgress(g_ui, "CoinBar", S.totalCoins > 0 ? (float)S.coins / (float)S.totalCoins : 0.0f);
+
+    G->UISetText(g_ui, "SizeText", S.big ? "BIG" : "small");
+    G->UISetColor(g_ui, "SizeText", S.big ? green : grey);
+
+    G->UISetText(g_ui, "HintText", S.orbit
+        ? "WASD move    Shift run    Space jump    Right-drag orbit    Wheel zoom    R restart"
+        : "WASD move    Shift run    Space jump    Q/E camera    R restart");
+
+    G->UISetVisible(g_ui, "CompletePanel", S.complete ? 1 : 0);
+    if (S.complete)
+    {
+        snprintf(t, sizeof t, "Coins %d / %d      Enemies %d / %d      Deaths %d",
             S.coins, S.totalCoins, S.enemiesDown, S.totalEnemies, S.deaths);
-    else
-        snprintf(t, sizeof t, "Coins %d/%d | Enemies %d/%d | %s | Deaths %d | WASD move, Shift run, Space jump, %s, R restart",
-            S.coins, S.totalCoins, S.enemiesDown, S.totalEnemies, S.big ? "BIG" : "small", S.deaths,
-            S.orbit ? "right-drag orbit, wheel zoom" : "Q/E camera");
-    G->SetHudText(t);
+        G->UISetText(g_ui, "CompleteStats", t);
+    }
 }
 
 GHOST_GAME_EXPORT int GhostGame_Init(const GhostGameAPI* api)
@@ -70,7 +112,7 @@ GHOST_GAME_EXPORT int GhostGame_Init(const GhostGameAPI* api)
     if (!api || api->version != GHOST_GAME_API_VERSION || api->size < (int)sizeof(GhostGameAPI)) return 0;
     G = api;
     S = GameState();
-
+    g_ui = G->UILoad("Content/UI/HUD.ghostui");
     S.player = G->FindByTag("Player");
     if (!S.player) { G->Log("Adventures of Cube: no object with Role = Player"); return 1; }
 
@@ -89,10 +131,10 @@ GHOST_GAME_EXPORT int GhostGame_Init(const GhostGameAPI* api)
 
 GHOST_GAME_EXPORT void GhostGame_Update(float dt)
 {
-    if (!S.player) { G->SetHudText("No object with Role = Player in this scene"); return; }
+    if (!S.player) { S.error = "No object with Role = Player in this scene"; Hud(); return; }
 
     if (G->KeyPressed('R')) Game_Restart(false);
-
+    if (g_ui && S.complete && G->UIButtonClicked(g_ui, "AgainButton")) Game_Restart(false);
     if (!S.complete) Player_Update(dt);
     Entities_Update(dt);
     Camera_Update(dt);

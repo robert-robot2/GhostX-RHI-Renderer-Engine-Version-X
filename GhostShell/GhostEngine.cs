@@ -227,6 +227,9 @@ namespace GhostShell
         public static extern int GhostEngine_TakePlayFault([Out] byte[] buf, int bufSize);
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern int GhostEngine_DuplicateEntity(int id);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_SetFont(int textureId, int atlasW, int atlasH, float cellW, float cellH,
+                                             float pad, float lineHeight, [In] float[] advances);
 
     }
 }

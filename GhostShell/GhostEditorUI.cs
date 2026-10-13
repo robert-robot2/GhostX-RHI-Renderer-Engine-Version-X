@@ -84,7 +84,14 @@ namespace GhostShell
         {
             var list = new List<string>();
             int n = GhostEngine.GhostEngine_GetTextureCount();
-            for (int i = 0; i < n; i++) list.Add(DisplayName(i));
+
+            for (int i = 0; i < n; i++)
+            {
+                if (i == GhostFontAtlas.TextureId) continue; // the UI font isn't a material texture
+
+                list.Add(DisplayName(i));
+            }
+
             list.Add(ImportLabel);
             return list;
         }

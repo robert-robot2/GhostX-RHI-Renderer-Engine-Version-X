@@ -270,3 +270,19 @@ float4 BlitPS(BlitPSInput input) : SV_TARGET
     // The offscreen image already holds gamma-encoded colors, so it is copied as is
     return float4(gTexture.Sample(sLinClamp, input.uv).rgb, 1.0f);
 }
+
+// ---------------- 2D UI ----------------
+struct UIPSInput
+{
+    float4 pos : SV_POSITION;
+    float2 uv : TEXCOORD0;
+    float4 color : COLOR;
+};
+
+float4 UIPS(UIPSInput input) : SV_TARGET
+{
+    // Texture views are sRGB (linear on sample); the target holds display colors, so encode again.
+    // Vertex colors are already display colors. Text atlases are white, so only their alpha matters.
+    float4 t = gTexture.Sample(sLinClamp, input.uv);
+    return float4(pow(saturate(t.rgb), 1.0f / 2.2f) * input.color.rgb, t.a * input.color.a);
+}

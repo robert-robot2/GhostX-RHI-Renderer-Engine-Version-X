@@ -129,3 +129,27 @@ BlitPSInput BlitVS(uint vid : SV_VertexID)
     o.uv = float2(c.x * 0.5f + 0.5f, 0.5f - c.y * 0.5f);
     return o;
 }
+
+// ---------------- 2D UI ----------------
+struct UIVSInput
+{
+    float2 pos : POSITION;
+    float2 uv : TEXCOORD0;
+    float4 color : COLOR;
+};
+
+struct UIPSInput
+{
+    float4 pos : SV_POSITION;
+    float2 uv : TEXCOORD0;
+    float4 color : COLOR;
+};
+
+UIPSInput UIVS(UIVSInput i)
+{
+    UIPSInput o;
+    o.pos = float4(i.pos, 0.0f, 1.0f);      // positions arrive already in clip space
+    o.uv = i.uv;
+    o.color = i.color;
+    return o;
+}

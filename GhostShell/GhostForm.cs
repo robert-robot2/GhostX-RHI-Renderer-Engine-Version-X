@@ -257,6 +257,7 @@ namespace GhostShell
                     return;
                 }
                 _engineReady = true;
+                GhostFontAtlas.BakeDefault();     // the on-screen text font (the player needs it too)
                 GhostSceneFile.MarkClean();       // the starting scene counts as saved
                 if (GhostPlayer.IsPlayer && !GhostPlayer.Launch(this)) return;
                 // Drive the render loop from the message pump idle time
@@ -377,14 +378,14 @@ namespace GhostShell
         private void OnAbout(object sender, EventArgs e)
         {
             MessageBox.Show(
-                "GhostX Engine\nA lightweight Direct3D 12 engine\nNow with a WinForms shell.",
+                "GhostX Engine\nRobert Chilewski\nrobertchilewskir83@gmail.com",
                 "About GhostX", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
         private void OnVersion(object sender, EventArgs e)
         {
             MessageBox.Show(
-                "GhostX v0.0.6\nWinForms shell migration complete.",
+                "GhostX RHI Renderer Engine Version X.\nDirectX 12 Support.",
                 "Version", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         // Selected object if there is one, otherwise the first cube in the scene (0 = none)

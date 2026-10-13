@@ -154,4 +154,7 @@ extern "C"
     GHOST_API int  GhostEngine_GetHudText(char* buf, int bufSize);       // what the game set with SetHudText
     GHOST_API int  GhostEngine_TakePlayFault(char* buf, int bufSize);    // 1 once if the module crashed (message in buf)
     GHOST_API int GhostEngine_DuplicateEntity(int id);     // objects only. New id, 0 = failed (or playing)
+    // Registers the baked font atlas (texture must already exist). advances = 95 floats, ASCII 32..126. Returns 1 on success.
+    GHOST_API int GhostEngine_SetFont(int textureId, int atlasW, int atlasH, float cellW, float cellH,
+        float pad, float lineHeight, const float* advances);
 }

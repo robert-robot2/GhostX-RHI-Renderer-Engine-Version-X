@@ -4,6 +4,7 @@
 #include "../include/Ghost3D1.h"
 #include "../include/IGhostRHI.h"
 #include "../include/GhostScene.h"
+#include "../include/GhostText.h"
 #include <d3d12.h>
 #include <d3dcompiler.h>
 #include <wrl/client.h>
@@ -93,6 +94,9 @@ struct GhostPipeline
     unsigned int                 offW[GHOST_MAX_SURFACES] = {}, offH[GHOST_MAX_SURFACES] = {};
     unsigned int                 rtvIncrement = 0;
     ComPtr<ID3D12PipelineState>  blitPso;
+    ComPtr<ID3D12PipelineState>  uiPso;
+    ComPtr<ID3D12Resource>       uiVB;
+    void* uiMapped = nullptr;
     bool                         rtvOverrideActive = false;
     D3D12_CPU_DESCRIPTOR_HANDLE  rtvOverride = {};
     ComPtr<ID3D12DescriptorHeap> dsvHeap; 
@@ -143,3 +147,7 @@ void GhostBeginOffscreen(IGhostRHI* rhi, GhostPipeline* pipeline, int surfaceId,
 void GhostEndOffscreen(IGhostRHI* rhi, GhostPipeline* pipeline, int surfaceId);
 void GhostDrawBlit(IGhostRHI* rhi, GhostPipeline* pipeline, int surfaceId,
     float x, float y, float w, float h);
+
+// Draws the quad list into the current render target. scale = reference units -> pixels.
+void GhostDrawUI(IGhostRHI* rhi, GhostPipeline* pipeline, const std::vector<GhostUIQuad>& quads,
+    unsigned int w, unsigned int h, float scale);

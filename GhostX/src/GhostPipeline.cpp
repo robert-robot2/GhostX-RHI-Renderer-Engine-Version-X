@@ -291,6 +291,8 @@ static GhostResult UploadMesh(ID3D12Device* device, GhostMesh& m,
 //  GhostPipelineCreate
 // ============================================================
 
+struct UIVertex { float x, y, u, v, r, g, b, a; };      // 32 bytes
+
 GhostResult GhostPipelineCreate(IGhostRHI* rhi,
     const GhostPipelineDesc* desc,
     GhostPipeline** outPipeline)
@@ -436,6 +438,8 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
         delete p; return GHOST_FAIL;
     }
 
+
+
     D3D12_GRAPHICS_PIPELINE_STATE_DESC blitDesc = psoDesc;
     blitDesc.VS = { bvs->GetBufferPointer(), bvs->GetBufferSize() };
     blitDesc.PS = { bps->GetBufferPointer(), bps->GetBufferSize() };
@@ -448,6 +452,49 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
     {
         delete p; return GHOST_FAIL;
     }
+
+    // ---- UI PSO: alpha-blended quads, no depth ----
+    ComPtr<ID3DBlob> uvs, ups;
+    if (CompileShaderFromFile(ShaderPath(L"GhostVS.hlsl").c_str(), "UIVS", "vs_5_0", &uvs) != GHOST_OK ||
+        CompileShaderFromFile(ShaderPath(L"GhostPS.hlsl").c_str(), "UIPS", "ps_5_0", &ups) != GHOST_OK)
+    {
+        delete p; return GHOST_FAIL;
+    }
+
+    D3D12_INPUT_ELEMENT_DESC uiLayout[] =
+    {
+        { "POSITION", 0, DXGI_FORMAT_R32G32_FLOAT,       0,  0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,       0,  8, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "COLOR",    0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 16, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+    };
+
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC uiDesc = psoDesc;
+    uiDesc.VS = { uvs->GetBufferPointer(), uvs->GetBufferSize() };
+    uiDesc.PS = { ups->GetBufferPointer(), ups->GetBufferSize() };
+    uiDesc.InputLayout = { uiLayout, 3 };
+    uiDesc.DepthStencilState.DepthEnable = FALSE;
+    uiDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+    D3D12_RENDER_TARGET_BLEND_DESC& bl = uiDesc.BlendState.RenderTarget[0];
+    bl.BlendEnable = TRUE;
+    bl.SrcBlend = D3D12_BLEND_SRC_ALPHA;
+    bl.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
+    bl.BlendOp = D3D12_BLEND_OP_ADD;
+    bl.SrcBlendAlpha = D3D12_BLEND_ONE;
+    bl.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
+    bl.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+    bl.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+
+    if (FAILED(device->CreateGraphicsPipelineState(&uiDesc, IID_PPV_ARGS(&p->uiPso))))
+    {
+        delete p; return GHOST_FAIL;
+    }
+
+    if (CreateUploadBuffer(device, sizeof(UIVertex) * 6 * GHOST_UI_MAX_QUADS, &p->uiVB) != GHOST_OK)
+    {
+        delete p; return GHOST_FAIL;
+    }
+    D3D12_RANGE uiRange = { 0, 0 };
+    p->uiVB->Map(0, &uiRange, &p->uiMapped);
 
     D3D12_GRAPHICS_PIPELINE_STATE_DESC iconDesc = psoDesc;
     iconDesc.VS = { ivs->GetBufferPointer(), ivs->GetBufferSize() };
@@ -708,6 +755,8 @@ void GhostPipelineDestroy(GhostPipeline* pipeline)
         pipeline->constantBuffer->Unmap(0, nullptr);
     if (pipeline->sceneMappedData)
         pipeline->sceneBuffer->Unmap(0, nullptr);
+    if (pipeline->uiMapped)
+        pipeline->uiVB->Unmap(0, nullptr);
     delete pipeline;
 }
 
@@ -849,4 +898,61 @@ void GhostDrawBlit(IGhostRHI* rhi, GhostPipeline* p, int id, float x, float y, f
 
     cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     cmd->DrawInstanced(6, 1, 0, 0);
+}
+
+void GhostDrawUI(IGhostRHI* rhi, GhostPipeline* p, const std::vector<GhostUIQuad>& quads,
+    unsigned int w, unsigned int h, float scale)
+{
+    if (quads.empty() || !p->uiPso || !p->uiMapped || w == 0 || h == 0) return;
+    const size_t n = quads.size() < GHOST_UI_MAX_QUADS ? quads.size() : GHOST_UI_MAX_QUADS;
+
+    struct Run { int tex; UINT first, count; };
+    std::vector<Run> runs;
+
+    UIVertex* v = (UIVertex*)p->uiMapped;
+    const float sx = 2.0f * scale / (float)w, sy = 2.0f * scale / (float)h;
+
+    for (size_t i = 0; i < n; i++)
+    {
+        const GhostUIQuad& q = quads[i];
+        const float x0 = q.x * sx - 1.0f, x1 = (q.x + q.w) * sx - 1.0f;
+        const float y0 = 1.0f - q.y * sy, y1 = 1.0f - (q.y + q.h) * sy;
+
+        const UIVertex tl = { x0, y0, q.u0, q.v0, q.color[0], q.color[1], q.color[2], q.color[3] };
+        const UIVertex tr = { x1, y0, q.u1, q.v0, q.color[0], q.color[1], q.color[2], q.color[3] };
+        const UIVertex br = { x1, y1, q.u1, q.v1, q.color[0], q.color[1], q.color[2], q.color[3] };
+        const UIVertex bl = { x0, y1, q.u0, q.v1, q.color[0], q.color[1], q.color[2], q.color[3] };
+
+        UIVertex* o = v + i * 6;
+        o[0] = tl; o[1] = tr; o[2] = br;
+        o[3] = tl; o[4] = br; o[5] = bl;
+
+        if (!runs.empty() && runs.back().tex == q.textureId) runs.back().count += 6;
+        else runs.push_back({ q.textureId, (UINT)(i * 6), 6 });
+    }
+
+    auto* cmd = rhi->GetCmdList();
+    ID3D12DescriptorHeap* heaps[] = { p->cbvHeap.Get() };
+    cmd->SetDescriptorHeaps(1, heaps);
+    cmd->SetPipelineState(p->uiPso.Get());
+    cmd->SetGraphicsRootSignature(p->rootSignature.Get());
+    cmd->SetGraphicsRootConstantBufferView(0, p->constantBuffer->GetGPUVirtualAddress());
+    cmd->SetGraphicsRootConstantBufferView(1, p->sceneBuffer->GetGPUVirtualAddress());
+
+    D3D12_CPU_DESCRIPTOR_HANDLE rtv = p->rtvOverrideActive ? p->rtvOverride : rhi->GetRTV();
+    D3D12_CPU_DESCRIPTOR_HANDLE dsv = GhostGetDSV(p, rhi->GetCurrentSurface());
+    cmd->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
+
+    D3D12_VERTEX_BUFFER_VIEW vbv = { p->uiVB->GetGPUVirtualAddress(), (UINT)(n * 6 * sizeof(UIVertex)), sizeof(UIVertex) };
+    cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    cmd->IASetVertexBuffers(0, 1, &vbv);
+
+    for (const Run& r : runs)
+    {
+        unsigned int ti = (r.tex >= 0 && (unsigned int)r.tex < p->textureCount) ? (unsigned int)r.tex : 0;
+        D3D12_GPU_DESCRIPTOR_HANDLE srv = p->cbvHeap->GetGPUDescriptorHandleForHeapStart();
+        srv.ptr += (UINT64)ti * p->srvIncrement;
+        cmd->SetGraphicsRootDescriptorTable(2, srv);
+        cmd->DrawInstanced(r.count, 1, r.first, 0);
+    }
 }

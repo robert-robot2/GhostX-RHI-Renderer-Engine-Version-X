@@ -80,6 +80,27 @@ extern "C" {
         int (*GetCameraMode)(int cameraId);               // 0 = free, 1 = orbit, -1 = no such camera
         int (*GetCameraTarget)(int cameraId);             // orbit target object id, 0 = none
         int (*SetCameraTarget)(int cameraId, int objectId);   // 0 clears it
+        // ---- 2D drawing (reference space: 1080 units tall, origin top-left, y down) ----
+// Call these from every GhostGame_Update. The list is rebuilt each step and drawn over the main view while playing.
+// rgba4 = four floats 0..1 (null = white). Drawing order = call order.
+        void  (*UIRect)(float x, float y, float w, float h, const float* rgba4);
+        void  (*UIImage)(int textureId, float x, float y, float w, float h, const float* rgba4);
+        void  (*UIText)(float x, float y, float size, const char* utf8, const float* rgba4);   // size = line height; ASCII only, '\n' = new line
+        float (*UIMeasureText)(const char* utf8, float size);                                   // width of the widest line
+        void  (*UIGetScreenSize)(float* outWH2);          // width follows the window's aspect ratio, height is always 1080
+        int   (*LoadTexture)(const char* projectRelativePath);   // PNG / JPG / BMP, returns a texture id, 0 = failed. Call it in Init
+        // ---- retained UI (.ghostui files, see Content/UI) ----
+// Widgets are found by name (first match). Loaded UIs start shown, draw under the UIRect / UIText calls,
+// and are reloaded from disk every time Play starts.
+        int   (*UILoad)(const char* projectRelativePath);      // handle > 0, 0 = failed (see the Output window). Call in Init
+        void  (*UIShow)(int ui, int visible);
+        int   (*UISetText)(int ui, const char* widget, const char* utf8);
+        int   (*UISetProgress)(int ui, const char* widget, float value01);
+        int   (*UISetVisible)(int ui, const char* widget, int visible);
+        int   (*UISetColor)(int ui, const char* widget, const float* rgba4);
+        int   (*UIButtonClicked)(int ui, const char* widget); // 1 once per click, then 0 until the next one
+        int   (*UIButtonDown)(int ui, const char* widget);    // 1 while the mouse is held on it
+        int   (*UIGetMouse)(float* outXY2);                   // cursor in UIRect units, returns 1 if it is over the view
     } GhostGameAPI;
 
     // A game module must export:
