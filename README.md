@@ -30,6 +30,7 @@ GhostX is a custom game engine built on a **native C++ DirectX 12 renderer (RHI-
 - 🌐 **Blazor WASM UI (experimental):** an optional web UI hosted in WebView2
 - **Project Save Load**
 - **Project Can Open In Visual Studio**
+- **Project Play/Stop Added**
 ## Editor at a glance
 
 | Panel | What it does |
