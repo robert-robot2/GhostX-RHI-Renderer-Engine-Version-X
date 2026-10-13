@@ -315,18 +315,35 @@ _ghostUI.CoreWebView2.WebMessageReceived += (sender, args) =>
 ---
 ## Roadmap
 
-- [x] Phase 1: lighting, viewport icons, click/drag, editor panels
-- [x] Phase 2: textures and materials, Free Camera entities
-- [x] Phase 3: dockable editor, live camera viewports, per-camera resolution
-- [ ] Phase 4: FBX mesh import with materials, PBR materials, normal/specular maps, Z-up option
-- [ ] Spot lights
-- [ ] Save / load scenes
-- [ ] Shadows
-- [ ] Antialiasing and an options menu
-- [ ] Visual Studio project workflow for building and modding
-- [ ] Additional camera types
-- [ ] RHI backends: Vulkan, DX11, OpenGL, DX9
-- [ ] 2D tile map support
+- [x] Phase 1: Lighting, viewport icons, click/drag, editor panels
+- [x] Phase 2: Textures and materials, Free Camera entities
+- [x] Phase 3: Dockable editor, live camera viewports, per-camera resolution
+- [x] Phase 4: Project Save/Load/ Load in VS/ Load Game Temple/Basic UI/Play Mode Only
+- [x] Phase 5: Pending UI Editor
+- [ ] Phase : Publish Release as standalone Game
+- [ ] Phase : SkySphere
+- [ ] Phase : Audio
+- [ ] Phase : Mesh import, textures, normal/specular maps, shadows, Z-up support, PBR materials
+- [ ] Phase : All camera types and features
+- [ ] Phase : Antialiasing and options menu
+- [ ] Phase : MetaHuman support
+- [ ] Phase : Tile map support
+
+## Rendering Hardware Interface (RHI)
+
+- [ ] Vulkan backend
+- [ ] DirectX 11 backend
+- [x] DirectX 12 backend
+- [ ] OpenGL backend
+- [ ] DirectX 9 backend
+
+> **Priority:** Start with Vulkan, as it is a modern graphics API and an alternative to DirectX 11/12.
+
+## Future Editor Tools
+
+- [ ] UI panel editor pending.. Phase 5.
+- [ ] Particle editor
+- [ ] Animation editor
 
 ## Known limitations
 
