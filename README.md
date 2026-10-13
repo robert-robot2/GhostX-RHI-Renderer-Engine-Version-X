@@ -363,6 +363,19 @@ _ghostUI.CoreWebView2.WebMessageReceived += (sender, args) =>
 
 
 
+
+---
+
+<div align="center">
+  <sub>Built by <a href="https://github.com/robert-robot2">robert-robot2</a></sub>
+</div>
+
+
+<img width="1920" height="1080" alt="Screenshot 2026-09-05 003001" src="https://github.com/user-attachments/assets/b6d6613d-afe8-46ab-b263-40e625061d17" />
+<img width="1920" height="1080" alt="Screenshot 2026-09-05 002729" src="https://github.com/user-attachments/assets/e4bac892-ed1b-49be-b117-32150236ef46" />
+<img width="1920" height="1080" alt="Screenshot 2026-09-05 002613" src="https://github.com/user-attachments/assets/5f8b7257-055f-4bc7-8618-11dd27e09757" />
+<img width="1920" height="1080" alt="Screenshot 2026-09-05 002629" src="https://github.com/user-attachments/assets/add7347d-670d-4c82-9897-f3797858d10a" />
+
 ```
 MIT License
 
@@ -386,18 +399,5 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
-
----
-
-<div align="center">
-  <sub>Built by <a href="https://github.com/robert-robot2">robert-robot2</a></sub>
-</div>
-
-
-<img width="1920" height="1080" alt="Screenshot 2026-09-05 003001" src="https://github.com/user-attachments/assets/b6d6613d-afe8-46ab-b263-40e625061d17" />
-<img width="1920" height="1080" alt="Screenshot 2026-09-05 002729" src="https://github.com/user-attachments/assets/e4bac892-ed1b-49be-b117-32150236ef46" />
-<img width="1920" height="1080" alt="Screenshot 2026-09-05 002613" src="https://github.com/user-attachments/assets/5f8b7257-055f-4bc7-8618-11dd27e09757" />
-<img width="1920" height="1080" alt="Screenshot 2026-09-05 002629" src="https://github.com/user-attachments/assets/add7347d-670d-4c82-9897-f3797858d10a" />
-
 
 
