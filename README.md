@@ -102,7 +102,65 @@ GhostX is a custom game engine built on a **native C++ DirectX 12 renderer (RHI-
 
 ### ⚙️ Engine API
 Exports for objects, lights, cameras, materials, textures, viewports, mouse input and scene versioning, each with a P/Invoke on the C# side.
+---
 
+## Usage
+
+- Launch the application from Visual Studio (`Debug → Start`) or the compiled executable
+- Use the **File / Settings / Help** dropdown menus in the WinForms shell to interact with the application
+- The **Blazor UI** panel provides the web-based interface layer
+- The **DX12 renderer** runs in the background, rendering directly to the native window surface
+
+---
+## Roadmap
+
+- [x] Phase 1: Lighting, viewport icons, click/drag, editor panels
+- [x] Phase 2: Textures and materials, Free Camera entities
+- [x] Phase 3: Dockable editor, live camera viewports, per-camera resolution
+- [x] Phase 4: Project Save/Load/ Load in VS/ Load Game Temple/Basic UI/Play Mode Only
+- [x] Phase 5: Pending UI Editor
+- [ ] Phase : Publish Release as standalone Game
+- [ ] Phase : SkySphere
+- [ ] Phase : Audio
+- [ ] Phase : Mesh import, textures, normal/specular maps, shadows, Z-up support, PBR materials
+- [ ] Phase : All camera types and features
+- [ ] Phase : Antialiasing and options menu
+- [ ] Phase : MetaHuman support
+- [ ] Phase : Tile map support
+
+## Rendering Hardware Interface (RHI)
+
+- [ ] Vulkan backend
+- [ ] DirectX 11 backend
+- [x] DirectX 12 backend
+- [ ] OpenGL backend
+- [ ] DirectX 9 backend
+
+> **Priority:** Start with Vulkan, as it is a modern graphics API and an alternative to DirectX 11/12.
+
+## Future Editor Tools
+
+- [ ] UI panel editor pending.. Phase 5.
+- [ ] Particle editor
+- [ ] Animation editor
+
+## Known limitations
+
+- Camera windows show the scene only (no icons or selection highlight)
+- Picking and dragging work in the main view only
+- Camera windows aren't saved in the layout file
+- Viewport titles use WinForms text, since the engine has no text rendering yet
+- Property grid dropdowns use the light WinForms theme
+- 4 cameras maximum, 256 textures maximum
+
+## Credits
+
+- [DockPanelSuite](https://github.com/dockpanelsuite/dockpanelsuite) (MIT) for the docking UI
+
+
+## License
+
+This project is licensed under the **MIT License**.
 ---
 
 ## Blazor WASM Integration Instructions
@@ -303,65 +361,7 @@ _ghostUI.CoreWebView2.WebMessageReceived += (sender, args) =>
 
 > **Result:** Clicking the toggle button in the Blazor UI sends a message through WebView2 directly to `GhostEngine_SetClearColor`, changing the DX12 background color in real time.
 
----
 
-## Usage
-
-- Launch the application from Visual Studio (`Debug → Start`) or the compiled executable
-- Use the **File / Settings / Help** dropdown menus in the WinForms shell to interact with the application
-- The **Blazor UI** panel provides the web-based interface layer
-- The **DX12 renderer** runs in the background, rendering directly to the native window surface
-
----
-## Roadmap
-
-- [x] Phase 1: Lighting, viewport icons, click/drag, editor panels
-- [x] Phase 2: Textures and materials, Free Camera entities
-- [x] Phase 3: Dockable editor, live camera viewports, per-camera resolution
-- [x] Phase 4: Project Save/Load/ Load in VS/ Load Game Temple/Basic UI/Play Mode Only
-- [x] Phase 5: Pending UI Editor
-- [ ] Phase : Publish Release as standalone Game
-- [ ] Phase : SkySphere
-- [ ] Phase : Audio
-- [ ] Phase : Mesh import, textures, normal/specular maps, shadows, Z-up support, PBR materials
-- [ ] Phase : All camera types and features
-- [ ] Phase : Antialiasing and options menu
-- [ ] Phase : MetaHuman support
-- [ ] Phase : Tile map support
-
-## Rendering Hardware Interface (RHI)
-
-- [ ] Vulkan backend
-- [ ] DirectX 11 backend
-- [x] DirectX 12 backend
-- [ ] OpenGL backend
-- [ ] DirectX 9 backend
-
-> **Priority:** Start with Vulkan, as it is a modern graphics API and an alternative to DirectX 11/12.
-
-## Future Editor Tools
-
-- [ ] UI panel editor pending.. Phase 5.
-- [ ] Particle editor
-- [ ] Animation editor
-
-## Known limitations
-
-- Camera windows show the scene only (no icons or selection highlight)
-- Picking and dragging work in the main view only
-- Camera windows aren't saved in the layout file
-- Viewport titles use WinForms text, since the engine has no text rendering yet
-- Property grid dropdowns use the light WinForms theme
-- 4 cameras maximum, 256 textures maximum
-
-## Credits
-
-- [DockPanelSuite](https://github.com/dockpanelsuite/dockpanelsuite) (MIT) for the docking UI
-
-
-## License
-
-This project is licensed under the **MIT License**.
 
 ```
 MIT License
