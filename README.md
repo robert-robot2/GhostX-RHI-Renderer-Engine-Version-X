@@ -35,6 +35,7 @@ GhostX is a custom game engine built on a **native C++ DirectX 12 renderer (RHI-
 - **Object Roles**
 - **GhostGame.dll outputs to GhostX.exe**
 - **Game Module Template**
+- **Orbit Camera**
 ## Editor at a glance
 
 | Panel | What it does |
