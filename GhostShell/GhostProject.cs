@@ -65,7 +65,7 @@ namespace GhostShell
         }
 
         // Makes the project current. Loading its scene is the caller's job (GhostProjectFlow).
-        public static bool Open(string manifestPath, out string error)
+        public static bool Open(string manifestPath, out string error, bool remember = true)
         {
             error = "";
             try
@@ -80,7 +80,7 @@ namespace GhostShell
                 Directory.CreateDirectory(ScenesDir!);
 
                 GhostSceneFile.ProjectRoot = Root;           // scene files store texture paths relative to this
-                GhostSettings.AddRecent(ManifestPath);
+                if (remember) GhostSettings.AddRecent(ManifestPath);
                 Changed?.Invoke();
                 return true;
             }

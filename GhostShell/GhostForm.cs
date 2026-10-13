@@ -89,6 +89,14 @@ namespace GhostShell
             };
             _renderPanel.Controls.Add(_ghostUI);
             _ghostUI.BringToFront();
+            // Player mode: no menu, no panels. The render panel fills the window.
+            if (GhostPlayer.IsPlayer)
+            {
+                if (MainMenuStrip != null) MainMenuStrip.Visible = false;
+                Controls.Add(_renderPanel);
+                _renderPanel.BringToFront();
+                return;
+            }
             // Wire menu callbacks
             _menuBuilder.OnExit += (s, e) => Close();
             _menuBuilder.OnBackgroundColor += OnPickBackgroundColor;
@@ -150,17 +158,21 @@ namespace GhostShell
             _menuBuilder.OnOpenRecent += p => GhostProjectFlow.OpenProjectPath(this, p);
             _menuBuilder.OnOpenInVS += (s, e) => GhostProjectFlow.OpenInVisualStudio(this);
             _menuBuilder.OnSetSolution += (s, e) => GhostProjectFlow.PickSolution(this);
+            _menuBuilder.OnPlay += (s, e) => { GhostPlay.Play(); _renderPanel.Select(); };
+            _menuBuilder.OnPause += (s, e) => GhostPlay.TogglePause();
+            _menuBuilder.OnStop += (s, e) => GhostPlay.Stop();
+            _menuBuilder.OnPlayStandalone += (s, e) => GhostPlay.LaunchStandalone(this);
             // Title bar: scene name, with * when there are unsaved changes
             var titleTimer = new System.Windows.Forms.Timer { Interval = 500 };
             titleTimer.Tick += (s, e) =>
             {
                 if (_engineReady)
                 {
-                    // this may be incorrect
                     string star = GhostSceneFile.IsDirty ? "*" : "";
-                    Text = GhostProject.IsOpen
+                    string state = GhostPlay.State switch { 1 => "  [Playing]", 2 => "  [Paused]", _ => "" };
+                    Text = (GhostProject.IsOpen
                         ? $"GhostX Shell - {GhostProject.DisplayName} - {GhostSceneFile.DisplayName}{star}"
-                        : $"GhostX Shell - {GhostSceneFile.DisplayName}{star}";
+                        : $"GhostX Shell - {GhostSceneFile.DisplayName}{star}") + state;
                 }
             };
             titleTimer.Start();
@@ -215,6 +227,7 @@ namespace GhostShell
                 }
                 _engineReady = true;
                 GhostSceneFile.MarkClean();       // the starting scene counts as saved
+                if (GhostPlayer.IsPlayer && !GhostPlayer.Launch(this)) return;
                 // Drive the render loop from the message pump idle time
                 Application.Idle += OnIdle;
             };
@@ -263,13 +276,18 @@ namespace GhostShell
             // Drain all pending Windows messages first, then tick
             while (!Win32.PeekMessageExists())
             {
-                int hot = _ghostUI.Visible ? -1 : _editor.HotViewport();
+                int hot = _ghostUI.Visible ? -1
+         : (_editor == null ? (_renderPanel.Focused ? 0 : -1) : _editor.HotViewport());
                 GhostEngine.GhostEngine_SetInputViewport(hot);
                 GhostEngine.GhostEngine_Tick();
             }
         }
 
-     
+        protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+        {
+            if (GhostPlayer.IsPlayer && keyData == Keys.Escape) { Close(); return true; }
+            return base.ProcessCmdKey(ref msg, keyData);
+        }
 
         // -------------------------------------------------------
         // Menu callbacks

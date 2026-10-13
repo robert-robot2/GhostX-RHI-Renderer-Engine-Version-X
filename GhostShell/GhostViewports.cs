@@ -83,7 +83,8 @@ namespace GhostShell
         }
 
         private static bool IsHot(Control c) =>
-            c.IsHandleCreated && c.Focused && c.ClientRectangle.Contains(c.PointToClient(Cursor.Position));
+      c.IsHandleCreated && c.Focused &&
+      (GhostEngine.GhostEngine_GetPlayState() == 1 || c.ClientRectangle.Contains(c.PointToClient(Cursor.Position)));
 
         // -------------------------------------------------------
         private void Create(int cameraId)

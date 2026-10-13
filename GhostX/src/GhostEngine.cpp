@@ -7,6 +7,7 @@
 #include "../include/GhostScene.h"
 #include "../include/GhostSceneIO.h"
 #include "../include/GhostImage.h"
+#include "../include/GhostRuntime.h"
 #include <string.h>
 // ---- Engine state ----
 static IGhostRHI* g_rhi = nullptr;
@@ -44,6 +45,12 @@ struct EngineViewport { bool alive = false; bool visible = true; int cameraId = 
 static EngineViewport g_vp[GHOST_MAX_SURFACES];
 static int            g_inputCameraId = 0;               // the camera WASD / right-mouse look drives
 static GhostVec3      g_mainEye = { 0, 0, 0 };           // main view position, for picking rays
+// ---- Play mode ----
+static GhostPlayState  g_playState = GhostPlayState::Editing;
+static GhostScene      g_playBackup;
+static GhostStepper    g_stepper;
+static GhostInput      g_input;
+static GhostTestState  g_testState;
 // Main view render size and where it sits inside the window (for mapping the mouse)
 static int   g_mainRW = 1280, g_mainRH = 720;
 static float g_fitX = 0.0f, g_fitY = 0.0f, g_fitW = 1280.0f, g_fitH = 720.0f;
@@ -491,7 +498,7 @@ void GhostEngine_SetInputEnabled(int enabled) { g_inputEnabled = (enabled != 0);
 
 void GhostEngine_MouseDown(int px, int py, int button)
 {
-    if (button != 0 || g_looking || !g_haveCam) return;
+    if (button != 0 || g_looking || !g_haveCam || g_playState != GhostPlayState::Editing) return;
     int x, y;
     if (!PanelToRender(px, py, x, y, false)) return;          // clicked the dark bars
 
@@ -528,7 +535,7 @@ void GhostEngine_MouseDown(int px, int py, int button)
 
 void GhostEngine_MouseMove(int px, int py)
 {
-    if (g_looking || !g_haveCam) { g_hoverId = 0; return; }
+    if (g_looking || !g_haveCam || g_playState != GhostPlayState::Editing) { g_hoverId = 0; return; }
 
     int x, y;
     if (g_dragging)
@@ -559,6 +566,7 @@ void GhostEngine_MouseLeave() { g_hoverId = 0; }
 // ============================================================
 int GhostEngine_AddObject(int meshId, int sx, int sy)
 {
+    if (g_playState != GhostPlayState::Editing) return 0;
     if (g_scene.objects.size() >= MAX_SCENE_OBJECT_COUNT) return 0;
     GhostObject* o = GhostScene_AddObject(g_scene, meshId);
     if (!o) return 0;
@@ -572,6 +580,7 @@ int GhostEngine_AddObject(int meshId, int sx, int sy)
 
 int GhostEngine_AddLight(int lightType, int sx, int sy)
 {
+    if (g_playState != GhostPlayState::Editing) return 0;
     if (lightType < 0 || lightType > 2) return 0;
     GhostLight* l = GhostScene_AddLight(g_scene, (GhostLightType)lightType);
     if (!l) return 0;
@@ -585,6 +594,7 @@ int GhostEngine_AddLight(int lightType, int sx, int sy)
 
 int GhostEngine_RemoveEntity(int id)
 {
+    if (g_playState != GhostPlayState::Editing) return 0;
     if (!GhostScene_Remove(g_scene, id)) return 0;
     if (g_hoverId == id) g_hoverId = 0;
     if (g_dragId == id) { g_dragging = false; g_dragId = 0; }
@@ -787,6 +797,7 @@ static void RenderViewport(int vp)
     if (w == 0 || h == 0) return;
 
     const bool  mainView = (vp == 0);
+    const bool overlays = mainView && g_playState == GhostPlayState::Editing;   // no icons or selection while playing
     const float d2r = GHOST_PI / 180.0f;
     // ---- Render resolution: the camera's setting, or the window size ("Match Window") ----
     const bool         custom = (cam->resW > 0 && cam->resH > 0);
@@ -852,7 +863,7 @@ static void RenderViewport(int vp)
     {
         const int       faceCount = GhostMesh_FaceCount(o.meshId);
         const GhostMat4 model = GhostObjectModel(o);
-        const bool      selected = mainView && (o.id == g_scene.selectedId);   // camera windows show the clean scene
+        const bool      selected = overlays && (o.id == g_scene.selectedId);
         const int       hl = selected ? CurrentFace() : -1;
 
         int f = 0;
@@ -888,7 +899,7 @@ static void RenderViewport(int vp)
     }
 
     // ---- Icons: main view only ----
-    if (mainView)
+    if (overlays)
     {
         for (const GhostLight& l : g_scene.lights)
         {
@@ -926,6 +937,17 @@ void GhostEngine_Tick()
     QueryPerformanceCounter(&curr);
     float dt = (float)(curr.QuadPart - g_prev.QuadPart) / (float)g_freq.QuadPart;
     g_prev = curr;
+    // ---- Play mode: sample input, then run the fixed-timestep simulation ----
+    g_input.Sample(g_inputEnabled && g_playState == GhostPlayState::Playing);
+    if (g_playState == GhostPlayState::Playing)
+    {
+        const int steps = g_stepper.Advance(dt);
+        for (int i = 0; i < steps; i++)
+        {
+            GhostRuntime_TestStep(g_scene, g_input, g_testState, GHOST_FIXED_DT);   // TEMP: the game module replaces this in 4C
+            g_input.EndStep();
+        }
+    }
     // ---- Active camera -> working state (the fly code below keeps using g_eye / g_yaw / g_pitch) ----
     GhostCamera* cam = InputCamera();
     if (cam)
@@ -934,11 +956,12 @@ void GhostEngine_Tick()
         g_yaw = cam->yawDeg * (GHOST_PI / 180.0f);
         g_pitch = cam->pitchDeg * (GHOST_PI / 180.0f);
     }
+    const bool flyEnabled = g_inputEnabled && g_playState == GhostPlayState::Editing;   // the editor fly cam is off while playing
     // ---- Mouse look ----
     const float lookSens = 0.0025f;
     const float moveSpeed = 3.5f;
 
-    if (g_inputEnabled && (GetAsyncKeyState(VK_RBUTTON) & 0x8000))
+    if (flyEnabled && (GetAsyncKeyState(VK_RBUTTON) & 0x8000))
     {
         if (!g_looking)
         {
@@ -965,7 +988,7 @@ void GhostEngine_Tick()
         g_looking = false;
         ShowCursor(TRUE);
     }
-    auto down = [&](int vk) { return g_inputEnabled && (GetAsyncKeyState(vk) & 0x8000) != 0; };
+    auto down = [&](int vk) { return flyEnabled && (GetAsyncKeyState(vk) & 0x8000) != 0; };
     // ---- Movement ----
     GhostVec3 forward = {
         cosf(g_pitch) * sinf(g_yaw),
@@ -1142,6 +1165,7 @@ int GhostEngine_PickObjectAt(int px, int py, int* outFace)
 // ============================================================
 int GhostEngine_AddCamera(int sx, int sy)
 {
+    if (g_playState != GhostPlayState::Editing) return 0;
     GhostCamera* c = GhostScene_AddCamera(g_scene);
     if (!c) return 0;
     SpawnCoords(sx, sy);
@@ -1301,6 +1325,8 @@ void GhostEngine_SetProjectRoot(const char* path)
 
 int GhostEngine_SaveScene(const char* path, char* msg, int msgSize)
 {
+    GhostEngine_Stop();       // saving always works on the real scene, never the play copy
+
     std::string err;
     if (!path || !GhostScene_Save(g_scene, g_projectRoot, path, err))
     {
@@ -1313,7 +1339,7 @@ int GhostEngine_SaveScene(const char* path, char* msg, int msgSize)
 int GhostEngine_LoadScene(const char* path, char* msg, int msgSize)
 {
     if (!g_rhi || !g_pipeline || !path) { CopyMsg("The engine is not ready.", msg, msgSize); return 0; }
-
+    GhostEngine_Stop();
     GhostScene backup = g_scene;
     std::string err, warn;
     bool ok = GhostScene_Load(g_scene, g_projectRoot, path, LoadSceneTexture,
@@ -1336,6 +1362,7 @@ int GhostEngine_LoadScene(const char* path, char* msg, int msgSize)
 
 void GhostEngine_ClearScene()
 {
+    GhostEngine_Stop();
     g_scene.objects.clear();
     g_scene.lights.clear();
     g_scene.cameras.clear();
@@ -1350,7 +1377,10 @@ void GhostEngine_ClearScene()
     g_scene.version++;
 }
 
-unsigned int GhostEngine_GetSceneHash() { return GhostScene_Hash(g_scene); }
+unsigned int GhostEngine_GetSceneHash()
+{
+    return GhostScene_Hash(g_playState != GhostPlayState::Editing ? g_playBackup : g_scene);
+}
 
 void GhostEngine_SetTexturePath(int id, const char* path)
 {
@@ -1366,3 +1396,45 @@ int GhostEngine_GetTexturePath(int id, char* buf, int bufSize)
     CopyMsg(g_scene.textures[id].path, buf, bufSize);
     return g_scene.textures[id].path.empty() ? 0 : 1;
 }
+
+
+// ============================================================
+//  Exported: play mode
+// ============================================================
+int GhostEngine_Play()
+{
+    if (!g_rhi || !g_pipeline) return 0;
+    if (g_playState != GhostPlayState::Editing) return 1;
+
+    g_playBackup = g_scene;                          // Stop puts this back
+    GhostRuntime_TestBegin(g_scene, g_testState);
+    g_stepper.Reset();
+    g_input.Reset();
+    g_hoverId = 0; g_dragging = false; g_dragId = 0;
+    g_playState = GhostPlayState::Playing;
+    return 1;
+}
+
+void GhostEngine_Stop()
+{
+    if (g_playState == GhostPlayState::Editing) return;
+
+    // Textures loaded during play stay on the GPU, so keep the registry. Everything else goes back.
+    std::vector<GhostTextureInfo> tex = g_scene.textures;
+    unsigned int version = g_scene.version;
+    g_scene = std::move(g_playBackup);
+    g_scene.textures = tex;
+    g_scene.version = version + 1;                   // the hierarchy rebuilds
+    g_playBackup = GhostScene();
+
+    g_playState = GhostPlayState::Editing;
+    g_hoverId = 0; g_dragging = false; g_dragId = 0;
+}
+
+void GhostEngine_SetPaused(int paused)
+{
+    if (paused && g_playState == GhostPlayState::Playing) g_playState = GhostPlayState::Paused;
+    else if (!paused && g_playState == GhostPlayState::Paused) g_playState = GhostPlayState::Playing;
+}
+
+int GhostEngine_GetPlayState() { return (int)g_playState; }

@@ -155,6 +155,7 @@ d3dcompiler.lib;Comdlg32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     <ClInclude Include="include\GhostMath.h" />
     <ClInclude Include="include\GhostPipeline.h" />
     <ClInclude Include="include\GhostRHI_DX12.h" />
+    <ClInclude Include="include\GhostRuntime.h" />
     <ClInclude Include="include\GhostScene.h" />
     <ClInclude Include="include\GhostSceneIO.h" />
     <ClInclude Include="include\IGhostRHI.h" />
@@ -166,6 +167,7 @@ d3dcompiler.lib;Comdlg32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     <ClCompile Include="src\GhostImage.cpp" />
     <ClCompile Include="src\GhostPipeline.cpp" />
     <ClCompile Include="src\GhostRHI_DX12.cpp" />
+    <ClCompile Include="src\GhostRuntime.cpp" />
     <ClCompile Include="src\GhostSceneIO.cpp" />
   </ItemGroup>
   <ItemGroup>

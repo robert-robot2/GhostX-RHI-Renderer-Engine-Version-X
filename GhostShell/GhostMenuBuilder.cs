@@ -33,6 +33,10 @@ namespace GhostShell
         public event EventHandler? OnOpenInVS;
         public event EventHandler? OnSetSolution;
         public event Action<string>? OnOpenRecent;
+        public event EventHandler? OnPlay;
+        public event EventHandler? OnPause;
+        public event EventHandler? OnStop;
+        public event EventHandler? OnPlayStandalone;
 
         private ToolStripMenuItem _recentMenu = null!;
 
@@ -102,6 +106,19 @@ namespace GhostShell
             // ---- View ----
             var viewMenu = new ToolStripMenuItem("View");
             viewMenu.DropDownItems.Add(MakeItem("Toggle Engine UI  (4)", (s, e) => OnToggleEditorUI?.Invoke(s, e)));
+            // ---- Play ----
+            var playMenu = new ToolStripMenuItem("Play");
+            var play = MakeItem("Play", (s, e) => OnPlay?.Invoke(s, e));
+            play.ShortcutKeys = Keys.Control | Keys.P;
+            var pause = MakeItem("Pause / Resume", (s, e) => OnPause?.Invoke(s, e));
+            pause.ShortcutKeys = Keys.Control | Keys.Shift | Keys.P;
+            var stop = MakeItem("Stop", (s, e) => OnStop?.Invoke(s, e));
+            stop.ShortcutKeys = Keys.Shift | Keys.F5;
+            playMenu.DropDownItems.Add(play);
+            playMenu.DropDownItems.Add(pause);
+            playMenu.DropDownItems.Add(stop);
+            playMenu.DropDownItems.Add(new ToolStripSeparator());
+            playMenu.DropDownItems.Add(MakeItem("Play Standalone (new window)", (s, e) => OnPlayStandalone?.Invoke(s, e)));
             // ---- Help ----
             var helpMenu = new ToolStripMenuItem("Help");
             helpMenu.DropDownItems.Add(MakeItem("About", (s, e) => OnAbout?.Invoke(s, e)));
@@ -110,6 +127,7 @@ namespace GhostShell
             _menuStrip.Items.Add(fileMenu);
             _menuStrip.Items.Add(settingsMenu);
             _menuStrip.Items.Add(viewMenu);
+            _menuStrip.Items.Add(playMenu);
             _menuStrip.Items.Add(helpMenu);
 
             form.Controls.Add(_menuStrip);

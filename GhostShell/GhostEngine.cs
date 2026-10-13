@@ -178,6 +178,15 @@ namespace GhostShell
         public static extern void GhostEngine_SetTexturePath(int id, [MarshalAs(UnmanagedType.LPUTF8Str)] string path);
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern int GhostEngine_GetTexturePath(int id, [Out] byte[] buf, int bufSize);
+        // ---- Play mode ----
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_Play();
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_Stop();
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetPaused(int paused);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetPlayState();
 
     }
 }

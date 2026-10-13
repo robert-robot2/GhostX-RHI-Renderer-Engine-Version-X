@@ -124,4 +124,9 @@ extern "C"
     GHOST_API unsigned int GhostEngine_GetSceneHash();
     GHOST_API void GhostEngine_SetTexturePath(int id, const char* path);   // remember where an imported texture came from
     GHOST_API int  GhostEngine_GetTexturePath(int id, char* buf, int bufSize);
+    // ---- Play mode ----
+    GHOST_API int  GhostEngine_Play();                 // snapshots the scene and starts. 1 = playing
+    GHOST_API void GhostEngine_Stop();                 // restores the snapshot
+    GHOST_API void GhostEngine_SetPaused(int paused);
+    GHOST_API int  GhostEngine_GetPlayState();         // 0 editing, 1 playing, 2 paused
 }

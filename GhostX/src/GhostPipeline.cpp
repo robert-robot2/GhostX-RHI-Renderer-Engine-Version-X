@@ -4,6 +4,7 @@
 #include <d3d12.h>
 #include <d3dcompiler.h>
 #include <wrl/client.h>
+#include <string>
 using Microsoft::WRL::ComPtr;
 
 // ============================================================
@@ -189,7 +190,26 @@ static GhostResult CreateUploadBuffer(ID3D12Device* device,
         D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(out));
     return FAILED(hr) ? GHOST_FAIL : GHOST_OK;
 }
+// Folder that GhostX.dll lives in (with the trailing backslash)
+static std::wstring ModuleDir()
+{
+    HMODULE h = nullptr;
+    GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+        (LPCWSTR)&ModuleDir, &h);
+    wchar_t buf[1024];
+    DWORD n = GetModuleFileNameW(h, buf, 1024);
+    std::wstring p(buf, n);
+    size_t slash = p.find_last_of(L"\\/");
+    return slash == std::wstring::npos ? L"" : p.substr(0, slash + 1);
+}
 
+// shaders\<file> next to the DLL, falling back to the old working-directory path
+static std::wstring ShaderPath(const wchar_t* file)
+{
+    std::wstring a = ModuleDir() + L"shaders\\" + file;
+    if (GetFileAttributesW(a.c_str()) != INVALID_FILE_ATTRIBUTES) return a;
+    return std::wstring(L"shaders/") + file;
+}
 // ---- Mip chain (box filter in linear space, RGBA8 sRGB in/out) ----
 struct MipLevel { unsigned int w, h; std::vector<unsigned char> px; };
 
@@ -356,11 +376,11 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
 
     // ---- Shaders ----
     ComPtr<ID3DBlob> vs, ps;
-    if (CompileShaderFromFile(L"shaders/GhostVS.hlsl", "VSMain", "vs_5_0", &vs) != GHOST_OK)
+    if (CompileShaderFromFile(ShaderPath(L"GhostVS.hlsl").c_str(), "VSMain", "vs_5_0", &vs) != GHOST_OK)
     {
         delete p; return GHOST_FAIL;
     }
-    if (CompileShaderFromFile(L"shaders/GhostPS.hlsl", "PSMain", "ps_5_0", &ps) != GHOST_OK)
+    if (CompileShaderFromFile(ShaderPath(L"GhostPS.hlsl").c_str(), "PSMain", "ps_5_0", &ps) != GHOST_OK)
     {
         delete p; return GHOST_FAIL;
     }
@@ -402,15 +422,15 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
 
     // ---- Icon PSO: unlit billboard quads, no vertex buffer, drawn on top ----
     ComPtr<ID3DBlob> ivs, ips;
-    if (CompileShaderFromFile(L"shaders/GhostVS.hlsl", "IconVS", "vs_5_0", &ivs) != GHOST_OK ||
-        CompileShaderFromFile(L"shaders/GhostPS.hlsl", "IconPS", "ps_5_0", &ips) != GHOST_OK)
+    if (CompileShaderFromFile(ShaderPath(L"GhostVS.hlsl").c_str(), "IconVS", "vs_5_0", &ivs) != GHOST_OK ||
+        CompileShaderFromFile(ShaderPath(L"GhostPS.hlsl").c_str(), "IconPS", "ps_5_0", &ips) != GHOST_OK)
     {
         delete p; return GHOST_FAIL;
     }
     // ---- Blit PSO: fullscreen quad that shows an offscreen image, no depth ----
     ComPtr<ID3DBlob> bvs, bps;
-    if (CompileShaderFromFile(L"shaders/GhostVS.hlsl", "BlitVS", "vs_5_0", &bvs) != GHOST_OK ||
-        CompileShaderFromFile(L"shaders/GhostPS.hlsl", "BlitPS", "ps_5_0", &bps) != GHOST_OK)
+    if (CompileShaderFromFile(ShaderPath(L"GhostVS.hlsl").c_str(), "BlitVS", "vs_5_0", &bvs) != GHOST_OK ||
+        CompileShaderFromFile(ShaderPath(L"GhostPS.hlsl").c_str(), "BlitPS", "ps_5_0", &bps) != GHOST_OK)
     {
         delete p; return GHOST_FAIL;
     }
