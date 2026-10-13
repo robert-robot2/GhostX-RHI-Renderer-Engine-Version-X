@@ -59,7 +59,7 @@ GhostX is a custom game engine built on a **native C++ DirectX 12 renderer (RHI-
 | `Delete` | Delete the selection (the last camera can't be deleted) |
 | `4` | Hide or show all tool panels |
 | Drag a texture tile onto an object | Apply it (hold `Shift` for one face) |
-| 'Ctrl + D' Duplicates Select Item |
+| 'Ctrl + D' | Duplicates Selected Item |
 > Camera keys only work while a viewport has focus, so typing in a panel never moves the camera.
 
 ## What's New
