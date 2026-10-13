@@ -37,6 +37,7 @@ namespace GhostShell
         public event EventHandler? OnPause;
         public event EventHandler? OnStop;
         public event EventHandler? OnPlayStandalone;
+        public event EventHandler? OnGameModuleInfo;
 
         private ToolStripMenuItem _recentMenu = null!;
 
@@ -119,6 +120,7 @@ namespace GhostShell
             playMenu.DropDownItems.Add(stop);
             playMenu.DropDownItems.Add(new ToolStripSeparator());
             playMenu.DropDownItems.Add(MakeItem("Play Standalone (new window)", (s, e) => OnPlayStandalone?.Invoke(s, e)));
+            playMenu.DropDownItems.Add(MakeItem("Game Module Info...", (s, e) => OnGameModuleInfo?.Invoke(s, e)));
             // ---- Help ----
             var helpMenu = new ToolStripMenuItem("Help");
             helpMenu.DropDownItems.Add(MakeItem("About", (s, e) => OnAbout?.Invoke(s, e)));

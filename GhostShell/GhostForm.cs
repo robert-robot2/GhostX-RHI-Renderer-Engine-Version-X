@@ -95,6 +95,24 @@ namespace GhostShell
                 if (MainMenuStrip != null) MainMenuStrip.Visible = false;
                 Controls.Add(_renderPanel);
                 _renderPanel.BringToFront();
+
+                // this may be incorrect above player layout return block?
+                var hudTimer = new System.Windows.Forms.Timer { Interval = 200 };
+                hudTimer.Tick += (s, e) =>
+                {
+                    if (!_engineReady) return;
+                    string hud = GhostPlay.HudText();
+                    string t = GhostProject.DisplayName + (hud.Length > 0 ? "  |  " + hud : "");
+                    if (Text != t) Text = t;
+
+                    string fault = GhostPlay.TakeFault();
+                    if (fault.Length > 0)
+                    {
+                        MessageBox.Show(this, fault, "Game module crashed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        Close();
+                    }
+                };
+                hudTimer.Start();
                 return;
             }
             // Wire menu callbacks
@@ -162,17 +180,30 @@ namespace GhostShell
             _menuBuilder.OnPause += (s, e) => GhostPlay.TogglePause();
             _menuBuilder.OnStop += (s, e) => GhostPlay.Stop();
             _menuBuilder.OnPlayStandalone += (s, e) => GhostPlay.LaunchStandalone(this);
+            _menuBuilder.OnGameModuleInfo += (s, e) => GhostPlay.ShowModuleInfo(this);
             // Title bar: scene name, with * when there are unsaved changes
-            var titleTimer = new System.Windows.Forms.Timer { Interval = 500 };
+            var titleTimer = new System.Windows.Forms.Timer { Interval = 200 };
             titleTimer.Tick += (s, e) =>
             {
                 if (_engineReady)
                 {
                     string star = GhostSceneFile.IsDirty ? "*" : "";
-                    string state = GhostPlay.State switch { 1 => "  [Playing]", 2 => "  [Paused]", _ => "" };
-                    Text = (GhostProject.IsOpen
+                    string state = GhostPlay.State switch
+                    {
+                        1 => GhostPlay.HasModule ? "  [Playing]" : "  [Playing - no game module]",
+                        2 => "  [Paused]",
+                        _ => ""
+                    };
+                    string hud = GhostPlay.State != 0 ? GhostPlay.HudText() : "";
+                    string t = (GhostProject.IsOpen
                         ? $"GhostX Shell - {GhostProject.DisplayName} - {GhostSceneFile.DisplayName}{star}"
-                        : $"GhostX Shell - {GhostSceneFile.DisplayName}{star}") + state;
+                        : $"GhostX Shell - {GhostSceneFile.DisplayName}{star}")
+                        + state + (hud.Length > 0 ? "  |  " + hud : "");
+                    if (Text != t) Text = t;
+
+                    string fault = GhostPlay.TakeFault();
+                    if (fault.Length > 0)
+                        MessageBox.Show(this, fault, "Game module crashed", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
             };
             titleTimer.Start();

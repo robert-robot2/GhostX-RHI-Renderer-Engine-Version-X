@@ -204,6 +204,14 @@ namespace GhostShell
         public static extern int GhostEngine_GetCustomTag(int objectId, [Out] byte[] buf, int bufSize);
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern void GhostEngine_SetCustomTag(int objectId, [MarshalAs(UnmanagedType.LPUTF8Str)] string tag);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetGameModulePath([MarshalAs(UnmanagedType.LPUTF8Str)] string path);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetPlayMessage([Out] byte[] buf, int bufSize);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetHudText([Out] byte[] buf, int bufSize);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_TakePlayFault([Out] byte[] buf, int bufSize);
 
     }
 }

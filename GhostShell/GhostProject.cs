@@ -80,6 +80,7 @@ namespace GhostShell
                 Directory.CreateDirectory(ScenesDir!);
 
                 GhostSceneFile.ProjectRoot = Root;           // scene files store texture paths relative to this
+                GhostEngine.GhostEngine_SetGameModulePath(Path.GetFullPath(Path.Combine(Root!, m.GameModule)));
                 if (remember) GhostSettings.AddRecent(ManifestPath);
                 Changed?.Invoke();
                 return true;

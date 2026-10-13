@@ -54,6 +54,12 @@
     <ClInclude Include="include\GhostRuntime.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="include\GhostGameAPI.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="include\GhostGameModule.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\GhostPipeline.cpp">
@@ -72,6 +78,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\GhostRuntime.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\GhostGameModule.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

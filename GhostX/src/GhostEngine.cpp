@@ -8,6 +8,7 @@
 #include "../include/GhostSceneIO.h"
 #include "../include/GhostImage.h"
 #include "../include/GhostRuntime.h"
+#include "../include/GhostGameModule.h"
 #include <string.h>
 // ---- Engine state ----
 static IGhostRHI* g_rhi = nullptr;
@@ -50,7 +51,10 @@ static GhostPlayState  g_playState = GhostPlayState::Editing;
 static GhostScene      g_playBackup;
 static GhostStepper    g_stepper;
 static GhostInput      g_input;
-static GhostTestState  g_testState;
+static double          g_playTime = 0.0;
+static std::string     g_hudText, g_gameModulePath, g_playMessage, g_playFault;
+static GhostGameAPI    g_gameApi;
+
 // Main view render size and where it sits inside the window (for mapping the mouse)
 static int   g_mainRW = 1280, g_mainRH = 720;
 static float g_fitX = 0.0f, g_fitY = 0.0f, g_fitW = 1280.0f, g_fitH = 720.0f;
@@ -943,11 +947,20 @@ void GhostEngine_Tick()
     if (g_playState == GhostPlayState::Playing)
     {
         const int steps = g_stepper.Advance(dt);
+        bool faulted = false;
         for (int i = 0; i < steps; i++)
         {
-            GhostRuntime_TestStep(g_scene, g_input, g_testState, GHOST_FIXED_DT);   // TEMP: the game module replaces this in 4C
+            if (!GhostGameModule_Update(GHOST_FIXED_DT))
+            {
+                g_playFault = "The game module crashed inside GhostGame_Update, so Play was stopped.\n"
+                    "Fix the code, rebuild GhostGame and press Play again.";
+                faulted = true;
+                break;
+            }
+            g_playTime += GHOST_FIXED_DT;
             g_input.EndStep();
         }
+        if (faulted) GhostEngine_Stop();
     }
     // ---- Active camera -> working state (the fly code below keeps using g_eye / g_yaw / g_pitch) ----
     GhostCamera* cam = InputCamera();
@@ -1034,6 +1047,7 @@ void GhostEngine_Resize(unsigned int width, unsigned int height)
 
 void GhostEngine_Shutdown()
 {
+    GhostGameModule_Unload();
     GhostPipelineDestroy(g_pipeline);
     g_pipeline = nullptr;
 
@@ -1398,28 +1412,233 @@ int GhostEngine_GetTexturePath(int id, char* buf, int bufSize)
     return g_scene.textures[id].path.empty() ? 0 : 1;
 }
 
+// ============================================================
+//  Game API: what GhostGame.dll receives (see GhostGameAPI.h)
+// ============================================================
+static void   Api_Log(const char* m) { OutputDebugStringA("[Game] "); OutputDebugStringA(m ? m : ""); OutputDebugStringA("\n"); }
+static double Api_GetTime() { return g_playTime; }
+static float  Api_GetDt() { return GHOST_FIXED_DT; }
+static void   Api_SetHud(const char* t) { g_hudText = t ? t : ""; if (g_hudText.size() > 250) g_hudText.resize(250); }
 
+static int Api_KeyDown(int vk) { return (vk > 0 && vk < 256 && g_input.down[vk]) ? 1 : 0; }
+static int Api_KeyPressed(int vk) { return (vk > 0 && vk < 256 && g_input.pressed[vk]) ? 1 : 0; }
+static int Api_KeyReleased(int vk) { return (vk > 0 && vk < 256 && g_input.released[vk]) ? 1 : 0; }
+
+static int Api_FindByTag(const char* tag)
+{
+    if (!tag) return 0;
+    for (const GhostObject& o : g_scene.objects) if (GhostObject_Tag(o) == tag) return o.id;
+    return 0;
+}
+
+static int Api_FindAllByTag(const char* tag, int* out, int maxCount)
+{
+    if (!tag || !out || maxCount <= 0) return 0;
+    int n = 0;
+    for (const GhostObject& o : g_scene.objects)
+        if (GhostObject_Tag(o) == tag) { out[n++] = o.id; if (n >= maxCount) break; }
+    return n;
+}
+
+static int Api_GetTag(int id, char* buf, int size)
+{
+    GhostObject* o = FindObject(id);
+    if (!o || !buf || size <= 0) return 0;
+    CopyMsg(GhostObject_Tag(*o), buf, size);
+    return 1;
+}
+
+static int Api_SetTag(int id, const char* tag)
+{
+    GhostObject* o = FindObject(id);
+    if (!o) return 0;
+    std::string t = tag ? tag : "";
+    static const char* names[] = { "", "Player", "Enemy", "Coin", "Block", "Goal" };
+    o->role = GHOST_ROLE_CUSTOM;
+    for (int i = 0; i < 6; i++) if (t == names[i]) { o->role = i; break; }
+    if (o->role == GHOST_ROLE_CUSTOM) { if (t.size() > 31) t.resize(31); o->customTag = t; }
+    return 1;
+}
+
+static int Api_GetPosition(int id, float* v)
+{
+    GhostObject* o = FindObject(id); if (!o || !v) return 0; v[0] = o->position.x; v[1] = o->position.y; v[2] = o->position.z; return 1;
+}
+static int Api_SetPosition(int id, const float* v)
+{
+    GhostObject* o = FindObject(id); if (!o || !v) return 0; o->position = { v[0], v[1], v[2] }; return 1;
+}
+static int Api_GetRotation(int id, float* v)
+{
+    GhostObject* o = FindObject(id); if (!o || !v) return 0; v[0] = o->rotationDeg.x; v[1] = o->rotationDeg.y; v[2] = o->rotationDeg.z; return 1;
+}
+static int Api_SetRotation(int id, const float* v)
+{
+    GhostObject* o = FindObject(id); if (!o || !v) return 0; o->rotationDeg = { v[0], v[1], v[2] }; return 1;
+}
+static int Api_GetScale(int id, float* v)
+{
+    GhostObject* o = FindObject(id); if (!o || !v) return 0; v[0] = o->scale.x; v[1] = o->scale.y; v[2] = o->scale.z; return 1;
+}
+static int Api_SetScale(int id, const float* v)
+{
+    GhostObject* o = FindObject(id);
+    if (!o || !v) return 0;
+    auto sc = [](float s) { return fabsf(s) < 0.001f ? 0.001f : s; };
+    o->scale = { sc(v[0]), sc(v[1]), sc(v[2]) };
+    return 1;
+}
+
+static int Api_GetColor(int id, float* v)
+{
+    GhostObject* o = FindObject(id); if (!o || !v) return 0; v[0] = o->faces[0].tint[0]; v[1] = o->faces[0].tint[1]; v[2] = o->faces[0].tint[2]; return 1;
+}
+static int Api_SetColor(int id, const float* v)
+{
+    GhostObject* o = FindObject(id);
+    if (!o || !v) return 0;
+    auto c01 = [](float x) { return x < 0.0f ? 0.0f : (x > 1.0f ? 1.0f : x); };
+    for (GhostMaterial& m : o->faces) { m.tint[0] = c01(v[0]); m.tint[1] = c01(v[1]); m.tint[2] = c01(v[2]); }
+    o->useVertexColor = false;
+    return 1;
+}
+static int Api_GetVisible(int id) { GhostObject* o = FindObject(id); return (o && o->visible) ? 1 : 0; }
+static int Api_SetVisible(int id, int vis) { GhostObject* o = FindObject(id); if (!o) return 0; o->visible = (vis != 0); return 1; }
+
+static bool ColliderBounds(const GhostObject& o, GhostVec3& mn, GhostVec3& mx)
+{
+    if (!o.collider) return false;
+    GhostVec3 h = { fabsf(o.colliderSize.x * o.scale.x) * 0.5f,
+                    fabsf(o.colliderSize.y * o.scale.y) * 0.5f,
+                    fabsf(o.colliderSize.z * o.scale.z) * 0.5f };
+    mn = o.position - h;
+    mx = o.position + h;
+    return true;
+}
+
+static int Api_GetBounds(int id, float* mn3, float* mx3)
+{
+    GhostObject* o = FindObject(id);
+    GhostVec3 mn, mx;
+    if (!o || !mn3 || !mx3 || !ColliderBounds(*o, mn, mx)) return 0;
+    mn3[0] = mn.x; mn3[1] = mn.y; mn3[2] = mn.z;
+    mx3[0] = mx.x; mx3[1] = mx.y; mx3[2] = mx.z;
+    return 1;
+}
+
+static int Api_QueryBox(const float* bmin, const float* bmax, int* out, int maxCount)
+{
+    if (!bmin || !bmax || !out || maxCount <= 0) return 0;
+    int n = 0;
+    for (const GhostObject& o : g_scene.objects)
+    {
+        if (!o.visible) continue;
+        GhostVec3 mn, mx;
+        if (!ColliderBounds(o, mn, mx)) continue;
+        if (mn.x < bmax[0] && mx.x > bmin[0] && mn.y < bmax[1] && mx.y > bmin[1] && mn.z < bmax[2] && mx.z > bmin[2])
+        {
+            out[n++] = o.id;
+            if (n >= maxCount) break;
+        }
+    }
+    return n;
+}
+
+static int Api_Spawn(int meshId, const float* pos)
+{
+    if (g_scene.objects.size() >= MAX_SCENE_OBJECT_COUNT) return 0;
+    GhostObject* o = GhostScene_AddObject(g_scene, meshId);
+    if (!o) return 0;
+    if (pos) o->position = { pos[0], pos[1], pos[2] };
+    return o->id;
+}
+
+static int Api_Destroy(int id)
+{
+    if (!FindObject(id)) return 0;                     // objects only: lights and cameras can't be destroyed from here
+    return GhostScene_Remove(g_scene, id) ? 1 : 0;
+}
+
+static int Api_GetActiveCamera() { return g_scene.activeCameraId; }
+static int Api_SetActiveCamera(int id)
+{
+    if (!FindCamera(id)) return 0;
+    GhostEngine_SetActiveCamera(id);
+    return 1;
+}
+
+static int Api_GetCamera(int id, float* pos, float* yp, float* fov)
+{
+    GhostCamera* c = FindCamera(id);
+    if (!c) return 0;
+    if (pos) { pos[0] = c->position.x; pos[1] = c->position.y; pos[2] = c->position.z; }
+    if (yp) { yp[0] = c->yawDeg; yp[1] = c->pitchDeg; }
+    if (fov) *fov = c->fovDeg;
+    return 1;
+}
+
+static int Api_SetCamera(int id, const float* pos, const float* yp, const float* fov)
+{
+    GhostCamera* c = FindCamera(id);
+    if (!c) return 0;
+    if (pos) c->position = { pos[0], pos[1], pos[2] };
+    if (yp) { c->yawDeg = yp[0]; c->pitchDeg = yp[1] < -88.0f ? -88.0f : (yp[1] > 88.0f ? 88.0f : yp[1]); }
+    if (fov) c->fovDeg = *fov < 10.0f ? 10.0f : (*fov > 120.0f ? 120.0f : *fov);
+    return 1;
+}
+
+static void BuildGameApi()
+{
+    GhostGameAPI& a = g_gameApi;
+    memset(&a, 0, sizeof a);
+    a.version = GHOST_GAME_API_VERSION;
+    a.size = (int)sizeof(GhostGameAPI);
+    a.Log = Api_Log;  a.GetTime = Api_GetTime;  a.GetFixedDeltaTime = Api_GetDt;  a.SetHudText = Api_SetHud;
+    a.KeyDown = Api_KeyDown;  a.KeyPressed = Api_KeyPressed;  a.KeyReleased = Api_KeyReleased;
+    a.FindByTag = Api_FindByTag;  a.FindAllByTag = Api_FindAllByTag;  a.GetTag = Api_GetTag;  a.SetTag = Api_SetTag;
+    a.GetPosition = Api_GetPosition;  a.SetPosition = Api_SetPosition;
+    a.GetRotation = Api_GetRotation;  a.SetRotation = Api_SetRotation;
+    a.GetScale = Api_GetScale;  a.SetScale = Api_SetScale;
+    a.GetColor = Api_GetColor;  a.SetColor = Api_SetColor;
+    a.GetVisible = Api_GetVisible;  a.SetVisible = Api_SetVisible;
+    a.GetBounds = Api_GetBounds;  a.QueryBox = Api_QueryBox;
+    a.Spawn = Api_Spawn;  a.Destroy = Api_Destroy;
+    a.GetActiveCamera = Api_GetActiveCamera;  a.SetActiveCamera = Api_SetActiveCamera;
+    a.GetCamera = Api_GetCamera;  a.SetCamera = Api_SetCamera;
+}
 // ============================================================
 //  Exported: play mode
 // ============================================================
 int GhostEngine_Play()
 {
-    if (!g_rhi || !g_pipeline) return 0;
+    if (!g_rhi || !g_pipeline) { g_playMessage = "The engine is not ready."; return 0; }
     if (g_playState != GhostPlayState::Editing) return 1;
 
     g_playBackup = g_scene;                          // Stop puts this back
-    GhostRuntime_TestBegin(g_scene, g_testState);
     g_stepper.Reset();
     g_input.Reset();
+    g_playTime = 0.0;
+    g_hudText.clear(); g_playMessage.clear(); g_playFault.clear();
     g_hoverId = 0; g_dragging = false; g_dragId = 0;
     g_playState = GhostPlayState::Playing;
-    return 1;
+
+    BuildGameApi();
+    GhostModuleResult r = GhostGameModule_Load(g_gameModulePath, &g_gameApi, g_playMessage);
+    OutputDebugStringA(("[GhostX] " + g_playMessage + "\n").c_str());
+
+    if (r == GhostModuleResult::Error)
+    {
+        GhostEngine_Stop();                          // restores the scene: Init may already have changed it
+        return 0;
+    }
+    return r == GhostModuleResult::Loaded ? 1 : 2;
 }
 
 void GhostEngine_Stop()
 {
     if (g_playState == GhostPlayState::Editing) return;
-
+    GhostGameModule_Unload();                        // Shutdown, then free the temp copy
+    g_hudText.clear();
     // Textures loaded during play stay on the GPU, so keep the registry. Everything else goes back.
     std::vector<GhostTextureInfo> tex = g_scene.textures;
     unsigned int version = g_scene.version;
@@ -1481,4 +1700,28 @@ void GhostEngine_SetCustomTag(int objectId, const char* utf8Tag)
     std::string t = utf8Tag ? utf8Tag : "";
     if (t.size() > 31) t.resize(31);
     o->customTag = t;
+}
+
+void GhostEngine_SetGameModulePath(const char* path) { g_gameModulePath = path ? path : ""; }
+
+int GhostEngine_GetPlayMessage(char* buf, int size)
+{
+    if (!buf || size <= 0) return 0;
+    CopyMsg(g_playMessage, buf, size);
+    return 1;
+}
+
+int GhostEngine_GetHudText(char* buf, int size)
+{
+    if (!buf || size <= 0) return 0;
+    CopyMsg(g_hudText, buf, size);
+    return 1;
+}
+
+int GhostEngine_TakePlayFault(char* buf, int size)
+{
+    if (g_playFault.empty() || !buf || size <= 0) return 0;
+    CopyMsg(g_playFault, buf, size);
+    g_playFault.clear();
+    return 1;
 }

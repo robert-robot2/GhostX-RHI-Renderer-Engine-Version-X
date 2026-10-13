@@ -132,7 +132,7 @@ extern "C"
     GHOST_API void GhostEngine_SetTexturePath(int id, const char* path);   // remember where an imported texture came from
     GHOST_API int  GhostEngine_GetTexturePath(int id, char* buf, int bufSize);
     // ---- Play mode ----
-    GHOST_API int  GhostEngine_Play();                 // snapshots the scene and starts. 1 = playing
+    GHOST_API int  GhostEngine_Play();     // 0 = failed (see GetPlayMessage), 1 = playing with a game module, 2 = playing without one
     GHOST_API void GhostEngine_Stop();                 // restores the snapshot
     GHOST_API void GhostEngine_SetPaused(int paused);
     GHOST_API int  GhostEngine_GetPlayState();         // 0 editing, 1 playing, 2 paused
@@ -141,4 +141,8 @@ extern "C"
     GHOST_API void GhostEngine_SetGameplay(const GhostGameplayInfo* in);
     GHOST_API int  GhostEngine_GetCustomTag(int objectId, char* buf, int bufSize);
     GHOST_API void GhostEngine_SetCustomTag(int objectId, const char* utf8Tag);
+    GHOST_API void GhostEngine_SetGameModulePath(const char* utf8Path);
+    GHOST_API int  GhostEngine_GetPlayMessage(char* buf, int bufSize);   // last module message (path, or why it failed)
+    GHOST_API int  GhostEngine_GetHudText(char* buf, int bufSize);       // what the game set with SetHudText
+    GHOST_API int  GhostEngine_TakePlayFault(char* buf, int bufSize);    // 1 once if the module crashed (message in buf)
 }
