@@ -10,6 +10,7 @@
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
 <img width="1920" height="1080" alt="Screenshot 2026-10-11 213043" src="https://github.com/user-attachments/assets/88808691-55d3-4d33-8c7a-67f18403989c" />
+<img width="1920" height="1080" alt="Screenshot 2026-10-13 022109" src="https://github.com/user-attachments/assets/5eae52c7-5924-4e51-b141-df4295c34245" />
 
 
 </div>
@@ -31,6 +32,7 @@ GhostX is a custom game engine built on a **native C++ DirectX 12 renderer (RHI-
 - **Project Save Load**
 - **Project Can Open In Visual Studio**
 - **Project Play/Stop Added**
+- **Object Roles**
 ## Editor at a glance
 
 | Panel | What it does |
