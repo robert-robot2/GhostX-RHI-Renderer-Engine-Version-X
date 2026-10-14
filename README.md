@@ -130,7 +130,9 @@ Exports for objects, lights, cameras, materials, textures, viewports, mouse inpu
 - [ ] Phase : Tile map support
 - [ ] Phase : Audio
 - [ ] Phase : AutoCad Mesh Integration
-- [ ] Phase : Mesh editor
+- [ ] Phase : Grid Mesh editor
+- [ ] Phase : Animation Editor
+- [ ] Phase : Particle Manager
 
 ## Rendering Hardware Interface (RHI)
 
@@ -144,9 +146,9 @@ Exports for objects, lights, cameras, materials, textures, viewports, mouse inpu
 
 ## Future Editor Tools
 
-- [x] UI panel editor Phase 5.
-- [ ] Particle editor
-- [ ] Animation editor
+- [x] UI Panel Editor
+- [ ] Particle Editor
+- [ ] Animation Editor
 - [ ] Tab Grid Editor
 
 ## Known limitations
