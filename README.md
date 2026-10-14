@@ -5,6 +5,7 @@
 **DirectX12 RHI Renderer Engine Winforms Blazor WASM UI with a Visual Studio Docking Suite Editor**
 
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-blue)
+![.NET 10](https://img.shields.io/badge/.NET%2010-512BD4?logo=dotnet&logoColor=white)
 ![Graphics](https://img.shields.io/badge/graphics-DirectX%2012-green)
 ![UI](https://img.shields.io/badge/editor-WinForms%20%2B%20DockPanelSuite-orange)
 ![UI](https://img.shields.io/badge/editor-Blazor%20WASM-orange)
