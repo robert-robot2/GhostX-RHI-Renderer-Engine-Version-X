@@ -123,13 +123,13 @@ Exports for objects, lights, cameras, materials, textures, viewports, mouse inpu
 - [x] Phase 5: UI Editor Designer
 - [ ] Phase 6: SkySphere
 - [ ] Phase 7: Publish Release as Standalone Game
-- [ ] Phase : Mesh import, textures, normal/specular maps, shadows, Z-up support, PBR materials
+- [ ] Phase : Mesh import fbx, gltf, textures, normal/specular maps, shadows, Z-up support, PBR materials
 - [ ] Phase : All camera types and features
 - [ ] Phase : Antialiasing and options menu
 - [ ] Phase : MetaHuman support
 - [ ] Phase : Tile map support
 - [ ] Phase : Audio
-- [ ] Phase : AutoCad Mesh Integration
+- [ ] Phase : AutoCad Mesh Integration .step import
 - [ ] Phase : Grid Mesh editor
 - [ ] Phase : Animation Editor
 - [ ] Phase : Particle Manager
