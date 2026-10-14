@@ -115,12 +115,13 @@ Exports for objects, lights, cameras, materials, textures, viewports, mouse inpu
 
 ---
 ## Roadmap
-
+**Featured**
 - [x] Phase 1: Lighting, viewport icons, click/drag, editor panels
 - [x] Phase 2: Textures and materials, Free Camera entities
 - [x] Phase 3: Dockable editor, live camera viewports, per-camera resolution
 - [x] Phase 4: Project Save/Load/ Load in VS/ Load Game Template/ Basic UI/Play Mode Only
 - [x] Phase 5: UI Editor Designer
+**Pending**
 - [ ] Phase 6: SkySphere
 - [ ] Phase 7: Publish Release as Standalone Game
 - [ ] Phase : Mesh import fbx, gltf, textures, normal/specular maps, shadows, Z-up support, PBR materials
