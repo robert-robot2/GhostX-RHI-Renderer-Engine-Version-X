@@ -129,6 +129,8 @@ Exports for objects, lights, cameras, materials, textures, viewports, mouse inpu
 - [ ] Phase : Mesh import fbx, gltf, textures, normal/specular maps, shadows, Z-up support, PBR materials
 - [ ] Phase : All camera types and features
 - [ ] Phase : Antialiasing and options menu
+- [ ] Phase : Spot Light
+- [ ] Phase : Shadows
 - [ ] Phase : MetaHuman support
 - [ ] Phase : Tile map support
 - [ ] Phase : Audio
