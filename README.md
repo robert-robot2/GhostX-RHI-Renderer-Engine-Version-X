@@ -128,7 +128,9 @@ Exports for objects, lights, cameras, materials, textures, viewports, mouse inpu
 - [ ] Phase : Antialiasing and options menu
 - [ ] Phase : MetaHuman support
 - [ ] Phase : Tile map support
-- [ ] Phase : Audio 
+- [ ] Phase : Audio
+- [ ] Phase : AutoCad Mesh Integration
+- [ ] Phase : Mesh editor
 
 ## Rendering Hardware Interface (RHI)
 
@@ -145,6 +147,8 @@ Exports for objects, lights, cameras, materials, textures, viewports, mouse inpu
 - [x] UI panel editor Phase 5.
 - [ ] Particle editor
 - [ ] Animation editor
+- [ ] Tab Grid Editor
+- [ ] 
 
 ## Known limitations
 
