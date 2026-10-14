@@ -136,18 +136,21 @@ Exports for objects, lights, cameras, materials, textures, viewports, mouse inpu
 - [ ] Phase : Particle Manager
 
 ## Rendering Hardware Interface (RHI)
-
-- [ ] Vulkan backend
-- [ ] DirectX 11 backend
+- **Featured**
 - [x] DirectX 12 backend
+- **Pending**
+- [ ] DirectX 11 backend
+- [ ] Vulkan backend
 - [ ] OpenGL backend
+- [ ] Direct X 4
 - [ ] DirectX 9 backend
 
 > **Priority:** Start with Vulkan, as it is a modern graphics API and an alternative to DirectX 11/12.
 
 ## Future Editor Tools
-
+- **Featured**
 - [x] UI Panel Editor
+- **Pending**
 - [ ] Particle Editor
 - [ ] Animation Editor
 - [ ] Tab Grid Editor
