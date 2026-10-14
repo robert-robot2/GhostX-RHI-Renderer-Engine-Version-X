@@ -101,6 +101,9 @@ extern "C" {
         int   (*UIButtonClicked)(int ui, const char* widget); // 1 once per click, then 0 until the next one
         int   (*UIButtonDown)(int ui, const char* widget);    // 1 while the mouse is held on it
         int   (*UIGetMouse)(float* outXY2);                   // cursor in UIRect units, returns 1 if it is over the view
+        // ---- sky ----
+        float (*SkyGetTime)(void);                        // hours 0..24 (0 if the scene has no Sky Sphere)
+        void  (*SkySetTime)(float hours);
     } GhostGameAPI;
 
     // A game module must export:

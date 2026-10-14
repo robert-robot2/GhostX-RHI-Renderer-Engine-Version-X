@@ -10,6 +10,7 @@
 #include "../include/GhostRuntime.h"
 #include "../include/GhostGameModule.h"
 #include "../include/GhostUI.h"
+#include "../include/GhostMods.h"
 #include <string.h>
 // ---- Engine state ----
 static IGhostRHI* g_rhi = nullptr;
@@ -65,6 +66,8 @@ static bool  g_uiMouseInside = false;
 static GhostFont                g_font;
 static float                    g_uiRefW = 1920.0f;       // reference width of the main view (height is 1080)
 static std::string g_projectRoot;
+static float g_skyScroll[2] = { 0.0f, 0.0f };      // day / night layer scroll in degrees (play only)
+
 // Main view render size and where it sits inside the window (for mapping the mouse)
 static int   g_mainRW = 1280, g_mainRH = 720;
 static float g_fitX = 0.0f, g_fitY = 0.0f, g_fitW = 1280.0f, g_fitH = 720.0f;
@@ -95,7 +98,7 @@ static void SpawnCoords(int& sx, int& sy)
 static const float ICON_HALF_PX = 18.0f;
 static const float ICON_PICK_PX = ICON_HALF_PX + 4.0f;
 // the last 2 * GHOST_MAX_LIGHTS constant-buffer slots are reserved for light icons + arrows
-static const unsigned int MAX_SCENE_OBJECTS = GHOST_MAX_OBJECTS - 2 * GHOST_MAX_LIGHTS - 2 * GHOST_MAX_CAMERAS;
+static const unsigned int MAX_SCENE_OBJECTS = GHOST_MAX_OBJECTS - 2 * GHOST_MAX_LIGHTS - 2 * GHOST_MAX_CAMERAS - GHOST_MAX_MODS - 4;
 // worst case an object needs one draw per face
 static const unsigned int MAX_SCENE_OBJECT_COUNT = MAX_SCENE_OBJECTS / GHOST_MAX_FACES;
 // local-space bounds of each mesh (picking only)
@@ -375,6 +378,7 @@ static GhostVec3* EntityPosition(int id)
     for (GhostObject& o : g_scene.objects) if (o.id == id) return &o.position;
     for (GhostLight& l : g_scene.lights)  if (l.id == id) return &l.position;
     for (GhostCamera& c : g_scene.cameras) if (c.id == id) return &c.position;
+    for (GhostModEntity& m : g_scene.mods) if (m.id == id) return &m.position;
     return nullptr;
 }
 
@@ -399,6 +403,14 @@ static int PickAt(int sx, int sy)
         float dx = px - (float)sx, dy = py - (float)sy;
         float d2 = dx * dx + dy * dy;
         if (d2 <= bestD2) { bestD2 = d2; bestId = c.id; }
+    }
+    for (const GhostModEntity& m : g_scene.mods)
+    {
+        float px, py;
+        if (!WorldToScreen(m.position, px, py)) continue;
+        float dx = px - (float)sx, dy = py - (float)sy;
+        float d2 = dx * dx + dy * dy;
+        if (d2 <= bestD2) { bestD2 = d2; bestId = m.id; }
     }
     if (bestId) return bestId;
 
@@ -658,6 +670,7 @@ int GhostEngine_GetEntities(GhostEntityInfo* out, int maxCount)
     for (const GhostObject& o : g_scene.objects) { if (n >= maxCount) return n; out[n++] = { o.id, 0, o.meshId }; }
     for (const GhostLight& l : g_scene.lights) { if (n >= maxCount) return n; out[n++] = { l.id, 1, (int)l.type }; }
     for (const GhostCamera& c : g_scene.cameras) { if (n >= maxCount) return n; out[n++] = { c.id, 2, 0 }; }
+    for (const GhostModEntity& m : g_scene.mods) { if (n >= maxCount) return n; out[n++] = { m.id, 3, m.typeId }; }
     return n;
 }
 
@@ -668,6 +681,7 @@ int GhostEngine_GetEntityName(int id, char* buf, int bufSize)
     for (const GhostObject& o : g_scene.objects) if (o.id == id) name = &o.name;
     for (const GhostLight& l : g_scene.lights)  if (l.id == id) name = &l.name;
     for (const GhostCamera& c : g_scene.cameras) if (c.id == id) name = &c.name;
+    for (const GhostModEntity& m : g_scene.mods) if (m.id == id) name = &m.name;
     if (!name) { buf[0] = 0; return 0; }
     strncpy_s(buf, bufSize, name->c_str(), _TRUNCATE);
     return 1;
@@ -900,7 +914,25 @@ static void RenderViewport(int vp)
     GhostUpdateSceneCB(g_pipeline, &sceneCB);
 
     // ---- Draw scene objects (one draw per run of faces that share a material) ----
+    // ---- Sky: drawn first, everything else draws over it ----
     unsigned int slot = 0;
+    for (const GhostModEntity& m : g_scene.mods)
+    {
+        if (m.typeId != GHOST_MOD_SKY) continue;
+        GhostSkyDraw draws[3];
+        const int n = GhostSky_Build(m, g_scene.textures, g_skyScroll[0], g_skyScroll[1], draws);
+        for (int i = 0; i < n && slot < MAX_SCENE_OBJECTS; i++)
+        {
+            GhostObjectCB cb = {};
+            cb.view = view;
+            cb.proj = proj;
+            memcpy(cb.sky, draws[i].sky, sizeof cb.sky);
+            GhostUpdateObjectCB(g_pipeline, slot, &cb);
+            GhostDrawSky(g_rhi, g_pipeline, slot, (unsigned int)draws[i].textureId);
+            slot++;
+        }
+        break;                                       // one sky per scene
+    }
     for (const GhostObject& o : g_scene.objects)
     {
         if (!o.visible && g_playState != GhostPlayState::Editing) continue;   // hidden in game
@@ -961,6 +993,12 @@ static void RenderViewport(int vp)
             GhostVec3 fwd = AnglesToDir(c.yawDeg, c.pitchDeg);
             DrawIcon(slot, 4, c.position, fwd, kCamColor, state, view, proj);   // camera glyph
             DrawIcon(slot, 3, c.position, fwd, kCamColor, state, view, proj);   // direction arrow
+        }
+        static const float kModColor[3] = { 1.0f, 0.82f, 0.35f };
+        for (const GhostModEntity& m : g_scene.mods)
+        {
+            int state = (m.id == g_scene.selectedId) ? 2 : (m.id == g_hoverId ? 1 : 0);
+            DrawIcon(slot, 5, m.position, GhostVec3(0, 0, 1), kModColor, state, view, proj);   // cloud glyph
         }
     }
     // ---- 2D game UI: main view, while a game is running. Retained widgets first, then the game's immediate quads ----
@@ -1060,6 +1098,18 @@ void GhostEngine_Tick()
         }
         if (faulted) GhostEngine_Stop();
     }
+
+    if (g_playState == GhostPlayState::Playing)       // time of day and layer drift animate only while playing
+        for (GhostModEntity& m : g_scene.mods)
+            if (m.typeId == GHOST_MOD_SKY)
+            {
+                float ds, ns;
+                GhostSky_Speeds(m, ds, ns);
+                GhostSky_AdvanceTime(m, dt);
+                g_skyScroll[0] = fmodf(g_skyScroll[0] + ds * dt, 360.0f);
+                g_skyScroll[1] = fmodf(g_skyScroll[1] + ns * dt, 360.0f);
+            }
+
     // ---- Active camera -> working state (the fly code below keeps using g_eye / g_yaw / g_pitch) ----
     GhostCamera* cam = InputCamera();
     if (cam)
@@ -1515,7 +1565,7 @@ void GhostEngine_ClearScene()
     GhostEngine_Stop();
     g_scene.objects.clear();
     g_scene.lights.clear();
-    g_scene.cameras.clear();
+    g_scene.cameras.clear(); g_scene.mods.clear();
     g_scene.ambientColor[0] = g_scene.ambientColor[1] = g_scene.ambientColor[2] = 1.0f;
     g_scene.ambientIntensity = 0.15f;
     g_scene.nextId = 1;
@@ -1864,7 +1914,15 @@ static int Api_UIGetMouse(float* xy)
     if (xy) { xy[0] = g_uiMouseX; xy[1] = g_uiMouseY; }
     return g_uiMouseInside ? 1 : 0;
 }
-
+static float Api_SkyGetTime()
+{
+    for (const GhostModEntity& m : g_scene.mods) if (m.typeId == GHOST_MOD_SKY) return GhostSky_GetTime(m);
+    return 0.0f;
+}
+static void Api_SkySetTime(float h)
+{
+    for (GhostModEntity& m : g_scene.mods) if (m.typeId == GHOST_MOD_SKY) { GhostSky_SetTime(m, h); return; }
+}
 static void BuildGameApi()
 {
     GhostGameAPI& a = g_gameApi;
@@ -1890,6 +1948,7 @@ static void BuildGameApi()
     a.UILoad = Api_UILoad;  a.UIShow = Api_UIShow;  a.UISetText = Api_UISetText;  a.UISetProgress = Api_UISetProgress;
     a.UISetVisible = Api_UISetVisible;  a.UISetColor = Api_UISetColor;
     a.UIButtonClicked = Api_UIButtonClicked;  a.UIButtonDown = Api_UIButtonDown;  a.UIGetMouse = Api_UIGetMouse;
+    a.SkyGetTime = Api_SkyGetTime;  a.SkySetTime = Api_SkySetTime;
 }
 // ============================================================
 //  Exported: play mode
@@ -1908,7 +1967,7 @@ int GhostEngine_Play()
     g_scene.version++;                                           // the hierarchy shows the new (Main View)
     g_stepper.Reset();
     g_input.Reset();
-    g_playTime = 0.0;
+    g_playTime = 0.0; g_skyScroll[0] = g_skyScroll[1] = 0.0f;
     g_hudText.clear(); g_uiQuads.clear(); g_playMessage.clear(); g_playFault.clear();
     g_uiAssets.clear();
     g_uiMouseX = g_uiMouseY = -1.0f; g_uiMouseInside = false;
@@ -2100,4 +2159,110 @@ int GhostEngine_SetFont(int tex, int aw, int ah, float cw, float ch, float pad, 
     f.ready = true;
     g_font = f;
     return 1;
+}
+
+// ============================================================
+//  Exported: mods
+// ============================================================
+static GhostModEntity* FindMod(int id)
+{
+    for (GhostModEntity& m : g_scene.mods) if (m.id == id) return &m;
+    return nullptr;
+}
+
+int GhostEngine_GetModTypeCount() { return GHOST_MOD_COUNT; }
+
+int GhostEngine_GetModTypeName(int t, char* buf, int size)
+{
+    const GhostModType* ty = GhostMods_Type(t);
+    if (!ty || !buf || size <= 0) return 0;
+    CopyMsg(ty->name, buf, size);
+    return 1;
+}
+
+int GhostEngine_GetModParamCount(int t)
+{
+    const GhostModType* ty = GhostMods_Type(t);
+    return ty ? ty->paramCount : 0;
+}
+
+int GhostEngine_GetModParamInfo(int t, int i, GhostModParamInfo* out)
+{
+    const GhostModType* ty = GhostMods_Type(t);
+    if (!ty || !out || i < 0 || i >= ty->paramCount) return 0;
+    const GhostParamDesc& d = ty->params[i];
+    memset(out, 0, sizeof * out);
+    out->kind = d.kind;
+    out->mn = d.mn; out->mx = d.mx;
+    for (int k = 0; k < 3; k++) out->def[k] = d.def[k];
+    out->count = GhostParam_Count(d);
+    strncpy_s(out->name, sizeof out->name, d.name, _TRUNCATE);
+    strncpy_s(out->category, sizeof out->category, d.category, _TRUNCATE);
+    if (d.enums) strncpy_s(out->enums, sizeof out->enums, d.enums, _TRUNCATE);
+    return 1;
+}
+
+int GhostEngine_AddMod(int typeId, int sx, int sy)
+{
+    if (g_playState != GhostPlayState::Editing) return 0;
+    const GhostModType* ty = GhostMods_Type(typeId);
+    if (!ty) return 0;
+
+    int have = 0;
+    GhostModEntity* first = nullptr;
+    for (GhostModEntity& m : g_scene.mods) if (m.typeId == typeId) { if (!first) first = &m; have++; }
+    if (first && ty->maxPerScene > 0 && have >= ty->maxPerScene)
+    {
+        g_scene.selectedId = first->id;              // already there: select it instead
+        return 0;
+    }
+
+    SpawnCoords(sx, sy);
+    GhostModEntity* m = GhostScene_AddMod(g_scene, typeId);
+    if (!m) return 0;
+    GhostVec3 p = SpawnPoint(sx, sy);
+    p.y += 1.5f;
+    m->position = p;
+    g_scene.selectedId = m->id;
+    return m->id;
+}
+
+int GhostEngine_GetMod(int id, float* pos)
+{
+    GhostModEntity* m = FindMod(id);
+    if (!m) return -1;
+    if (pos) { pos[0] = m->position.x; pos[1] = m->position.y; pos[2] = m->position.z; }
+    return m->typeId;
+}
+
+void GhostEngine_SetModPosition(int id, const float* pos)
+{
+    GhostModEntity* m = FindMod(id);
+    if (m && pos) m->position = { pos[0], pos[1], pos[2] };
+}
+
+int GhostEngine_GetModParam(int id, int index, float* out3)
+{
+    GhostModEntity* m = FindMod(id);
+    const GhostModType* ty = m ? GhostMods_Type(m->typeId) : nullptr;
+    if (!ty || !out3 || index < 0 || index >= ty->paramCount) return 0;
+    const int off = GhostMods_ParamOffset(m->typeId, index), n = GhostParam_Count(ty->params[index]);
+    if (off < 0 || (size_t)(off + n) > m->values.size()) return 0;
+    for (int i = 0; i < 3; i++) out3[i] = i < n ? m->values[(size_t)(off + i)] : 0.0f;
+    return 1;
+}
+
+void GhostEngine_SetModParam(int id, int index, const float* in3)
+{
+    GhostModEntity* m = FindMod(id);
+    const GhostModType* ty = m ? GhostMods_Type(m->typeId) : nullptr;
+    if (!ty || !in3 || index < 0 || index >= ty->paramCount) return;
+    const GhostParamDesc& d = ty->params[index];
+    const int off = GhostMods_ParamOffset(m->typeId, index), n = GhostParam_Count(d);
+    if (off < 0 || (size_t)(off + n) > m->values.size()) return;
+
+    float v[3] = { in3[0], in3[1], in3[2] };
+    GhostMods_Clamp(m->typeId, index, v);
+    if (d.kind == GHOST_PARAM_TEXTURE && (int)v[0] >= (int)g_scene.textures.size()) v[0] = 0.0f;
+    for (int i = 0; i < n; i++) m->values[(size_t)(off + i)] = v[i];
 }

@@ -26,8 +26,9 @@ struct GhostObjectCB            // matches cbuffer MVPBuffer (VS) and ObjectBuff
     float     pad[3];           // pad[0] = selected tint (VS)
     float     uvParams[4];      // tilingU, tilingV, offsetU, offsetV
     float     mapParams[4];     // mode, rotation (radians), wrap, filter
+    float     sky[64];          // sky pass parameters (16 float4); zero for every other draw
 };
-static_assert(sizeof(GhostObjectCB) == 256, "GhostObjectCB layout must match the HLSL cbuffer");                             // 224 bytes, padded to 256 in the buffer
+static_assert(sizeof(GhostObjectCB) == 512, "GhostObjectCB layout must match the HLSL cbuffer");
 struct GhostGPULight                // matches struct Light in GhostPS.hlsl
 {
     float posRange[4];              // xyz position, w range
@@ -95,6 +96,7 @@ struct GhostPipeline
     unsigned int                 rtvIncrement = 0;
     ComPtr<ID3D12PipelineState>  blitPso;
     ComPtr<ID3D12PipelineState>  uiPso;
+    ComPtr<ID3D12PipelineState>  skyPso;
     ComPtr<ID3D12Resource>       uiVB;
     void* uiMapped = nullptr;
     bool                         rtvOverrideActive = false;
@@ -151,3 +153,5 @@ void GhostDrawBlit(IGhostRHI* rhi, GhostPipeline* pipeline, int surfaceId,
 // Draws the quad list into the current render target. scale = reference units -> pixels.
 void GhostDrawUI(IGhostRHI* rhi, GhostPipeline* pipeline, const std::vector<GhostUIQuad>& quads,
     unsigned int w, unsigned int h, float scale);
+
+void GhostDrawSky(IGhostRHI* rhi, GhostPipeline* pipeline, unsigned int slot, unsigned int textureIndex);

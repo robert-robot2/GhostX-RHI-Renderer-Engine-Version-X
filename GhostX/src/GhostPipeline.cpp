@@ -495,6 +495,34 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
     }
     D3D12_RANGE uiRange = { 0, 0 };
     p->uiVB->Map(0, &uiRange, &p->uiMapped);
+    // ---- Sky PSO: full-screen triangle, alpha blended, no depth ----
+    ComPtr<ID3DBlob> svs, sps;
+    if (CompileShaderFromFile(ShaderPath(L"GhostVS.hlsl").c_str(), "SkyVS", "vs_5_0", &svs) != GHOST_OK ||
+        CompileShaderFromFile(ShaderPath(L"GhostPS.hlsl").c_str(), "SkyPS", "ps_5_0", &sps) != GHOST_OK)
+    {
+        delete p; return GHOST_FAIL;
+    }
+
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC skyDesc = psoDesc;
+    skyDesc.VS = { svs->GetBufferPointer(), svs->GetBufferSize() };
+    skyDesc.PS = { sps->GetBufferPointer(), sps->GetBufferSize() };
+    skyDesc.InputLayout = { nullptr, 0 };
+    skyDesc.DepthStencilState.DepthEnable = FALSE;
+    skyDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+    D3D12_RENDER_TARGET_BLEND_DESC& sb = skyDesc.BlendState.RenderTarget[0];
+    sb.BlendEnable = TRUE;
+    sb.SrcBlend = D3D12_BLEND_SRC_ALPHA;
+    sb.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
+    sb.BlendOp = D3D12_BLEND_OP_ADD;
+    sb.SrcBlendAlpha = D3D12_BLEND_ONE;
+    sb.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
+    sb.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+    sb.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+
+    if (FAILED(device->CreateGraphicsPipelineState(&skyDesc, IID_PPV_ARGS(&p->skyPso))))
+    {
+        delete p; return GHOST_FAIL;
+    }
 
     D3D12_GRAPHICS_PIPELINE_STATE_DESC iconDesc = psoDesc;
     iconDesc.VS = { ivs->GetBufferPointer(), ivs->GetBufferSize() };
@@ -955,4 +983,30 @@ void GhostDrawUI(IGhostRHI* rhi, GhostPipeline* p, const std::vector<GhostUIQuad
         cmd->SetGraphicsRootDescriptorTable(2, srv);
         cmd->DrawInstanced(r.count, 1, r.first, 0);
     }
+}
+
+void GhostDrawSky(IGhostRHI* rhi, GhostPipeline* p, unsigned int slot, unsigned int textureIndex)
+{
+    if (slot >= GHOST_MAX_OBJECTS || !p->skyPso) return;
+    if (textureIndex >= p->textureCount) textureIndex = 0;
+    auto* cmd = rhi->GetCmdList();
+
+    ID3D12DescriptorHeap* heaps[] = { p->cbvHeap.Get() };
+    cmd->SetDescriptorHeaps(1, heaps);
+    cmd->SetPipelineState(p->skyPso.Get());
+    cmd->SetGraphicsRootSignature(p->rootSignature.Get());
+    cmd->SetGraphicsRootConstantBufferView(
+        0, p->constantBuffer->GetGPUVirtualAddress() + slot * GHOST_OBJECT_CB_STRIDE);
+    cmd->SetGraphicsRootConstantBufferView(1, p->sceneBuffer->GetGPUVirtualAddress());
+
+    D3D12_GPU_DESCRIPTOR_HANDLE srv = p->cbvHeap->GetGPUDescriptorHandleForHeapStart();
+    srv.ptr += (UINT64)textureIndex * p->srvIncrement;
+    cmd->SetGraphicsRootDescriptorTable(2, srv);
+
+    D3D12_CPU_DESCRIPTOR_HANDLE rtv = p->rtvOverrideActive ? p->rtvOverride : rhi->GetRTV();
+    D3D12_CPU_DESCRIPTOR_HANDLE dsv = GhostGetDSV(p, rhi->GetCurrentSurface());
+    cmd->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
+
+    cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    cmd->DrawInstanced(3, 1, 0, 0);
 }

@@ -119,11 +119,35 @@ struct GhostCamera
     GhostVec3   orbitPos = { 0, 0, 0 };           // runtime only, not saved
     bool        orbitValid = false;               // runtime only
 };
+
+// ---- Mods: data-driven entity types (the first one is the Sky Sphere) ----
+enum GhostParamKind { GHOST_PARAM_FLOAT = 0, GHOST_PARAM_BOOL, GHOST_PARAM_ENUM, GHOST_PARAM_COLOR, GHOST_PARAM_TEXTURE };
+constexpr unsigned int GHOST_MAX_MODS = 8;
+
+struct GhostParamDesc
+{
+    const char* name;            // also the key in scene files, so keep it stable
+    const char* category;
+    int         kind;            // GhostParamKind
+    float       def[3];          // default (colors use all three)
+    float       mn, mx;          // range for floats (ignored when mx <= mn)
+    const char* enums;           // "A|B|C" for GHOST_PARAM_ENUM
+};
+
+struct GhostModEntity
+{
+    int         id = 0;
+    int         typeId = 0;
+    std::string name;
+    GhostVec3   position = { 0, 3, 0 };       // only used for the viewport icon
+    std::vector<float> values;                // all parameters, packed (colors take 3 floats)
+};
 struct GhostScene
 {
     std::vector<GhostObject> objects;
     std::vector<GhostLight>  lights;
     std::vector<GhostCamera> cameras;
+    std::vector<GhostModEntity> mods;
     int activeCameraId = 0;              // the camera the main view renders through
     int gameStartCameraId = 0;           // 0 = Play keeps the current main view camera
     std::vector<GhostTextureInfo> textures;     // id 0 = White, id 1 = Checkerboard, then imports
@@ -197,6 +221,8 @@ inline bool GhostScene_Remove(GhostScene& s, int id)
             if (s.gameStartCameraId == id) s.gameStartCameraId = 0;
             goto removed;
         }
+    for (size_t i = 0; i < s.mods.size(); i++)
+        if (s.mods[i].id == id) { s.mods.erase(s.mods.begin() + i); goto removed; }
     return false;
 removed:
     if (s.selectedId == id) s.selectedId = 0;

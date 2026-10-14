@@ -153,3 +153,21 @@ UIPSInput UIVS(UIVSInput i)
     o.color = i.color;
     return o;
 }
+// ---------------- Sky: one full-screen triangle, the view direction per pixel ----------------
+struct SkyPSInput
+{
+    float4 pos : SV_POSITION;
+    float3 dir : TEXCOORD0;
+};
+
+SkyPSInput SkyVS(uint vid : SV_VertexID)
+{
+    float2 c = float2((vid << 1) & 2, vid & 2);        // (0,0) (2,0) (0,2)
+    float2 ndc = c * 2.0f - 1.0f;                        // (-1,-1) (3,-1) (-1,3)
+
+    float3 v = float3(ndc.x / proj[0][0], ndc.y / proj[1][1], 1.0f);
+    SkyPSInput o;
+    o.pos = float4(ndc, 0.5f, 1.0f);
+    o.dir = view[0].xyz * v.x + view[1].xyz * v.y + view[2].xyz * v.z;   // view rows are the camera axes
+    return o;
+}

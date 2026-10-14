@@ -33,6 +33,7 @@ cbuffer ObjectBuffer : register(b0)       // same layout as MVPBuffer in GhostVS
     float3 objPad;
     float4 uvParams;                      // tilingU, tilingV, offsetU, offsetV
     float4 mapParams;                     // mode, rotation (radians), wrap, filter
+    float4 sky[16];                       // sky pass parameters (see GhostSky_Build)
 };
 
 struct PSInput
@@ -242,6 +243,14 @@ float4 IconPS(IconPSInput input) : SV_TARGET
         bool reels = length(p - float2(-0.55f, 0.55f)) < 0.27f || length(p - float2(-0.05f, 0.55f)) < 0.27f;
         inside = body || lens || reels;
     }
+    else if (type == 5)               // sky: a cloud
+    {
+        bool c1 = length(p - float2(-0.35f, -0.05f)) < 0.38f;
+        bool c2 = length(p - float2(0.05f, 0.20f)) < 0.50f;
+        bool c3 = length(p - float2(0.50f, -0.05f)) < 0.33f;
+        bool c4 = abs(p.x - 0.08f) < 0.72f && p.y > -0.38f && p.y < 0.0f;
+        inside = c1 || c2 || c3 || c4;
+    }
     else                              // arrow: u = p.x along the arrow, v = p.y across
     {
         bool shaft = p.x < 0.3f && abs(p.y) < 0.15f;
@@ -285,4 +294,103 @@ float4 UIPS(UIPSInput input) : SV_TARGET
     // Vertex colors are already display colors. Text atlases are white, so only their alpha matters.
     float4 t = gTexture.Sample(sLinClamp, input.uv);
     return float4(pow(saturate(t.rgb), 1.0f / 2.2f) * input.color.rgb, t.a * input.color.a);
+}
+
+// ---------------- Sky ----------------
+struct SkyPSInput
+{
+    float4 pos : SV_POSITION;
+    float3 dir : TEXCOORD0;
+};
+
+// Horizontal cross as seen from inside:   .   Top  .   .
+//                                       Left Front Right Back      Front = +Z (where the camera starts)
+//                                         .  Bottom .   .
+float2 SkyCrossUV(float3 d, out float2 cell)
+{
+    float3 a = abs(d);
+    float2 st;
+    if (a.x >= a.y && a.x >= a.z)
+    {
+        if (d.x > 0.0f) { cell = float2(2, 1); st = float2(-d.z, d.y) / a.x; }
+        else { cell = float2(0, 1); st = float2(d.z, d.y) / a.x; }
+    }
+    else if (a.y >= a.z)
+    {
+        if (d.y > 0.0f) { cell = float2(1, 0); st = float2(d.x, -d.z) / a.y; }
+        else { cell = float2(1, 2); st = float2(d.x, d.z) / a.y; }
+    }
+    else
+    {
+        if (d.z > 0.0f) { cell = float2(1, 1); st = float2(d.x, d.y) / a.z; }
+        else { cell = float2(3, 1); st = float2(-d.x, d.y) / a.z; }
+    }
+    return float2(st.x * 0.5f + 0.5f, 0.5f - st.y * 0.5f);
+}
+
+float4 SkyPS(SkyPSInput input) : SV_TARGET
+{
+    float3 d = normalize(input.dir);
+    float  dd = max(length(ddx(d)), length(ddy(d)));          // angular size of a pixel, for the mip level
+
+    float hh = sky[1].w;
+    float gb = max(sky[3].w, 0.001f);
+    float groundAmt = 1.0f - smoothstep(hh - gb, hh, d.y);
+
+    if (sky[12].x < 0.5f)
+    {
+        // ---- gradient, dusk band, sun, moon, ground ----
+        float t = saturate((d.y - hh) / max(sky[2].w, 0.01f));
+        t = pow(t, max(sky[7].w, 0.05f));
+        float3 col = lerp(sky[2].rgb, sky[1].rgb, t);
+
+        float3 sh = float3(sky[0].x, 0.0f, sky[0].z);
+        float3 dh = float3(d.x, 0.0f, d.z);
+        float shl = length(sh), dhl = length(dh);
+        float facing = (shl > 1e-4f && dhl > 1e-4f) ? 0.5f + 0.5f * dot(sh / shl, dh / dhl) : 0.5f;
+        float band = 1.0f - saturate(max(d.y, 0.0f) / 0.45f);
+        col = lerp(col, sky[4].rgb, saturate(sky[4].w * band * band * (0.35f + 0.65f * facing)));
+
+        float sd = dot(d, sky[0].xyz);
+        float sunDisc = smoothstep(0.0f, 0.08f, (sd - sky[5].w) / max(1.0f - sky[5].w, 1e-6f));
+        float glow = pow(saturate(sd), sky[8].y) * sky[8].x;
+        col += sky[5].rgb * (sunDisc * sky[8].z + glow);
+
+        float md = dot(d, sky[6].xyz);
+        float moonDisc = smoothstep(0.0f, 0.1f, (md - sky[6].w) / max(1.0f - sky[6].w, 1e-6f));
+        col += sky[7].rgb * moonDisc;
+
+        col = lerp(col, sky[3].rgb, groundAmt);
+        return float4(saturate(col * sky[8].w), 1.0f);
+    }
+
+    // ---- a texture layer: black becomes transparent ----
+    float3 q = d;
+    if (sky[10].z > 0.5f) q.x = -q.x;                          // flip horizontal
+    float cs = cos(sky[10].y), sn = sin(sky[10].y);
+    q = float3(cs * q.x - sn * q.z, q.y, sn * q.x + cs * q.z); // rotate around Y
+
+    float texW = sky[11].z, texH = sky[11].w;
+    float3 lin;
+    if (sky[10].x < 0.5f)                                      // cube cross
+    {
+        float2 cell;
+        float2 f = SkyCrossUV(q, cell);
+        float cw = texW * 0.25f, ch = texH / 3.0f;
+        float lod = log2(max(dd * 0.75f * cw, 1.0f));
+        float2 inset = min(0.5f * exp2(lod) / float2(cw, ch), 0.49f);   // keeps filtering inside the face
+        float2 uv = (cell + clamp(f, inset, 1.0f - inset)) / float2(4.0f, 3.0f);
+        lin = gTexture.SampleLevel(sLinClamp, uv, lod).rgb;
+    }
+    else                                                       // equirectangular
+    {
+        float2 uv = float2(atan2(q.x, q.z) / 6.2831853f + 0.5f, acos(clamp(q.y, -1.0f, 1.0f)) / 3.14159265f);
+        float lod = log2(max(dd * texW / 6.2831853f, 1.0f));
+        lin = gTexture.SampleLevel(sLinWrap, uv, lod).rgb;
+    }
+
+    float3 enc = pow(saturate(lin), 1.0f / 2.2f);              // the target holds display colors
+    float m = max(enc.r, max(enc.g, enc.b));
+    float mask = lerp(1.0f, smoothstep(sky[11].x, sky[11].x + max(sky[11].y, 1e-4f), m), sky[10].w);
+    return float4(enc * sky[9].rgb, sky[9].w * mask * (1.0f - groundAmt));
 }

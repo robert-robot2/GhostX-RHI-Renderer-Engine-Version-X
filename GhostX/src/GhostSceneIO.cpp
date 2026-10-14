@@ -4,6 +4,7 @@
 #include "../include/GhostSceneIO.h"
 #include "../include/GhostImage.h"
 #include "../include/json.hpp"
+#include "../include/GhostMods.h"
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -195,7 +196,36 @@ bool GhostScene_Save(const GhostScene& s, const std::string& root, const std::st
             cams.push_back(jc);
         }
         j["cameras"] = cams;
-
+        json mods = json::array();
+        for (const GhostModEntity& m : s.mods)
+        {
+            const GhostModType* t = GhostMods_Type(m.typeId);
+            if (!t) continue;
+            json jm;
+            jm["id"] = m.id;
+            jm["type"] = t->saveName;
+            jm["name"] = m.name;
+            jm["position"] = V3(m.position);
+            json pr = json::object();
+            for (int p = 0; p < t->paramCount; p++)
+            {
+                const GhostParamDesc& d = t->params[p];
+                const int off = GhostMods_ParamOffset(m.typeId, p), n = GhostParam_Count(d);
+                if (off < 0 || (size_t)(off + n) > m.values.size()) continue;
+                if (d.kind == GHOST_PARAM_COLOR)
+                    pr[d.name] = json::array({ m.values[(size_t)off], m.values[(size_t)off + 1], m.values[(size_t)off + 2] });
+                else if (d.kind == GHOST_PARAM_TEXTURE)
+                {
+                    int tex = (int)(m.values[(size_t)off] + 0.5f);
+                    if (tex >= GHOST_FIRST_USER_TEXTURE && !saved.count(tex)) tex = 0;
+                    pr[d.name] = tex;
+                }
+                else pr[d.name] = m.values[(size_t)off];
+            }
+            jm["params"] = pr;
+            mods.push_back(jm);
+        }
+        j["mods"] = mods;
         // Write to a temp file first, so a failed save never destroys the old one
         fs::path out(GhostUtf8ToWide(file));
         if (out.has_parent_path()) fs::create_directories(out.parent_path());
@@ -269,7 +299,7 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
 
         // ---- ids: keep the saved ones, hand out new ones for missing or duplicate ids ----
         int maxId = 0;
-        for (const char* key : { "objects", "lights", "cameras" })
+        for (const char* key : { "objects", "lights", "cameras", "mods" })
             if (j.contains(key) && j[key].is_array())
                 for (const json& it : j[key]) maxId = (std::max)(maxId, it.value("id", 0));
         std::set<int> used;
@@ -281,7 +311,7 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
             };
 
         // ---- reset and fill ----
-        s.objects.clear(); s.lights.clear(); s.cameras.clear();
+        s.objects.clear(); s.lights.clear(); s.cameras.clear(); s.mods.clear();
         s.selectedId = 0; s.selectedFace = -1; s.activeCameraId = 0;
         s.ambientColor[0] = s.ambientColor[1] = s.ambientColor[2] = 1.0f;
         s.ambientIntensity = 0.15f;
@@ -369,6 +399,54 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
                 c.smoothing = jc.value("smoothing", 10.0f);
                 s.cameras.push_back(c);
             }
+
+        if (j.contains("mods") && j["mods"].is_array())
+            for (const json& jm : j["mods"])
+            {
+                const int typeId = GhostMods_FindByName(jm.value("type", std::string()).c_str());
+                const GhostModType* ty = GhostMods_Type(typeId);
+                if (!ty) { warn += "Skipped an unknown mod type.\n"; continue; }
+
+                int have = 0;
+                for (const GhostModEntity& x : s.mods) if (x.typeId == typeId) have++;
+                if (s.mods.size() >= GHOST_MAX_MODS || (ty->maxPerScene > 0 && have >= ty->maxPerScene))
+                {
+                    warn += std::string("Too many ") + ty->name + " entities: the rest were skipped.\n"; continue;
+                }
+
+                GhostModEntity m;
+                m.id = takeId(jm.value("id", 0));
+                m.typeId = typeId;
+                m.name = jm.value("name", std::string(ty->name));
+                ReadV3(jm, "position", m.position);
+                GhostMods_Defaults(typeId, m.values);
+
+                auto pj = jm.find("params");
+                if (pj != jm.end() && pj->is_object())
+                    for (int p = 0; p < ty->paramCount; p++)
+                    {
+                        const GhostParamDesc& d = ty->params[p];
+                        auto it = pj->find(d.name);
+                        if (it == pj->end()) continue;
+                        const size_t off = (size_t)GhostMods_ParamOffset(typeId, p);
+
+                        if (d.kind == GHOST_PARAM_COLOR)
+                        {
+                            if (it->is_array())
+                                for (size_t k = 0; k < 3 && k < it->size(); k++)
+                                    if ((*it)[k].is_number()) m.values[off + k] = (*it)[k].get<float>();
+                        }
+                        else if (it->is_boolean()) m.values[off] = it->get<bool>() ? 1.0f : 0.0f;
+                        else if (it->is_number())
+                        {
+                            float x = it->get<float>();
+                            if (d.kind == GHOST_PARAM_TEXTURE) x = (float)mapTex((int)(x + 0.5f));
+                            m.values[off] = x;
+                        }
+                        GhostMods_Clamp(typeId, p, &m.values[off]);
+                    }
+                s.mods.push_back(m);
+            }
         s.nextId = (std::max)(s.nextId, maxId + 1);
 
         if (s.cameras.empty()) GhostScene_AddCamera(s);          // there is always at least one camera
@@ -434,6 +512,11 @@ unsigned int GhostScene_Hash(const GhostScene& s)
             if (c.mode != 1) V(c.position);         // an orbit camera's position is computed, so it isn't an edit either
             F(c.yawDeg); F(c.pitchDeg);
         }
+    }
+    for (const GhostModEntity& m : s.mods)
+    {
+        I(m.id); I(m.typeId); S(m.name); V(m.position);
+        for (float x : m.values) F(x);
     }
     return h;
 }

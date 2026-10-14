@@ -27,7 +27,7 @@ struct GhostLightInfo
     float width, height;
 };
 
-struct GhostEntityInfo { int id; int kind; int subtype; };   // kind: 0 object, 1 light, 2 camera.
+struct GhostEntityInfo { int id; int kind; int subtype; };   // kind: 0 object, 1 light, 2 camera, 3 mod
 struct GhostMaterialInfo
 {
     int   textureId, mapMode, wrap, filter;
@@ -54,6 +54,16 @@ struct GhostGameplayInfo
     int   collider;
     float csx, csy, csz;        // collider size (multiplied by the object's scale)
     int   visible;
+};
+struct GhostModParamInfo
+{
+    int   kind;                 // 0 float, 1 bool, 2 enum, 3 color, 4 texture
+    float mn, mx;
+    float def[3];
+    int   count;                // floats used: 3 for colors, else 1
+    char  name[48];
+    char  category[32];
+    char  enums[192];           // "A|B|C"
 };
 extern "C"
 {
@@ -157,4 +167,14 @@ extern "C"
     // Registers the baked font atlas (texture must already exist). advances = 95 floats, ASCII 32..126. Returns 1 on success.
     GHOST_API int GhostEngine_SetFont(int textureId, int atlasW, int atlasH, float cellW, float cellH,
         float pad, float lineHeight, const float* advances);
+    // ---- Mods ----
+    GHOST_API int  GhostEngine_GetModTypeCount();
+    GHOST_API int  GhostEngine_GetModTypeName(int typeId, char* buf, int bufSize);
+    GHOST_API int  GhostEngine_GetModParamCount(int typeId);
+    GHOST_API int  GhostEngine_GetModParamInfo(int typeId, int index, GhostModParamInfo* out);
+    GHOST_API int  GhostEngine_AddMod(int typeId, int screenX, int screenY);   // 0 = failed; at the per-type limit it selects the existing one
+    GHOST_API int  GhostEngine_GetMod(int id, float* outPos3);                 // returns the type id, -1 if not a mod
+    GHOST_API void GhostEngine_SetModPosition(int id, const float* pos3);
+    GHOST_API int  GhostEngine_GetModParam(int id, int index, float* out3);
+    GHOST_API void GhostEngine_SetModParam(int id, int index, const float* in3);
 }

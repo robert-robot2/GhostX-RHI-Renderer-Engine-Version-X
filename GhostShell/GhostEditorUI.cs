@@ -760,6 +760,7 @@ namespace GhostShell
         private static readonly Color Fg = Color.FromArgb(0xF2, 0xF2, 0xF2);
         private static readonly Color Accent = Color.FromArgb(0xFF, 0xC8, 0x6E);
         private static readonly Color CamColor = Color.FromArgb(0x7F, 0xD4, 0xFF);
+        private static readonly Color ModColor = Color.FromArgb(0xC8, 0xA0, 0xFF);
 
         private sealed class PaletteItem
         {
@@ -846,7 +847,7 @@ namespace GhostShell
                 BackColor = Bg2,
                 ForeColor = Fg,
             };
-            _category.Items.AddRange(new object[] { "Lighting", "Primitives", "Cameras" });
+            _category.Items.AddRange(new object[] { "Lighting", "Primitives", "Cameras", "Mods" });
             _category.SelectedIndexChanged += (s, e) => FillPalette();
             // add order matters for docking: Fill first, then Bottom, then Top
             _left.Controls.Add(_palette);
@@ -1177,28 +1178,38 @@ namespace GhostShell
         private void FillPalette()
         {
             _palette.Items.Clear();
-            if (_category.SelectedIndex == 0)
+            switch (_category.SelectedIndex)
             {
-                Add("Directional Light", "light", 0);
-                Add("Point Light", "light", 1);
-                Add("Rect Area Light", "light", 2);
-            }
-            else if (_category.SelectedIndex == 1)
-            {
-                Add("Cube", "obj", 0);
-                Add("Triangle", "obj", 1);
-                Add("Ship", "obj", 2);
-                Add("Square", "obj", 3);
-            }
-            else
-            {
-                Add("Free Camera", "cam", 0);
-                Add("Orbit Camera", "cam", 1);
+                case 0:
+                    Add("Directional Light", "light", 0);
+                    Add("Point Light", "light", 1);
+                    Add("Rect Area Light", "light", 2);
+                    break;
+                case 1:
+                    Add("Cube", "obj", 0);
+                    Add("Triangle", "obj", 1);
+                    Add("Ship", "obj", 2);
+                    Add("Square", "obj", 3);
+                    break;
+                case 2:
+                    Add("Free Camera", "cam", 0);
+                    Add("Orbit Camera", "cam", 1);
+                    break;
+                default:
+                    {
+                        int n = GhostEngine.GhostEngine_GetModTypeCount();       // every registered mod type
+                        for (int i = 0; i < n; i++)
+                        {
+                            var sb = new StringBuilder(64);
+                            GhostEngine.GhostEngine_GetModTypeName(i, sb, sb.Capacity);
+                            Add(sb.ToString(), "mod", i);
+                        }
+                        break;
+                    }
             }
             void Add(string text, string kind, int type) =>
                 _palette.Items.Add(new PaletteItem { Text = text, Kind = kind, Type = type });
         }
-
         private void OnPaletteMouseMove(object? sender, MouseEventArgs e)
         {
             if (e.Button != MouseButtons.Left || _dragIndex < 0) return;
@@ -1221,8 +1232,9 @@ namespace GhostShell
         private void Spawn(string kind, int type, int x, int y)
         {
             int id = kind == "light" ? GhostEngine.GhostEngine_AddLight(type, x, y)
-                                      : kind == "cam" ? GhostEngine.GhostEngine_AddCamera(type, x, y)
-                                     : GhostEngine.GhostEngine_AddObject(type, x, y);
+         : kind == "cam" ? GhostEngine.GhostEngine_AddCamera(type, x, y)
+         : kind == "mod" ? GhostEngine.GhostEngine_AddMod(type, x, y)
+                           : GhostEngine.GhostEngine_AddObject(type, x, y);
             if (id == 0) System.Media.SystemSounds.Beep.Play();   // scene is full (or 4 cameras already)
             else if (kind == "cam") _vp.Open(id);
             Sync();
@@ -1337,7 +1349,7 @@ namespace GhostShell
                 var node = new TreeNode(text)
                 {
                     Tag = buf[i].id,
-                    ForeColor = buf[i].kind == 1 ? Accent : (buf[i].kind == 2 ? CamColor : Fg),
+                    ForeColor = buf[i].kind == 1 ? Accent : (buf[i].kind == 2 ? CamColor : (buf[i].kind == 3 ? ModColor : Fg)),
                 };
                 _tree.Nodes.Add(node);
                 _nodes[buf[i].id] = node;
@@ -1382,6 +1394,8 @@ namespace GhostShell
                     var c = new GhostCameraInfo();
                     if (GhostEngine.GhostEngine_GetCamera(id, ref c) != 0)
                         proxy = c.mode == 1 ? new OrbitCameraProxy(id) : new CameraProxy(id);
+                    else if (GhostModProxy.Exists(id))
+                        proxy = new GhostModProxy(id);
                 }
             }
             _grid.SelectedObject = proxy;
@@ -1401,6 +1415,7 @@ namespace GhostShell
             if (GhostEngine.GhostEngine_GetLight(id, ref l) != 0) return l;
             var c = new GhostCameraInfo();
             if (GhostEngine.GhostEngine_GetCamera(id, ref c) != 0) return c;
+            if (GhostModProxy.Exists(id)) return GhostMods.Signature(id);
             return null;
         }
     }

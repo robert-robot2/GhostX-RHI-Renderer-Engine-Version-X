@@ -57,6 +57,18 @@ namespace GhostShell
         public float csx, csy, csz;
         public int visible;
     }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GhostModParamInfo
+    {
+        public int kind;
+        public float mn, mx;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 3)] public float[] def;
+        public int count;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 48)] public byte[] name;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 32)] public byte[] category;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 192)] public byte[] enums;
+    }
     internal static class GhostEngine
     {
         private const string DllName = "GhostX.dll";
@@ -230,6 +242,25 @@ namespace GhostShell
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern int GhostEngine_SetFont(int textureId, int atlasW, int atlasH, float cellW, float cellH,
                                              float pad, float lineHeight, [In] float[] advances);
+        // ---- Mods ----
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetModTypeCount();
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+        public static extern int GhostEngine_GetModTypeName(int typeId, StringBuilder buf, int bufSize);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetModParamCount(int typeId);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetModParamInfo(int typeId, int index, out GhostModParamInfo info);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_AddMod(int typeId, int screenX, int screenY);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetMod(int id, [Out] float[] pos3);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetModPosition(int id, [In] float[] pos3);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetModParam(int id, int index, [Out] float[] out3);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetModParam(int id, int index, [In] float[] in3);
 
     }
 }
