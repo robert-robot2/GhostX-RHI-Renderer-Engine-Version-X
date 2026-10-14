@@ -121,14 +121,14 @@ Exports for objects, lights, cameras, materials, textures, viewports, mouse inpu
 - [x] Phase 3: Dockable editor, live camera viewports, per-camera resolution
 - [x] Phase 4: Project Save/Load/ Load in VS/ Load Game Temple/Basic UI/Play Mode Only
 - [x] Phase 5: UI Editor Designer
-- [ ] Phase : Publish Release as standalone Game
-- [ ] Phase : SkySphere
-- [ ] Phase : Audio
+- [ ] Phase 6: SkySphere
+- [ ] Phase 7: Publish Release as Standalone Game
 - [ ] Phase : Mesh import, textures, normal/specular maps, shadows, Z-up support, PBR materials
 - [ ] Phase : All camera types and features
 - [ ] Phase : Antialiasing and options menu
 - [ ] Phase : MetaHuman support
 - [ ] Phase : Tile map support
+- [ ] Phase : Audio 
 
 ## Rendering Hardware Interface (RHI)
 
