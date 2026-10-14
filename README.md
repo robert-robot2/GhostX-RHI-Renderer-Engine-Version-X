@@ -11,6 +11,7 @@
 
 <img width="1920" height="1080" alt="Screenshot 2026-10-11 213043" src="https://github.com/user-attachments/assets/88808691-55d3-4d33-8c7a-67f18403989c" />
 <img width="1920" height="1080" alt="Screenshot 2026-10-13 022109" src="https://github.com/user-attachments/assets/5eae52c7-5924-4e51-b141-df4295c34245" />
+<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/541c4975-bb92-4538-9c3c-0df61e4e67e1" />
 
 
 </div>
@@ -38,6 +39,7 @@ GhostX is a custom game engine built on a **native C++ DirectX 12 renderer (RHI-
 - **Orbit Camera**
 - **Phase 5A: Text and the 2D layer**
 - **Phase 5B: Widgets, .ghostui files and the runtime**
+- **Phase 5C: UI Designer**
 
 ## Editor at a glance
 
@@ -118,7 +120,7 @@ Exports for objects, lights, cameras, materials, textures, viewports, mouse inpu
 - [x] Phase 2: Textures and materials, Free Camera entities
 - [x] Phase 3: Dockable editor, live camera viewports, per-camera resolution
 - [x] Phase 4: Project Save/Load/ Load in VS/ Load Game Temple/Basic UI/Play Mode Only
-- [x] Phase 5: Pending UI Editor
+- [x] Phase 5: UI Editor Designer
 - [ ] Phase : Publish Release as standalone Game
 - [ ] Phase : SkySphere
 - [ ] Phase : Audio
@@ -140,7 +142,7 @@ Exports for objects, lights, cameras, materials, textures, viewports, mouse inpu
 
 ## Future Editor Tools
 
-- [ ] UI panel editor pending.. Phase 5.
+- [x] UI panel editor Phase 5.
 - [ ] Particle editor
 - [ ] Animation editor
 
