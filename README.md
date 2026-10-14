@@ -119,7 +119,7 @@ Exports for objects, lights, cameras, materials, textures, viewports, mouse inpu
 - [x] Phase 1: Lighting, viewport icons, click/drag, editor panels
 - [x] Phase 2: Textures and materials, Free Camera entities
 - [x] Phase 3: Dockable editor, live camera viewports, per-camera resolution
-- [x] Phase 4: Project Save/Load/ Load in VS/ Load Game Temple/Basic UI/Play Mode Only
+- [x] Phase 4: Project Save/Load/ Load in VS/ Load Game Template/ Basic UI/Play Mode Only
 - [x] Phase 5: UI Editor Designer
 - [ ] Phase 6: SkySphere
 - [ ] Phase 7: Publish Release as Standalone Game
