@@ -5,7 +5,7 @@
 #include <string>
 #include <string.h>
 
-enum GhostMeshId { GHOST_MESH_CUBE = 0, GHOST_MESH_TRIANGLE, GHOST_MESH_SHIP, GHOST_MESH_SQUARE, GHOST_MESH_COUNT };
+enum GhostMeshId { GHOST_MESH_CUBE = 0, GHOST_MESH_TRIANGLE, GHOST_MESH_SHIP, GHOST_MESH_SQUARE, GHOST_MESH_QUAD, GHOST_MESH_COUNT };
 enum GhostRole {
     GHOST_ROLE_STATIC = 0, GHOST_ROLE_PLAYER, GHOST_ROLE_ENEMY, GHOST_ROLE_COIN,
     GHOST_ROLE_BLOCK, GHOST_ROLE_GOAL, GHOST_ROLE_CUSTOM, GHOST_ROLE_COUNT
@@ -39,7 +39,7 @@ struct GhostFaceDef { const char* name; unsigned int firstIndex, indexCount; };
 
 inline int GhostMesh_FaceCount(int meshId)
 {
-    switch (meshId) { case GHOST_MESH_TRIANGLE: return 1; default: return 6; }   // cube and ship: 6
+      switch (meshId) { case GHOST_MESH_TRIANGLE: case GHOST_MESH_QUAD: return 1; default: return 6; }
 }
 
 inline const GhostFaceDef& GhostMesh_Face(int meshId, int face)
@@ -48,12 +48,16 @@ inline const GhostFaceDef& GhostMesh_Face(int meshId, int face)
         { "Front", 0, 6 }, { "Back", 6, 6 }, { "Top", 12, 6 },
         { "Bottom", 18, 6 }, { "Left", 24, 6 }, { "Right", 30, 6 } };
     static const GhostFaceDef tri[1] = { { "Face", 0, 3 } };
+    static const GhostFaceDef quad[1] = { { "Face", 0, 6 } };
     static const GhostFaceDef ship[6] = {      // one triangle each; names are approximate
         { "Hull Right", 0, 3 }, { "Hull Left", 3, 3 }, { "Hull Rear", 6, 3 },
         { "Hull Bottom", 9, 3 }, { "Wing Right", 12, 3 }, { "Wing Left", 15, 3 } };
 
     if (face < 0 || face >= GhostMesh_FaceCount(meshId)) face = 0;
-    switch (meshId) { case GHOST_MESH_TRIANGLE: return tri[face]; case GHOST_MESH_SHIP: return ship[face]; default: return cube[face]; }
+    switch (meshId) {
+    case GHOST_MESH_TRIANGLE: return tri[face]; case GHOST_MESH_QUAD: return quad[face];
+    case GHOST_MESH_SHIP: return ship[face]; default: return cube[face];
+    }
 }
 
 
@@ -64,7 +68,29 @@ struct GhostTextureInfo
     unsigned int width = 0, height = 0;
     std::string  path;             // absolute UTF-8 source file ("" for built-ins)
 };
+struct GhostSprite
+{
+    int   textureId = 0;           // the sheet (0 = white)
+    int   source = 0;              // 0 = single image, 1 = sprite sheet
+    int   cols = 1, rows = 1;      // used when source = 1
+    int   frame = 0;               // shown when no animation is assigned (row-major, 0 = top-left)
+    bool  flipX = false;
+    bool  billboard = true;        // always faces the camera (Y axis only)
+    bool  unlit = false;
+    bool  alphaClip = true;        // transparent pixels are discarded
+    bool  pixelArt = true;         // point filter
+    bool  playing = true;
+    float tint[3] = { 1, 1, 1 };
+    float animSpeed = 1.0f;
+    std::string anim;              // stored path of a .ghostanim ("" = none)
+    std::string clip;              // current clip ("" = the animation's first clip)
 
+    // runtime only (not saved, not hashed)
+    int   animId = -1;
+    bool  animResolved = false;
+    float animTime = 0.0f;
+    int   curFrame = 0;
+};
 struct GhostObject
 {
     int       id = 0;
@@ -79,6 +105,7 @@ struct GhostObject
     bool        collider = false;
     GhostVec3   colliderSize = { 1, 1, 1 };   // world size = colliderSize * scale
     bool        visible = true;               // false = hidden while playing
+    GhostSprite sprite;                       // only used when meshId == GHOST_MESH_QUAD
     bool      useVertexColor = false;
 };
 // The tag the game module searches by: the role's name, or the custom text
@@ -163,15 +190,15 @@ struct GhostScene
 inline GhostObject* GhostScene_AddObject(GhostScene& s, int meshId)
 {
     if (meshId < 0 || meshId >= GHOST_MESH_COUNT) return nullptr;
-    static const char* names[GHOST_MESH_COUNT] = { "Cube", "Triangle", "Ship", "Square" };
+    static const char* names[GHOST_MESH_COUNT] = { "Cube", "Triangle", "Ship", "Square", "Sprite" };
     static const GhostVec3 defScale[GHOST_MESH_COUNT] =
-    { { 1, 1, 1 }, { 1, 1, 1 }, { 0.1f, 0.1f, 0.1f }, { 1, 1, 0.25f } };    // ship mesh is ~10 units long; squares are flat
+    { { 1, 1, 1 },{ 1, 1, 1 },{ 0.1f, 0.1f, 0.1f },{ 1, 1, 0.25f },{ 1, 1, 1 } };
 
     GhostObject o;
     o.id = s.nextId++;
     o.meshId = meshId;
     o.scale = defScale[meshId];
-    if (meshId == GHOST_MESH_SQUARE || meshId == GHOST_MESH_CUBE) o.collider = true;
+    if (meshId == GHOST_MESH_SQUARE || meshId == GHOST_MESH_CUBE || meshId == GHOST_MESH_QUAD) o.collider = true;
     o.name = std::string(names[meshId]) + " " + std::to_string(o.id);
     s.objects.push_back(o);
     s.version++;
@@ -230,11 +257,20 @@ removed:
     return true;
 }
 
-inline GhostMat4 GhostObjectModel(const GhostObject& o)
+// Y rotation (degrees) that turns a quad's front (-Z) toward the eye
+inline float GhostBillboardYawDeg(const GhostVec3& pos, const GhostVec3& eye)
+{
+    float dx = eye.x - pos.x, dz = eye.z - pos.z;
+    if (dx * dx + dz * dz < 1e-8f) return 0.0f;
+    return atan2f(-dx, -dz) * (180.0f / GHOST_PI);
+}
+
+inline GhostMat4 GhostObjectModel(const GhostObject& o, const float* yawDegOverride = nullptr)
 {
     const float d2r = GHOST_PI / 180.0f;
+    const float yaw = yawDegOverride ? *yawDegOverride : o.rotationDeg.y;
     return GhostMat4::Translation(o.position.x, o.position.y, o.position.z)
-        * GhostMat4::RotationY(o.rotationDeg.y * d2r)
+        * GhostMat4::RotationY(yaw * d2r)
         * GhostMat4::RotationX(o.rotationDeg.x * d2r)
         * GhostMat4::RotationZ(o.rotationDeg.z * d2r)
         * GhostMat4::Scale(o.scale.x, o.scale.y, o.scale.z);

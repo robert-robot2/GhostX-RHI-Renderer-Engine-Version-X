@@ -144,6 +144,28 @@ bool GhostScene_Save(const GhostScene& s, const std::string& root, const std::st
             jo["collider"] = o.collider;
             jo["colliderSize"] = V3(o.colliderSize);
             jo["visible"] = o.visible;
+            if (o.meshId == GHOST_MESH_QUAD)
+            {
+                const GhostSprite& sp = o.sprite;
+                int tex = (sp.textureId < GHOST_FIRST_USER_TEXTURE || saved.count(sp.textureId)) ? sp.textureId : 0;
+                json js;
+                js["texture"] = tex;
+                js["source"] = sp.source;
+                js["columns"] = sp.cols;
+                js["rows"] = sp.rows;
+                js["frame"] = sp.frame;
+                js["flipX"] = sp.flipX;
+                js["billboard"] = sp.billboard;
+                js["unlit"] = sp.unlit;
+                js["alphaClip"] = sp.alphaClip;
+                js["pixelArt"] = sp.pixelArt;
+                js["playing"] = sp.playing;
+                js["tint"] = F3(sp.tint);
+                js["speed"] = sp.animSpeed;
+                js["anim"] = sp.anim;
+                js["clip"] = sp.clip;
+                jo["sprite"] = js;
+            }
             json faces = json::array();
             const int n = GhostMesh_FaceCount(o.meshId);
             for (int f = 0; f < n; f++) faces.push_back(MatToJson(o.faces[f], saved));
@@ -343,6 +365,26 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
                 o.collider = jo.value("collider", false);
                 ReadV3(jo, "colliderSize", o.colliderSize);
                 o.visible = jo.value("visible", true);
+                if (mesh == GHOST_MESH_QUAD && jo.contains("sprite") && jo["sprite"].is_object())
+                {
+                    const json& js = jo["sprite"];
+                    GhostSprite& sp = o.sprite;
+                    sp.textureId = mapTex(js.value("texture", 0));
+                    sp.source = Clampi(js.value("source", 0), 0, 1);
+                    sp.cols = Clampi(js.value("columns", 1), 1, 64);
+                    sp.rows = Clampi(js.value("rows", 1), 1, 64);
+                    sp.frame = Clampi(js.value("frame", 0), 0, 4095);
+                    sp.flipX = js.value("flipX", false);
+                    sp.billboard = js.value("billboard", true);
+                    sp.unlit = js.value("unlit", false);
+                    sp.alphaClip = js.value("alphaClip", true);
+                    sp.pixelArt = js.value("pixelArt", true);
+                    sp.playing = js.value("playing", true);
+                    ReadF(js, "tint", sp.tint, 3);
+                    sp.animSpeed = js.value("speed", 1.0f);
+                    sp.anim = js.value("anim", std::string());
+                    sp.clip = js.value("clip", std::string());
+                }
                 if (jo.contains("faces") && jo["faces"].is_array())
                 {
                     const int n = GhostMesh_FaceCount(mesh);
@@ -493,6 +535,14 @@ unsigned int GhostScene_Hash(const GhostScene& s)
         I(o.role); S(o.customTag); I(o.collider ? 1 : 0); V(o.colliderSize); I(o.visible ? 1 : 0);
         const int n = GhostMesh_FaceCount(o.meshId);
         for (int f = 0; f < n; f++) mix(&o.faces[f], sizeof(GhostMaterial));
+        if (o.meshId == GHOST_MESH_QUAD)
+        {
+            const GhostSprite& sp = o.sprite;
+            I(sp.textureId); I(sp.source); I(sp.cols); I(sp.rows); I(sp.frame);
+            I(sp.flipX); I(sp.billboard); I(sp.unlit); I(sp.alphaClip); I(sp.pixelArt); I(sp.playing);
+            F(sp.tint[0]); F(sp.tint[1]); F(sp.tint[2]); F(sp.animSpeed);
+            S(sp.anim); S(sp.clip);
+        }
     }
     for (const GhostLight& l : s.lights)
     {

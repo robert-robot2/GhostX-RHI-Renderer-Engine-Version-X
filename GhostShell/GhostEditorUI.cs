@@ -847,7 +847,7 @@ namespace GhostShell
                 BackColor = Bg2,
                 ForeColor = Fg,
             };
-            _category.Items.AddRange(new object[] { "Lighting", "Primitives", "Cameras", "Mods" });
+            _category.Items.AddRange(new object[] { "Lighting", "Primitives", "Sprites", "Cameras", "Mods" });
             _category.SelectedIndexChanged += (s, e) => FillPalette();
             // add order matters for docking: Fill first, then Bottom, then Top
             _left.Controls.Add(_palette);
@@ -1192,12 +1192,15 @@ namespace GhostShell
                     Add("Square", "obj", 3);
                     break;
                 case 2:
+                    Add("Sprite Actor", "obj", 4);
+                    break;
+                case 3:
                     Add("Free Camera", "cam", 0);
                     Add("Orbit Camera", "cam", 1);
                     break;
                 default:
                     {
-                        int n = GhostEngine.GhostEngine_GetModTypeCount();       // every registered mod type
+                        int n = GhostEngine.GhostEngine_GetModTypeCount();
                         for (int i = 0; i < n; i++)
                         {
                             var sb = new StringBuilder(64);
@@ -1381,7 +1384,7 @@ namespace GhostShell
                 var l = new GhostLightInfo();
                 if (GhostEngine.GhostEngine_GetObject(id, ref o) != 0)
                 {
-                    proxy = new ObjectProxy(id);
+                    proxy = o.meshId == 4 ? new SpriteProxy(id) : new ObjectProxy(id);
                 }
                 else if (GhostEngine.GhostEngine_GetLight(id, ref l) != 0)
                 {

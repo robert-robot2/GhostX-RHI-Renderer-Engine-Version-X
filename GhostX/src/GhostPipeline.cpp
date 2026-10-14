@@ -83,7 +83,14 @@ static unsigned short ShipIndices[] =
     0,1,2,  2,1,3,  3,1,0,  0,2,3,
     4,5,6,  7,8,9,
 };
-
+static GhostVertex QuadVertices[] =
+{
+    { -0.5f,  0.5f, 0.0f,  1,1,1,1,  0,0,-1,  0,0 },
+    { 0.5f,  0.5f, 0.0f,  1,1,1,1,  0,0,-1,  1,0 },
+    { 0.5f, -0.5f, 0.0f,  1,1,1,1,  0,0,-1,  1,1 },
+    { -0.5f, -0.5f, 0.0f,  1,1,1,1,  0,0,-1,  0,1 },
+};
+static unsigned short QuadIndices[] = { 0, 1, 2,  0, 2, 3 };
 
 bool GhostGetMeshCPU(int meshId, const GhostVertex** verts,
     const unsigned short** indices, unsigned int* indexCount)
@@ -100,6 +107,9 @@ bool GhostGetMeshCPU(int meshId, const GhostVertex** verts,
     case GHOST_MESH_SHIP:
         *verts = ShipVertices; *indices = ShipIndices;
         *indexCount = sizeof(ShipIndices) / sizeof(ShipIndices[0]); return true;
+    case GHOST_MESH_QUAD:
+        *verts = QuadVertices; *indices = QuadIndices;
+        *indexCount = sizeof(QuadIndices) / sizeof(QuadIndices[0]); return true;
     }
     return false;
 }
@@ -698,6 +708,8 @@ GhostResult GhostUploadMeshes(IGhostRHI* rhi, GhostPipeline* p)
         ShipVertices, sizeof(ShipVertices), ShipIndices, sizeof(ShipIndices)) != GHOST_OK) return GHOST_FAIL;
     if (UploadMesh(d, p->meshes[GHOST_MESH_SQUARE],
         CubeVertices, sizeof(CubeVertices), CubeIndices, sizeof(CubeIndices)) != GHOST_OK) return GHOST_FAIL;
+    if (UploadMesh(d, p->meshes[GHOST_MESH_QUAD],
+        QuadVertices, sizeof(QuadVertices), QuadIndices, sizeof(QuadIndices)) != GHOST_OK) return GHOST_FAIL;
     return GHOST_OK;
 }
 void GhostDrawIcon(IGhostRHI* rhi, GhostPipeline* p, unsigned int slot)

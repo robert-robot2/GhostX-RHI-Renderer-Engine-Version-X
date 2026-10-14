@@ -23,6 +23,9 @@ extern "C" {
 #define GHOST_API_MESH_TRIANGLE 1
 #define GHOST_API_MESH_SHIP     2
 #define GHOST_API_MESH_SQUARE   3
+#define GHOST_API_MESH_QUAD 4
+
+
 
     typedef struct GhostGameAPI
     {
@@ -104,6 +107,12 @@ extern "C" {
         // ---- sky ----
         float (*SkyGetTime)(void);                        // hours 0..24 (0 if the scene has no Sky Sphere)
         void  (*SkySetTime)(float hours);
+        // ---- sprites (objects made from the Sprite Actor) ----
+        int (*SpriteSetClip)(int id, const char* clipName);        // restarts only if the clip changed. 0 = no such clip / not a sprite
+        int (*SpriteSetFlip)(int id, int flipX);                   // 1 = mirrored (face left)
+        int (*SpriteSetFrame)(int id, int frame);                  // manual frame, used when no animation is assigned
+        int (*SpriteSetAnim)(int id, const char* projectRelativePath);   // "" clears it
+        int (*SpriteSetSpeed)(int id, float speed);                // 1 = normal, 0 = frozen
     } GhostGameAPI;
 
     // A game module must export:

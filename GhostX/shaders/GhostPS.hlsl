@@ -136,7 +136,7 @@ float4 MappedTexel(PSInput input)
     float2 uv = Rot2((raw - 0.5f) * uvParams.xy, cs, sn) + 0.5f + uvParams.zw;
     float2 dx = Rot2(rdx * uvParams.xy, cs, sn);
     float2 dy = Rot2(rdy * uvParams.xy, cs, sn);
-
+    if (((int)(objPad.y + 0.5f) & 4) != 0) { dx = float2(0, 0); dy = float2(0, 0); }   // sprites: always mip 0
     // ---- 4. sample ----
     if (mode == 7)                                                    // each face reads its own cell
     {
@@ -156,6 +156,8 @@ float4 PSMain(PSInput input, bool isFront : SV_IsFrontFace) : SV_TARGET
     // Light in linear space, encode to gamma at the end
         // The texture view is sRGB, so the sample arrives already linear
     float4 texel = MappedTexel(input);
+    const int spriteFlags = (int)(objPad.y + 0.5f);
+    if ((spriteFlags & 1) != 0 && texel.a < 0.5f) discard;
     float3 albedo = pow(input.color.rgb, 2.2f) * texel.rgb;
     float3 lit = ambientColor.rgb;
 
@@ -199,7 +201,7 @@ float4 PSMain(PSInput input, bool isFront : SV_IsFrontFace) : SV_TARGET
         lit += radiance * saturate(dot(N, toLight)) * atten;
     }
 
-    float3 color = albedo * lit;
+    float3 color = albedo * (((spriteFlags & 2) != 0) ? float3(1.0f, 1.0f, 1.0f) : lit);
     if (objPad.x > 1.5f) color += float3(0.25f, 0.12f, 0.0f);   // selected-face glow, visible even when unlit
     return float4(pow(saturate(color), 1.0f / 2.2f), input.color.a);
 }

@@ -11,6 +11,7 @@
 #include "../include/GhostGameModule.h"
 #include "../include/GhostUI.h"
 #include "../include/GhostMods.h"
+#include "../include/GhostAnim.h"
 #include <string.h>
 // ---- Engine state ----
 static IGhostRHI* g_rhi = nullptr;
@@ -44,6 +45,8 @@ static GhostVec3  g_dragOffset;
 static GhostVec3  g_dragPlanePoint;
 static GhostObject* FindObject(int id);
 static int          CurrentFace();
+static void UpdateSprites(float dt);
+static void SpriteDrawInfo(const GhostObject& o, int& tex, int& cols, int& rows, int& frame);
 static int PickObjectAt(int sx, int sy);
 struct EngineViewport { bool alive = false; bool visible = true; int cameraId = 0; };
 static EngineViewport g_vp[GHOST_MAX_SURFACES];
@@ -67,7 +70,7 @@ static GhostFont                g_font;
 static float                    g_uiRefW = 1920.0f;       // reference width of the main view (height is 1080)
 static std::string g_projectRoot;
 static float g_skyScroll[2] = { 0.0f, 0.0f };      // day / night layer scroll in degrees (play only)
-
+static std::vector<GhostAnimAsset> g_anims;                    // id = index, never removed
 // Main view render size and where it sits inside the window (for mapping the mouse)
 static int   g_mainRW = 1280, g_mainRH = 720;
 static float g_fitX = 0.0f, g_fitY = 0.0f, g_fitW = 1280.0f, g_fitH = 720.0f;
@@ -102,8 +105,8 @@ static const unsigned int MAX_SCENE_OBJECTS = GHOST_MAX_OBJECTS - 2 * GHOST_MAX_
 // worst case an object needs one draw per face
 static const unsigned int MAX_SCENE_OBJECT_COUNT = MAX_SCENE_OBJECTS / GHOST_MAX_FACES;
 // local-space bounds of each mesh (picking only)
-static const GhostVec3 kMeshMin[GHOST_MESH_COUNT] = { { -0.5f, -0.5f, -0.5f }, { -0.5f, 0.0f, -0.05f }, { -3.2f, -1.0f, -3.0f }, { -0.5f, -0.5f, -0.5f } };
-static const GhostVec3 kMeshMax[GHOST_MESH_COUNT] = { {  0.5f,  0.5f,  0.5f }, {  0.5f, 1.0f,  0.05f }, {  3.2f,  3.0f, 11.0f }, {  0.5f,  0.5f,  0.5f } };
+static const GhostVec3 kMeshMin[GHOST_MESH_COUNT] = { { -0.5f, -0.5f, -0.5f },{ -0.5f, 0.0f, -0.05f },{ -3.2f, -1.0f, -3.0f },{ -0.5f, -0.5f, -0.5f },{ -0.5f, -0.5f, -0.25f } };
+static const GhostVec3 kMeshMax[GHOST_MESH_COUNT] = { { 0.5f,  0.5f,  0.5f },{ 0.5f, 1.0f,  0.05f },{ 3.2f,  3.0f, 11.0f },{ 0.5f,  0.5f,  0.5f },{ 0.5f,  0.5f,  0.25f } };
 static GhostColor g_clearColor = { 0.0f, 0.0f, 0.0f, 1.0f };
 
 // may be incorrect
@@ -306,15 +309,24 @@ static GhostVec3 LightForward(const GhostLight& l)
 }
 
 // Inverse of GhostObjectModel (T * Ry * Rx * Rz * S)
-static GhostMat4 ObjectInverse(const GhostObject& o)
+static GhostMat4 ObjectInverse(const GhostObject& o, const float* yawOverride = nullptr)
 {
     const float d2r = GHOST_PI / 180.0f;
+    const float ry = yawOverride ? *yawOverride : o.rotationDeg.y;
     auto inv = [](float s) { return fabsf(s) > 1e-6f ? 1.0f / s : 0.0f; };
     return GhostMat4::Scale(inv(o.scale.x), inv(o.scale.y), inv(o.scale.z))
         * GhostMat4::RotationZ(-o.rotationDeg.z * d2r)
         * GhostMat4::RotationX(-o.rotationDeg.x * d2r)
-        * GhostMat4::RotationY(-o.rotationDeg.y * d2r)
+        * GhostMat4::RotationY(-ry * d2r)
         * GhostMat4::Translation(-o.position.x, -o.position.y, -o.position.z);
+}
+
+// non-null only for a billboard sprite
+static const float* BillYaw(const GhostObject& o, const GhostVec3& eye, float& storage)
+{
+    if (o.meshId != GHOST_MESH_QUAD || !o.sprite.billboard) return nullptr;
+    storage = GhostBillboardYawDeg(o.position, eye);
+    return &storage;
 }
 
 static bool ScreenRay(int sx, int sy, GhostVec3& origin, GhostVec3& dir)
@@ -419,7 +431,7 @@ static int PickAt(int sx, int sy)
     float bestT = 1e30f;
     for (const GhostObject& ob : g_scene.objects)
     {
-        GhostMat4 inv = ObjectInverse(ob);
+        float byw; GhostMat4 inv = ObjectInverse(ob, BillYaw(ob, g_mainEye, byw));
         float t;
         if (RayAABB(XformPoint(inv, o, 1.0f), XformPoint(inv, d, 0.0f),
             kMeshMin[ob.meshId], kMeshMax[ob.meshId], t) && t < bestT)
@@ -455,7 +467,7 @@ static int PickFace(const GhostObject& ob, int sx, int sy)
     GhostVec3 o, d;
     if (!ScreenRay(sx, sy, o, d)) return -1;
 
-    GhostMat4 inv = ObjectInverse(ob);
+    float byw; GhostMat4 inv = ObjectInverse(ob, BillYaw(ob, g_mainEye, byw));
     GhostVec3 lo = XformPoint(inv, o, 1.0f);
     GhostVec3 ld = XformPoint(inv, d, 0.0f);
 
@@ -796,6 +808,7 @@ int GhostEngine_SetObjectTexture(int objectId, int textureId)
         m.textureId = textureId;
         m.tint[0] = m.tint[1] = m.tint[2] = (textureId != 0) ? 1.0f : 0.6f;
     }
+    if (o->meshId == GHOST_MESH_QUAD) o->sprite.textureId = textureId;
     o->useVertexColor = false;
     return 1;
 }
@@ -940,7 +953,34 @@ static void RenderViewport(int vp)
         const GhostMat4 model = GhostObjectModel(o);
         const bool      selected = overlays && (o.id == g_scene.selectedId);
         const int       hl = selected ? CurrentFace() : -1;
+        if (o.meshId == GHOST_MESH_QUAD)                       // sprite actor: one billboard quad
+        {
+            if (slot >= MAX_SCENE_OBJECTS) continue;
+            const GhostSprite& sp = o.sprite;
+            int tex, cols, rows, frame;
+            SpriteDrawInfo(o, tex, cols, rows, frame);
+            float byw;
 
+            GhostObjectCB cb = {};
+            cb.model = GhostObjectModel(o, BillYaw(o, eye, byw));
+            cb.view = view;
+            cb.proj = proj;
+            cb.color[0] = sp.tint[0]; cb.color[1] = sp.tint[1]; cb.color[2] = sp.tint[2]; cb.color[3] = 1.0f;
+            cb.pad[0] = selected ? 1.0f : 0.0f;
+            cb.pad[1] = (float)((sp.alphaClip ? 1 : 0) | (sp.unlit ? 2 : 0) | 4);   // shader flags
+            const int col = frame % cols, row = frame / cols;
+            cb.uvParams[0] = (sp.flipX ? -1.0f : 1.0f) / (float)cols;
+            cb.uvParams[1] = 1.0f / (float)rows;
+            cb.uvParams[2] = ((float)col + 0.5f) / (float)cols - 0.5f;
+            cb.uvParams[3] = ((float)row + 0.5f) / (float)rows - 0.5f;
+            cb.mapParams[2] = 1.0f;                            // clamp
+            cb.mapParams[3] = sp.pixelArt ? 1.0f : 0.0f;       // point / linear
+
+            GhostUpdateObjectCB(g_pipeline, slot, &cb);
+            GhostDrawMesh(g_rhi, g_pipeline, o.meshId, slot, (unsigned int)(tex > 0 ? tex : 0), 0, 0);
+            slot++;
+            continue;
+        }
         int f = 0;
         while (f < faceCount && slot < MAX_SCENE_OBJECTS)
         {
@@ -1191,6 +1231,7 @@ void GhostEngine_Tick()
         cam->pitchDeg = g_pitch * (180.0f / GHOST_PI);
     }
     UpdateOrbitCameras(dt, g_playState != GhostPlayState::Editing);
+    UpdateSprites(dt);                                // animation clips run in the editor and while playing
     // ---- Render: camera windows first, the main view last (it carries the vsync) ----
     for (int vp = 1; vp < GHOST_MAX_SURFACES; vp++)
         if (g_vp[vp].alive) RenderViewport(vp);
@@ -1276,6 +1317,7 @@ void GhostEngine_SetMaterial(int objectId, int face, const GhostMaterialInfo* in
     const int from = face < 0 ? 0 : face;
     const int to = face < 0 ? count - 1 : face;
     for (int f = from; f <= to; f++) o->faces[f] = m;
+    if (o->meshId == GHOST_MESH_QUAD) o->sprite.textureId = m.textureId;
 }
 
 int GhostEngine_GetTargetFace() { return CurrentFace(); }
@@ -1316,7 +1358,7 @@ static int PickObjectAt(int sx, int sy)
     float bestT = 1e30f;
     for (const GhostObject& ob : g_scene.objects)
     {
-        GhostMat4 inv = ObjectInverse(ob);
+        float byw; GhostMat4 inv = ObjectInverse(ob, BillYaw(ob, g_mainEye, byw));
         float t;
         if (RayAABB(XformPoint(inv, o, 1.0f), XformPoint(inv, d, 0.0f),
             kMeshMin[ob.meshId], kMeshMax[ob.meshId], t) && t < bestT)
@@ -1691,7 +1733,11 @@ static int Api_SetScale(int id, const float* v)
 
 static int Api_GetColor(int id, float* v)
 {
-    GhostObject* o = FindObject(id); if (!o || !v) return 0; v[0] = o->faces[0].tint[0]; v[1] = o->faces[0].tint[1]; v[2] = o->faces[0].tint[2]; return 1;
+    GhostObject* o = FindObject(id);
+    if (!o || !v) return 0;
+    const float* c = (o->meshId == GHOST_MESH_QUAD) ? o->sprite.tint : o->faces[0].tint;
+    v[0] = c[0]; v[1] = c[1]; v[2] = c[2];
+    return 1;
 }
 static int Api_SetColor(int id, const float* v)
 {
@@ -1699,6 +1745,7 @@ static int Api_SetColor(int id, const float* v)
     if (!o || !v) return 0;
     auto c01 = [](float x) { return x < 0.0f ? 0.0f : (x > 1.0f ? 1.0f : x); };
     for (GhostMaterial& m : o->faces) { m.tint[0] = c01(v[0]); m.tint[1] = c01(v[1]); m.tint[2] = c01(v[2]); }
+    if (o->meshId == GHOST_MESH_QUAD) for (int i = 0; i < 3; i++) o->sprite.tint[i] = c01(v[i]);
     o->useVertexColor = false;
     return 1;
 }
@@ -1923,6 +1970,135 @@ static void Api_SkySetTime(float h)
 {
     for (GhostModEntity& m : g_scene.mods) if (m.typeId == GHOST_MOD_SKY) { GhostSky_SetTime(m, h); return; }
 }
+
+// ============================================================
+//  Sprites and animations
+// ============================================================
+static std::string StoredToAbs(const std::string& stored)
+{
+    std::string p = stored;
+    const bool absolute = p.size() > 1 && (p[1] == ':' || p[0] == '\\' || p[0] == '/');
+    if (!absolute && !g_projectRoot.empty()) p = g_projectRoot + "\\" + p;
+    return GhostPath_Normalize(p);
+}
+
+static int LoadAnimFile(const std::string& stored)
+{
+    const std::string abs = StoredToAbs(stored);
+    for (size_t i = 0; i < g_anims.size(); i++)
+        if (_stricmp(g_anims[i].path.c_str(), abs.c_str()) == 0) return (int)i;
+    if (g_anims.size() >= 64) return -1;
+
+    GhostAnimAsset a;
+    std::string err, warn;
+    if (!GhostAnim_Load(a, g_projectRoot, abs, LoadSceneTexture, err, warn))
+    {
+        OutputDebugStringA(("[GhostX] Animation load failed: " + err + "\n").c_str());
+        return -1;
+    }
+    if (!warn.empty()) OutputDebugStringA(("[GhostX] Animation: " + warn).c_str());
+    a.path = abs;
+    g_anims.push_back(std::move(a));
+    return (int)g_anims.size() - 1;
+}
+
+// Re-reads every loaded .ghostanim (ids stay the same). Runs at every Play, and from Play > Reload Animations.
+static void ReloadAnims()
+{
+    for (GhostAnimAsset& a : g_anims)
+    {
+        GhostAnimAsset n;
+        std::string err, warn;
+        if (GhostAnim_Load(n, g_projectRoot, a.path, LoadSceneTexture, err, warn)) { n.path = a.path; a = std::move(n); }
+        else OutputDebugStringA(("[GhostX] Animation reload failed: " + err + "\n").c_str());
+    }
+}
+
+static void SpriteDrawInfo(const GhostObject& o, int& tex, int& cols, int& rows, int& frame)
+{
+    const GhostSprite& s = o.sprite;
+    tex = s.textureId;
+    cols = s.source == 0 ? 1 : s.cols;
+    rows = s.source == 0 ? 1 : s.rows;
+    if (s.animId >= 0 && s.animId < (int)g_anims.size())          // the animation's sheet wins
+    {
+        const GhostAnimAsset& a = g_anims[(size_t)s.animId];
+        if (a.textureId > 0) tex = a.textureId;
+        cols = a.cols; rows = a.rows;
+    }
+    if (cols < 1) cols = 1;
+    if (rows < 1) rows = 1;
+    frame = s.curFrame < 0 ? 0 : (s.curFrame > cols * rows - 1 ? cols * rows - 1 : s.curFrame);
+}
+
+static void UpdateSprites(float dt)
+{
+    const bool paused = g_playState == GhostPlayState::Paused;
+    for (GhostObject& o : g_scene.objects)
+    {
+        if (o.meshId != GHOST_MESH_QUAD) continue;
+        GhostSprite& s = o.sprite;
+        if (!s.animResolved)
+        {
+            s.animResolved = true;
+            s.animId = s.anim.empty() ? -1 : LoadAnimFile(s.anim);
+        }
+
+        const GhostAnimAsset* a = (s.animId >= 0 && s.animId < (int)g_anims.size()) ? &g_anims[(size_t)s.animId] : nullptr;
+        if (a && !a->clips.empty())
+        {
+            int ci = GhostAnim_FindClip(*a, s.clip.c_str());
+            if (ci < 0) ci = 0;                                    // unknown or empty clip name: the first clip
+            const GhostClip& c = a->clips[(size_t)ci];
+            if (!paused && s.playing) s.animTime += dt * s.animSpeed;
+            const float dur = (float)c.frames.size() / c.fps;
+            if (c.loop && dur > 0.0f && s.animTime > dur) s.animTime = fmodf(s.animTime, dur);
+            s.curFrame = GhostAnim_FrameAt(c, s.animTime);
+        }
+        else s.curFrame = s.frame;
+    }
+}
+
+static GhostObject* FindSprite(int id)
+{
+    GhostObject* o = FindObject(id);
+    return (o && o->meshId == GHOST_MESH_QUAD) ? o : nullptr;
+}
+
+static int SetSpriteAnimImpl(GhostSprite& s, const std::string& path)
+{
+    s.anim = path;
+    s.animTime = 0.0f;
+    s.animResolved = true;
+    s.animId = path.empty() ? -1 : LoadAnimFile(path);
+    return (path.empty() || s.animId >= 0) ? 1 : 0;
+}
+
+static int Api_SpriteSetClip(int id, const char* name)
+{
+    GhostObject* o = FindSprite(id);
+    if (!o || !name) return 0;
+    GhostSprite& s = o->sprite;
+
+    std::string want = name;
+    if (s.animId >= 0 && s.animId < (int)g_anims.size())
+    {
+        const GhostAnimAsset& a = g_anims[(size_t)s.animId];
+        const int ci = want.empty() ? -1 : GhostAnim_FindClip(a, name);
+        if (!want.empty() && ci < 0) return 0;
+        if (ci >= 0) want = a.clips[(size_t)ci].name;             // canonical spelling, so repeated calls don't restart
+    }
+    if (s.clip == want) return 1;
+    s.clip = want;
+    s.animTime = 0.0f;
+    return 1;
+}
+
+static int Api_SpriteSetFlip(int id, int flip) { GhostObject* o = FindSprite(id); if (!o) return 0; o->sprite.flipX = (flip != 0); return 1; }
+static int Api_SpriteSetFrame(int id, int f) { GhostObject* o = FindSprite(id); if (!o) return 0; o->sprite.frame = f < 0 ? 0 : (f > 4095 ? 4095 : f); return 1; }
+static int Api_SpriteSetAnim(int id, const char* p) { GhostObject* o = FindSprite(id); return o ? SetSpriteAnimImpl(o->sprite, p ? p : "") : 0; }
+static int Api_SpriteSetSpeed(int id, float v) { GhostObject* o = FindSprite(id); if (!o) return 0; o->sprite.animSpeed = v < 0.0f ? 0.0f : (v > 10.0f ? 10.0f : v); return 1; }
+
 static void BuildGameApi()
 {
     GhostGameAPI& a = g_gameApi;
@@ -1949,6 +2125,8 @@ static void BuildGameApi()
     a.UISetVisible = Api_UISetVisible;  a.UISetColor = Api_UISetColor;
     a.UIButtonClicked = Api_UIButtonClicked;  a.UIButtonDown = Api_UIButtonDown;  a.UIGetMouse = Api_UIGetMouse;
     a.SkyGetTime = Api_SkyGetTime;  a.SkySetTime = Api_SkySetTime;
+    a.SpriteSetClip = Api_SpriteSetClip;  a.SpriteSetFlip = Api_SpriteSetFlip;  a.SpriteSetFrame = Api_SpriteSetFrame;
+    a.SpriteSetAnim = Api_SpriteSetAnim;  a.SpriteSetSpeed = Api_SpriteSetSpeed;
 }
 // ============================================================
 //  Exported: play mode
@@ -1958,7 +2136,8 @@ int GhostEngine_Play()
     if (!g_rhi || !g_pipeline) { g_playMessage = "The engine is not ready."; return 0; }
     if (g_playState != GhostPlayState::Editing) return 1;
 
-    g_playBackup = g_scene;                          // Stop puts this back
+    g_playBackup = g_scene;                        
+    ReloadAnims();
     if (g_scene.gameStartCameraId && FindCamera(g_scene.gameStartCameraId))
         g_scene.activeCameraId = g_scene.gameStartCameraId;      // Stop restores the backup, so your editor camera comes back
     for (GhostCamera& c : g_scene.cameras) c.orbitValid = false; // orbit cameras snap to their target on the first frame
@@ -2266,3 +2445,68 @@ void GhostEngine_SetModParam(int id, int index, const float* in3)
     if (d.kind == GHOST_PARAM_TEXTURE && (int)v[0] >= (int)g_scene.textures.size()) v[0] = 0.0f;
     for (int i = 0; i < n; i++) m->values[(size_t)(off + i)] = v[i];
 }
+
+
+// ============================================================
+//  Exported: sprites
+// ============================================================
+int GhostEngine_GetSprite(int id, GhostSpriteInfo* out)
+{
+    GhostObject* o = FindSprite(id);
+    if (!o || !out) return 0;
+    const GhostSprite& s = o->sprite;
+    int tex, cols, rows, frame;
+    SpriteDrawInfo(*o, tex, cols, rows, frame);
+    *out = { id, s.textureId, s.source, s.cols, s.rows, s.frame,
+             s.flipX, s.billboard, s.unlit, s.alphaClip, s.pixelArt, s.playing,
+             s.tint[0], s.tint[1], s.tint[2], s.animSpeed,
+             tex, cols, rows, frame };
+    return 1;
+}
+
+void GhostEngine_SetSprite(const GhostSpriteInfo* in)
+{
+    GhostObject* o = in ? FindSprite(in->id) : nullptr;
+    if (!o) return;
+    auto ci = [](int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); };
+    auto cf = [](float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); };
+    GhostSprite& s = o->sprite;
+    s.textureId = (in->textureId >= 0 && in->textureId < (int)g_scene.textures.size()) ? in->textureId : 0;
+    s.source = in->source ? 1 : 0;
+    s.cols = ci(in->cols, 1, 64);
+    s.rows = ci(in->rows, 1, 64);
+    s.frame = ci(in->frame, 0, 4095);
+    s.flipX = in->flipX != 0;
+    s.billboard = in->billboard != 0;
+    s.unlit = in->unlit != 0;
+    s.alphaClip = in->alphaClip != 0;
+    s.pixelArt = in->pixelArt != 0;
+    s.playing = in->playing != 0;
+    s.tint[0] = cf(in->tintR, 0.0f, 1.0f); s.tint[1] = cf(in->tintG, 0.0f, 1.0f); s.tint[2] = cf(in->tintB, 0.0f, 1.0f);
+    s.animSpeed = cf(in->animSpeed, 0.0f, 10.0f);
+}
+
+int GhostEngine_GetSpriteText(int id, int which, char* buf, int size)
+{
+    if (!buf || size <= 0) return 0;
+    buf[0] = 0;
+    GhostObject* o = FindSprite(id);
+    if (!o) return 0;
+    std::string t;
+    if (which == 0) t = o->sprite.anim;
+    else if (which == 1) t = o->sprite.clip;
+    else if (o->sprite.animId >= 0 && o->sprite.animId < (int)g_anims.size())
+        for (const GhostClip& c : g_anims[(size_t)o->sprite.animId].clips) { if (!t.empty()) t += "|"; t += c.name; }
+    CopyMsg(t, buf, size);
+    return 1;
+}
+
+void GhostEngine_SetSpriteText(int id, int which, const char* text)
+{
+    GhostObject* o = FindSprite(id);
+    if (!o) return;
+    if (which == 0) SetSpriteAnimImpl(o->sprite, text ? text : "");
+    else if (which == 1) Api_SpriteSetClip(id, text ? text : "");
+}
+
+void GhostEngine_ReloadAnimations() { ReloadAnims(); }

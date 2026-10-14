@@ -69,6 +69,18 @@ namespace GhostShell
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = 32)] public byte[] category;
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = 192)] public byte[] enums;
     }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GhostSpriteInfo
+    {
+        public int id;
+        public int textureId, source, cols, rows, frame;
+        public int flipX, billboard, unlit, alphaClip, pixelArt, playing;
+        public float tintR, tintG, tintB;
+        public float animSpeed;
+        public int effTexture, effCols, effRows, curFrame;
+    }
+
     internal static class GhostEngine
     {
         private const string DllName = "GhostX.dll";
@@ -261,6 +273,18 @@ namespace GhostShell
         public static extern int GhostEngine_GetModParam(int id, int index, [Out] float[] out3);
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern void GhostEngine_SetModParam(int id, int index, [In] float[] in3);
+
+        // ---- Sprites ----
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetSprite(int objectId, ref GhostSpriteInfo info);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetSprite(ref GhostSpriteInfo info);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetSpriteText(int objectId, int which, [Out] byte[] buf, int bufSize);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetSpriteText(int objectId, int which, [MarshalAs(UnmanagedType.LPUTF8Str)] string text);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_ReloadAnimations();
 
     }
 }

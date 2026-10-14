@@ -65,6 +65,18 @@ struct GhostModParamInfo
     char  category[32];
     char  enums[192];           // "A|B|C"
 };
+struct GhostSpriteInfo
+{
+    int   id;
+    int   textureId, source, cols, rows, frame;
+    int   flipX, billboard, unlit, alphaClip, pixelArt, playing;
+    float tintR, tintG, tintB;
+    float animSpeed;
+    int   effTexture, effCols, effRows, curFrame;      // read-only: what is actually drawn
+};
+
+
+
 extern "C"
 {
     GHOST_API int  GhostEngine_Init(HWND hwnd, unsigned int width, unsigned int height);
@@ -177,4 +189,11 @@ extern "C"
     GHOST_API void GhostEngine_SetModPosition(int id, const float* pos3);
     GHOST_API int  GhostEngine_GetModParam(int id, int index, float* out3);
     GHOST_API void GhostEngine_SetModParam(int id, int index, const float* in3);
+    // ---- Sprites ----
+    GHOST_API int  GhostEngine_GetSprite(int objectId, GhostSpriteInfo* out);
+    GHOST_API void GhostEngine_SetSprite(const GhostSpriteInfo* in);
+    // which: 0 animation path, 1 clip, 2 (get only) clip names joined with '|'
+    GHOST_API int  GhostEngine_GetSpriteText(int objectId, int which, char* buf, int bufSize);
+    GHOST_API void GhostEngine_SetSpriteText(int objectId, int which, const char* utf8);
+    GHOST_API void GhostEngine_ReloadAnimations();
 }
