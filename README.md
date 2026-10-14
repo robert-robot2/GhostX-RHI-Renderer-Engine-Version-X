@@ -2,7 +2,7 @@
 
 # 👻 GhostX Version X 👻💡🧊💡👻
 
-**A from-scratch DirectX 12 game engine with a Visual Studio-style editor**
+**DirectX12 RHI Renderer Engine Winforms Blazor WASM UI with a Visual Studio Docking Suite Editor**
 
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-blue)
 ![Graphics](https://img.shields.io/badge/graphics-DirectX%2012-green)
