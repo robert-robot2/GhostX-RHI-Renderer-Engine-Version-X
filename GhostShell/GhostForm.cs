@@ -169,7 +169,7 @@ namespace GhostShell
 
             _menuBuilder.OnNewScene += (s, e) => { if (GhostSceneFile.ConfirmDiscard(this)) GhostSceneFile.New(); };
             _menuBuilder.OnOpenScene += (s, e) => GhostSceneFile.OpenInteractive(this);
-            _menuBuilder.OnSaveScene += (s, e) => GhostSceneFile.SaveInteractive(this);
+            _menuBuilder.OnSaveScene += (s, e) => { if (!_editor.SaveDesignerIfFocused()) GhostSceneFile.SaveInteractive(this); };
             _menuBuilder.OnSaveSceneAs += (s, e) => GhostSceneFile.SaveAs(this);
             _menuBuilder.OnNewProject += (s, e) => GhostProjectFlow.NewProject(this);
             _menuBuilder.OnOpenProject += (s, e) => GhostProjectFlow.OpenProject(this);
@@ -225,7 +225,8 @@ namespace GhostShell
         }
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
-            if (_engineReady && !GhostSceneFile.ConfirmDiscard(this)) { e.Cancel = true; return; }
+            if (_engineReady && (!GhostSceneFile.ConfirmDiscard(this) ||
+                      (_editor != null && !_editor.ConfirmDiscardDesigner(this)))) { e.Cancel = true; return; }
             base.OnFormClosing(e);
         }
         // -------------------------------------------------------

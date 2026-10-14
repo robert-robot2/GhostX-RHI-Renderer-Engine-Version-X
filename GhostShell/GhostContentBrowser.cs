@@ -28,7 +28,7 @@ namespace GhostShell
         private bool _rebuildQueued, _inDrag, _pending;
 
         private static readonly Dictionary<string, Bitmap> ThumbCache = new(StringComparer.OrdinalIgnoreCase);
-        private static Bitmap? _folderIcon, _sceneIcon, _blankIcon;
+        private static Bitmap? _folderIcon, _sceneIcon, _blankIcon, _uiIcon;
 
         // Double-click on a scene tile
         public event Action<string>? OpenSceneRequested;
@@ -36,6 +36,8 @@ namespace GhostShell
 
         // Double-click on a tile: apply that texture to the selected object
         public event Action<int>? ApplyRequested;
+
+        public event Action<string>? OpenUIRequested;
 
         public GhostContentBrowser()
         {
@@ -170,7 +172,7 @@ namespace GhostShell
             public Bitmap Thumb = null!;
             public int TexId = -1;          // built-in or already-loaded texture
             public string? Path;            // file or folder on disk
-            public bool IsFolder, IsScene;
+            public bool IsFolder, IsScene, IsUI;
         }
 
         // Rebuilding while a tile is being clicked or dragged would dispose that tile, so it's deferred
@@ -291,6 +293,16 @@ namespace GhostShell
                                 Path = f,
                                 IsScene = true
                             });
+                        else if (f.EndsWith(".ghostui", StringComparison.OrdinalIgnoreCase))
+                            entries.Add(new Entry
+                            {
+                                Key = "f:" + f,
+                                Label = Path.GetFileNameWithoutExtension(f),
+                                Tip = f,
+                                Thumb = UiIcon(),
+                                Path = f,
+                                IsUI = true
+                            });
                     }
                 }
                 catch { /* folder vanished or is unreadable: show what we have */ }
@@ -380,7 +392,7 @@ namespace GhostShell
                 };
                 c.MouseMove += (s, ev) =>
                 {
-                    if (ev.Button != MouseButtons.Left || _pressKey != e.Key || e.IsFolder || e.IsScene) return;
+                    if (ev.Button != MouseButtons.Left || _pressKey != e.Key || e.IsFolder || e.IsScene || e.IsUI) return;
                     Size d = SystemInformation.DragSize;
                     Point p = Control.MousePosition;
                     if (Math.Abs(p.X - _pressPoint.X) < d.Width && Math.Abs(p.Y - _pressPoint.Y) < d.Height) return;
@@ -402,6 +414,8 @@ namespace GhostShell
                         BeginInvoke(new Action(() => { _folder = e.Path; Rebuild(); }));
                     else if (e.IsScene)
                         BeginInvoke(new Action(() => OpenSceneRequested?.Invoke(e.Path!)));
+                    else if (e.IsUI)
+                        BeginInvoke(new Action(() => OpenUIRequested?.Invoke(e.Path!)));
                     else
                     {
                         int id = ResolveTexture(e);
@@ -424,6 +438,7 @@ namespace GhostShell
 
         private static Bitmap FolderIcon() => _folderIcon ??= DrawIcon(0);
         private static Bitmap SceneIcon() => _sceneIcon ??= DrawIcon(1);
+        private static Bitmap UiIcon() => _uiIcon ??= DrawIcon(3);
         private static Bitmap BlankIcon() => _blankIcon ??= DrawIcon(2);
 
         private static Bitmap DrawIcon(int kind)
@@ -444,6 +459,13 @@ namespace GhostShell
                 g.FillRectangle(br, 18, 22, 60, 52);
                 using var f = new Font("Segoe UI", 10f, FontStyle.Bold);
                 g.DrawString("SCENE", f, Brushes.White, 22, 40);
+            }
+            else if (kind == 3)                               // UI
+            {
+                using var br = new SolidBrush(Color.FromArgb(0xA0, 0x6C, 0xD8));
+                g.FillRectangle(br, 18, 22, 60, 52);
+                using var f = new Font("Segoe UI", 12f, FontStyle.Bold);
+                g.DrawString("UI", f, Brushes.White, 34, 36);
             }
             else                                              // unreadable image
             {

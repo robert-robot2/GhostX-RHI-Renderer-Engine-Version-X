@@ -791,6 +791,10 @@ namespace GhostShell
         private TreeNode _settingsNode = null!;
         private readonly Dictionary<int, TreeNode> _nodes = new();
 
+        private GhostUIDesigner _designer = null!;
+        private PanelDock _dockDesigner = null!;
+
+
         private bool _visible = true;
         private bool _syncing;
         private uint _lastVersion = uint.MaxValue;
@@ -814,7 +818,7 @@ namespace GhostShell
                 if (GhostSceneFile.ConfirmDiscard(_form)) GhostSceneFile.Open(path);
             };
             _bottom = browser;
-
+            browser.OpenUIRequested += path => OpenDesigner(path);
             // ---- Left: palette ----
             _left = new Panel { Dock = DockStyle.Fill, BackColor = Bg };
             _palette = new ListBox
@@ -959,6 +963,7 @@ namespace GhostShell
 
             Control? focus = Control.FromHandle(GhostShell.Win32.GetFocus());
             if (focus == null) return false;          // a native dialog (file / color picker) has focus
+            if (IsInsideDesigner(focus)) return false;
             if (IsTypingIn(focus)) return false;      // never steal keys from a text box or the property grid
             if (repeat) return true;
 
@@ -1008,7 +1013,8 @@ namespace GhostShell
             _dockDetails = new PanelDock("Details", "Details", _grid, ToolAreas);
             _dockContent = new PanelDock("Content", "Content Browser", _bottom, ToolAreas);
             _tools.AddRange(new[] { _dockPalette, _dockHierarchy, _dockDetails, _dockContent });
-
+            _designer = new GhostUIDesigner();
+            _dockDesigner = new PanelDock("UIDesigner", "UI Designer", _designer, ToolAreas | DockAreas.Document);
             _form.Controls.Add(_dock);
             _dock.BringToFront();                    // the dock fills whatever the menu strip leaves
             _form.MainMenuStrip?.SendToBack();
@@ -1023,6 +1029,7 @@ namespace GhostShell
             "Hierarchy" => _dockHierarchy,
             "Details" => _dockDetails,
             "Content" => _dockContent,
+            "UIDesigner" => _dockDesigner,
             _ => null!,
         };
 
@@ -1088,9 +1095,39 @@ namespace GhostShell
         {
             _hiddenByToggle.Clear();
             foreach (PanelDock d in _tools) d.DockPanel = null!;
+            if (_dockDesigner.DockPanel != null) _dockDesigner.DockPanel = null!;
             ApplyDefaultLayout();
         }
+        private bool IsInsideDesigner(Control? c)
+        {
+            for (; c != null; c = c.Parent) if (c == _designer) return true;
+            return false;
+        }
 
+        public void OpenDesigner(string? path)
+        {
+            if (_dockDesigner.DockState == DockState.Unknown)
+            {
+                Rectangle r = _form.Bounds;                       // first time: a big floating window you can dock later
+                var b = new Rectangle(r.X + 60, r.Y + 80,
+                    Math.Max(700, Math.Min(1400, r.Width - 120)), Math.Max(500, Math.Min(820, r.Height - 140)));
+                _dockDesigner.Show(_dock, b);
+            }
+            else _dockDesigner.Show(_dock);
+
+            if (path != null) _designer.OpenFile(path);
+            _designer.FocusCanvas();
+        }
+
+        public bool ConfirmDiscardDesigner(IWin32Window owner) => _designer == null || _designer.ConfirmDiscard(owner);
+
+        // Ctrl+S is a menu shortcut for Save Scene; while the designer has focus it saves the UI instead
+        public bool SaveDesignerIfFocused()
+        {
+            if (_designer == null || !IsInsideDesigner(Control.FromHandle(GhostShell.Win32.GetFocus()))) return false;
+            _designer.Save();
+            return true;
+        }
         private bool IsShown(PanelDock d) => d.DockPanel != null && !d.IsHidden;
 
         private void ShowPanel(PanelDock d)
@@ -1112,6 +1149,9 @@ namespace GhostShell
                 item.Click += (s, e) => ShowPanel(dock);
                 menu.DropDownItems.Add(item);
             }
+            var uiItem = new ToolStripMenuItem("UI Designer");
+            uiItem.Click += (s, e) => OpenDesigner(null);
+            menu.DropDownItems.Add(uiItem);
             menu.DropDownItems.Add(new ToolStripSeparator());
             var reset = new ToolStripMenuItem("Reset Layout");
             reset.Click += (s, e) => ResetLayout();
@@ -1121,6 +1161,8 @@ namespace GhostShell
             {
                 for (int i = 0; i < _tools.Count; i++)
                     ((ToolStripMenuItem)menu.DropDownItems[i]).Checked = IsShown(_tools[i]);
+                // this may be wrong order
+                uiItem.Checked = IsShown(_dockDesigner);
             };
 
             int at = strip.Items.Count;                                   // before Help
