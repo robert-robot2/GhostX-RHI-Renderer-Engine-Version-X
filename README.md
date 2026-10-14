@@ -148,7 +148,6 @@ Exports for objects, lights, cameras, materials, textures, viewports, mouse inpu
 - [ ] Particle editor
 - [ ] Animation editor
 - [ ] Tab Grid Editor
-- [ ] 
 
 ## Known limitations
 
