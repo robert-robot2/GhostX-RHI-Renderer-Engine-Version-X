@@ -405,6 +405,70 @@ namespace GhostShell
         public static readonly string[] Names = { "Static", "Player", "Enemy", "Coin", "Block", "Goal", "Custom" };
         protected override string[] Items => Names;
     }
+
+    internal sealed class MatPreset
+    {
+        public readonly string Name;
+        public readonly float[] Base;          // tint (display colors)
+        public readonly float Metal, Rough, Spec, EmStrength;
+        public readonly float[] Emissive;
+
+        public MatPreset(string name, float[] baseColor, float metal, float rough, float spec,
+            float[]? emissive = null, float emStrength = 1f)
+        {
+            Name = name; Base = baseColor; Metal = metal; Rough = rough; Spec = spec;
+            Emissive = emissive ?? new float[] { 0f, 0f, 0f };
+            EmStrength = emStrength;
+        }
+
+        private static bool Near(float a, float b) => Math.Abs(a - b) < 0.01f;
+
+        public bool Matches(GhostMaterialInfo m) =>
+            Near(m.metallic, Metal) && Near(m.roughness, Rough) && Near(m.specular, Spec) &&
+            Near(m.emR * m.emissiveStrength, Emissive[0] * EmStrength) &&
+            Near(m.emG * m.emissiveStrength, Emissive[1] * EmStrength) &&
+            Near(m.emB * m.emissiveStrength, Emissive[2] * EmStrength) &&
+            (m.textureId != 0 || (Near(m.r, Base[0]) && Near(m.g, Base[1]) && Near(m.b, Base[2])));
+
+        public void ApplyTo(ref GhostMaterialInfo m)
+        {
+            if (m.textureId == 0) { m.r = Base[0]; m.g = Base[1]; m.b = Base[2]; }   // a texture keeps its own color
+            m.metallic = Metal; m.roughness = Rough; m.specular = Spec;
+            m.emR = Emissive[0]; m.emG = Emissive[1]; m.emB = Emissive[2]; m.emissiveStrength = EmStrength;
+        }
+    }
+
+    internal class MaterialPresetConverter : FixedListConverter
+    {
+        public static readonly MatPreset[] All =
+        {
+            new("Default Grey",    new[] { 0.60f, 0.60f, 0.60f }, 0.0f, 0.60f, 0.5f),
+            new("Rubber",          new[] { 0.12f, 0.12f, 0.12f }, 0.0f, 0.85f, 0.4f),
+            new("Plastic",         new[] { 0.75f, 0.20f, 0.20f }, 0.0f, 0.30f, 0.5f),
+            new("Ceramic",         new[] { 0.92f, 0.92f, 0.90f }, 0.0f, 0.15f, 0.6f),
+            new("Wood",            new[] { 0.55f, 0.36f, 0.20f }, 0.0f, 0.70f, 0.35f),
+            new("Stone",           new[] { 0.50f, 0.50f, 0.48f }, 0.0f, 0.90f, 0.4f),
+            new("Brushed Steel",   new[] { 0.77f, 0.78f, 0.78f }, 1.0f, 0.40f, 0.5f),
+            new("Chrome",          new[] { 0.95f, 0.95f, 0.95f }, 1.0f, 0.08f, 0.5f),
+            new("Gold",            new[] { 1.00f, 0.86f, 0.57f }, 1.0f, 0.25f, 0.5f),
+            new("Copper",          new[] { 0.98f, 0.82f, 0.76f }, 1.0f, 0.30f, 0.5f),
+            new("Glow",            new[] { 0.10f, 0.10f, 0.10f }, 0.0f, 0.60f, 0.5f, new[] { 1.0f, 0.85f, 0.3f }, 2.0f),
+        };
+
+        public static readonly string[] Names = BuildNames();
+
+        private static string[] BuildNames()
+        {
+            var n = new string[All.Length + 1];
+            n[0] = "Custom";
+            for (int i = 0; i < All.Length; i++) n[i + 1] = All[i].Name;
+            return n;
+        }
+
+        protected override string[] Items => Names;
+    }
+
+
     internal class ObjectProxy
     {
         private readonly int _id;
@@ -593,6 +657,65 @@ namespace GhostShell
         {
             get { var m = ReadMat(); return GhostColorUtil.ToColor(m.r, m.g, m.b); }
             set => EditMat((ref GhostMaterialInfo m) => { m.r = value.R / 255f; m.g = value.G / 255f; m.b = value.B / 255f; });
+        }
+
+        // ---- Surface (PBR) ----
+        [Category("Surface (PBR)")]
+        [TypeConverter(typeof(MaterialPresetConverter))]
+        public string Preset
+        {
+            get
+            {
+                var m = ReadMat();
+                foreach (MatPreset p in MaterialPresetConverter.All)
+                    if (p.Matches(m)) return p.Name;
+                return "Custom";
+            }
+            set
+            {
+                foreach (MatPreset p in MaterialPresetConverter.All)
+                    if (p.Name == value)
+                    {
+                        MatPreset chosen = p;
+                        EditMat((ref GhostMaterialInfo m) => chosen.ApplyTo(ref m));
+                        return;
+                    }
+            }
+        }
+
+        [Category("Surface (PBR)")]
+        public float Metallic
+        {
+            get => ReadMat().metallic;
+            set => EditMat((ref GhostMaterialInfo m) => m.metallic = value);
+        }
+
+        [Category("Surface (PBR)")]
+        public float Roughness
+        {
+            get => ReadMat().roughness;
+            set => EditMat((ref GhostMaterialInfo m) => m.roughness = value);
+        }
+
+        [Category("Surface (PBR)")]
+        public float Specular
+        {
+            get => ReadMat().specular;
+            set => EditMat((ref GhostMaterialInfo m) => m.specular = value);
+        }
+
+        [Category("Surface (PBR)"), DisplayName("Emissive Color")]
+        public Color EmissiveColor
+        {
+            get { var m = ReadMat(); return GhostColorUtil.ToColor(m.emR, m.emG, m.emB); }
+            set => EditMat((ref GhostMaterialInfo m) => { m.emR = value.R / 255f; m.emG = value.G / 255f; m.emB = value.B / 255f; });
+        }
+
+        [Category("Surface (PBR)"), DisplayName("Emissive Strength")]
+        public float EmissiveStrength
+        {
+            get => ReadMat().emissiveStrength;
+            set => EditMat((ref GhostMaterialInfo m) => m.emissiveStrength = value);
         }
 
         // ---- Gameplay ----

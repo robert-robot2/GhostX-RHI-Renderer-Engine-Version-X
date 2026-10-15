@@ -27,6 +27,11 @@ struct GhostMaterial
     float offset[2] = { 0, 0 };
     float rotationDeg = 0.0f;
     float tint[3] = { 0.6f, 0.6f, 0.6f };     // grey by default
+    float metallic = 0.0f;                    // 0 = dielectric, 1 = metal
+    float roughness = 0.6f;                   // 0 = mirror, 1 = fully rough
+    float specular = 0.5f;                    // dielectric reflectance (0.5 = the standard 4%)
+    float emissive[3] = { 0, 0, 0 };          // glow color (display colors, like the tint)
+    float emissiveStrength = 1.0f;
 };
 
 inline bool GhostMaterial_Equal(const GhostMaterial& a, const GhostMaterial& b)

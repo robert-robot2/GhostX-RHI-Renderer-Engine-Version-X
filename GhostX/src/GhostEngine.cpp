@@ -1004,6 +1004,9 @@ static void RenderViewport(int vp)
             cb.mapParams[1] = m.rotationDeg * d2r;
             cb.mapParams[2] = (float)m.wrap;
             cb.mapParams[3] = (float)m.filter;
+            cb.pbr[0] = m.metallic;  cb.pbr[1] = m.roughness;  cb.pbr[2] = m.specular;  cb.pbr[3] = m.emissiveStrength;
+            cb.pbr[4] = m.emissive[0];  cb.pbr[5] = m.emissive[1];  cb.pbr[6] = m.emissive[2];
+            cb.pbr[7] = 1.0f;                                  // this draw uses PBR
 
             GhostUpdateObjectCB(g_pipeline, slot, &cb);
             GhostDrawMesh(g_rhi, g_pipeline, o.meshId, slot, (unsigned int)m.textureId,
@@ -1290,7 +1293,9 @@ int GhostEngine_GetMaterial(int objectId, int face, GhostMaterialInfo* out)
     const GhostMaterial& m = o->faces[face];
     *out = { m.textureId, m.mapMode, m.wrap, m.filter,
              m.tiling[0], m.tiling[1], m.offset[0], m.offset[1], m.rotationDeg,
-             m.tint[0], m.tint[1], m.tint[2] };
+             m.tint[0], m.tint[1], m.tint[2],
+             m.metallic, m.roughness, m.specular,
+             m.emissive[0], m.emissive[1], m.emissive[2], m.emissiveStrength };
     return 1;
 }
 
@@ -1313,7 +1318,11 @@ void GhostEngine_SetMaterial(int objectId, int face, const GhostMaterialInfo* in
     m.offset[0] = in->offsetU;     m.offset[1] = in->offsetV;
     m.rotationDeg = in->rotationDeg;
     m.tint[0] = c01(in->r); m.tint[1] = c01(in->g); m.tint[2] = c01(in->b);
-
+    m.metallic = c01(in->metallic);
+    m.roughness = in->roughness < 0.02f ? 0.02f : (in->roughness > 1.0f ? 1.0f : in->roughness);
+    m.specular = c01(in->specular);
+    m.emissive[0] = c01(in->emR); m.emissive[1] = c01(in->emG); m.emissive[2] = c01(in->emB);
+    m.emissiveStrength = in->emissiveStrength < 0.0f ? 0.0f : (in->emissiveStrength > 20.0f ? 20.0f : in->emissiveStrength);
     const int from = face < 0 ? 0 : face;
     const int to = face < 0 ? count - 1 : face;
     for (int f = from; f <= to; f++) o->faces[f] = m;

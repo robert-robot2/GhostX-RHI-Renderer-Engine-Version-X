@@ -34,6 +34,8 @@ struct GhostMaterialInfo
     float tilingU, tilingV, offsetU, offsetV;
     float rotationDeg;
     float r, g, b;                     // tint
+    float metallic, roughness, specular;
+    float emR, emG, emB, emissiveStrength;
 };
 struct GhostCameraInfo
 {

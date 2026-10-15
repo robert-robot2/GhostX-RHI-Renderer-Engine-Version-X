@@ -78,6 +78,11 @@ static json MatToJson(const GhostMaterial& m, const std::set<int>& savedTex)
     j["offset"] = json::array({ m.offset[0], m.offset[1] });
     j["rotation"] = m.rotationDeg;
     j["tint"] = F3(m.tint);
+    j["metallic"] = m.metallic;
+    j["roughness"] = m.roughness;
+    j["specular"] = m.specular;
+    j["emissive"] = F3(m.emissive);
+    j["emissiveStrength"] = m.emissiveStrength;
     return j;
 }
 
@@ -92,6 +97,15 @@ static GhostMaterial MatFromJson(const json& j, const std::function<int(int)>& m
     ReadF(j, "offset", m.offset, 2);
     m.rotationDeg = j.value("rotation", 0.0f);
     ReadF(j, "tint", m.tint, 3);
+    auto c01 = [](float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); };
+    m.metallic = c01(j.value("metallic", 0.0f));
+    m.roughness = j.value("roughness", 0.6f);
+    m.roughness = m.roughness < 0.02f ? 0.02f : (m.roughness > 1.0f ? 1.0f : m.roughness);
+    m.specular = c01(j.value("specular", 0.5f));
+    ReadF(j, "emissive", m.emissive, 3);
+    for (int i = 0; i < 3; i++) m.emissive[i] = c01(m.emissive[i]);
+    m.emissiveStrength = j.value("emissiveStrength", 1.0f);
+    m.emissiveStrength = m.emissiveStrength < 0.0f ? 0.0f : (m.emissiveStrength > 20.0f ? 20.0f : m.emissiveStrength);
     for (int i = 0; i < 2; i++) if (fabsf(m.tiling[i]) < 0.001f) m.tiling[i] = 1.0f;
     return m;
 }

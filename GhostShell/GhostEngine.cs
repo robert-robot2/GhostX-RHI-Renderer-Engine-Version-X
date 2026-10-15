@@ -34,6 +34,8 @@ namespace GhostShell
         public float tilingU, tilingV, offsetU, offsetV;
         public float rotationDeg;
         public float r, g, b;
+        public float metallic, roughness, specular;
+        public float emR, emG, emB, emissiveStrength;
     }
 
     [StructLayout(LayoutKind.Sequential)]

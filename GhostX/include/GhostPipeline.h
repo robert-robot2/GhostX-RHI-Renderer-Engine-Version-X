@@ -27,8 +27,10 @@ struct GhostObjectCB            // matches cbuffer MVPBuffer (VS) and ObjectBuff
     float     uvParams[4];      // tilingU, tilingV, offsetU, offsetV
     float     mapParams[4];     // mode, rotation (radians), wrap, filter
     float     sky[64];          // sky pass parameters (16 float4); zero for every other draw
+    float     pbr[8];           // [0] metallic, [1] roughness, [2] specular, [3] emissive strength,
+    // [4..6] emissive rgb, [7] = 1 when the draw uses PBR (sprites leave it 0)
 };
-static_assert(sizeof(GhostObjectCB) == 512, "GhostObjectCB layout must match the HLSL cbuffer");
+static_assert(sizeof(GhostObjectCB) == 544, "GhostObjectCB layout must match the HLSL cbuffer");
 struct GhostGPULight                // matches struct Light in GhostPS.hlsl
 {
     float posRange[4];              // xyz position, w range
@@ -52,7 +54,7 @@ constexpr unsigned long long GHOST_SCENE_CB_SIZE = (sizeof(GhostSceneCB) + 255) 
 
 
 constexpr unsigned int       GHOST_MAX_OBJECTS = 1024;
-constexpr unsigned long long GHOST_OBJECT_CB_STRIDE = 512;     // room for the Section B material block
+constexpr unsigned long long GHOST_OBJECT_CB_STRIDE = 768;     // room for the Section B material block
 static_assert(sizeof(GhostObjectCB) <= GHOST_OBJECT_CB_STRIDE, "GhostObjectCB too large");
 
 constexpr unsigned int       GHOST_MAX_TEXTURES = 256;

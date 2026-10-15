@@ -34,6 +34,8 @@ cbuffer ObjectBuffer : register(b0)       // same layout as MVPBuffer in GhostVS
     float4 uvParams;                      // tilingU, tilingV, offsetU, offsetV
     float4 mapParams;                     // mode, rotation (radians), wrap, filter
     float4 sky[16];                       // sky pass parameters (see GhostSky_Build)
+    float4 pbrA;                          // metallic, roughness, specular, emissive strength
+    float4 pbrB;                          // emissive rgb, w = 1 when this draw uses PBR
 };
 
 struct PSInput
@@ -147,19 +149,55 @@ float4 MappedTexel(PSInput input)
     return SampleTex(uv, dx, dy, wrap, filt);
 }
 
+// Cheap analytic environment BRDF: how much of the ambient color a surface reflects
+float3 EnvBRDFApprox(float3 f0, float rough, float NoV)
+{
+    const float4 c0 = float4(-1.0f, -0.0275f, -0.572f, 0.022f);
+    const float4 c1 = float4(1.0f, 0.0425f, 1.04f, -0.04f);
+    float4 r = rough * c0 + c1;
+    float a004 = min(r.x * r.x, exp2(-9.28f * NoV)) * r.x + r.y;
+    float2 ab = float2(-1.04f, 1.04f) * a004 + r.zw;
+    return f0 * ab.x + ab.y;
+}
+
+// GGX distribution, Smith visibility, Schlick Fresnel
+float3 SpecularGGX(float NoL, float NoV, float NoH, float VoH, float3 f0, float alpha)
+{
+    float a2 = alpha * alpha;
+    float d = NoH * NoH * (a2 - 1.0f) + 1.0f;
+    float D = a2 / (PI * d * d);
+    float gv = NoL * (NoV * (1.0f - alpha) + alpha);
+    float gl = NoV * (NoL * (1.0f - alpha) + alpha);
+    float vis = 0.5f / max(gv + gl, 1e-4f);
+    float3 F = f0 + (1.0f - f0) * pow(1.0f - VoH, 5.0f);
+    return D * vis * F;
+}
+
+
 float4 PSMain(PSInput input, bool isFront : SV_IsFrontFace) : SV_TARGET
 {
     // Culling is off, so flip the normal on back faces
     float3 N = normalize(input.worldNormal);
     if (!isFront) N = -N;
 
-    // Light in linear space, encode to gamma at the end
-        // The texture view is sRGB, so the sample arrives already linear
+    // The texture view is sRGB, so the sample arrives already linear
     float4 texel = MappedTexel(input);
     const int spriteFlags = (int)(objPad.y + 0.5f);
     if ((spriteFlags & 1) != 0 && texel.a < 0.5f) discard;
     float3 albedo = pow(input.color.rgb, 2.2f) * texel.rgb;
-    float3 lit = ambientColor.rgb;
+
+    // ---- PBR inputs ----
+    const bool  usePbr = pbrB.w > 0.5f;
+    const float metallic = saturate(pbrA.x);
+    const float rough = clamp(pbrA.y, 0.06f, 1.0f);
+    const float alpha = rough * rough;
+    float3 eye = -(view[0].xyz * view[0].w + view[1].xyz * view[1].w + view[2].xyz * view[2].w);
+    float3 V = normalize(eye - input.worldPos);
+    float  NoV = max(dot(N, V), 1e-3f);
+    float3 f0 = lerp(float3(0.08f, 0.08f, 0.08f) * saturate(pbrA.z), albedo, metallic);
+
+    float3 diffuseSum = float3(0.0f, 0.0f, 0.0f);
+    float3 specSum = float3(0.0f, 0.0f, 0.0f);
 
     for (uint i = 0; i < lightCount; i++)
     {
@@ -198,11 +236,35 @@ float4 PSMain(PSInput input, bool isFront : SV_IsFrontFace) : SV_TARGET
             atten = RangeFalloff(dist, L.posRange.w) * saturate(dot(-toLight, faceN));
         }
 
-        lit += radiance * saturate(dot(N, toLight)) * atten;
+        float NoL = saturate(dot(N, toLight));
+        diffuseSum += radiance * NoL * atten;
+
+        if (usePbr && NoL > 0.0f)
+        {
+            float3 H = normalize(V + toLight);
+            // PI keeps the highlight in step with the diffuse term, which isn't divided by PI
+            specSum += radiance * atten * NoL * PI *
+                       SpecularGGX(NoL, NoV, saturate(dot(N, H)), saturate(dot(V, H)), f0, alpha);
+        }
     }
 
-    float3 color = albedo * (((spriteFlags & 2) != 0) ? float3(1.0f, 1.0f, 1.0f) : lit);
-    if (objPad.x > 1.5f) color += float3(0.25f, 0.12f, 0.0f);   // selected-face glow, visible even when unlit
+    float3 color;
+    if ((spriteFlags & 2) != 0)             // unlit
+    {
+        color = albedo;
+    }
+    else if (!usePbr)                       // sprites and anything without a material
+    {
+        color = albedo * (ambientColor.rgb + diffuseSum);
+    }
+    else
+    {
+        float3 ambSpec = ambientColor.rgb * EnvBRDFApprox(f0, rough, NoV);
+        color = albedo * (1.0f - metallic) * (ambientColor.rgb + diffuseSum) + specSum + ambSpec;
+    }
+
+    if (usePbr) color += pow(saturate(pbrB.rgb), 2.2f) * pbrA.w;           // emissive
+    if (objPad.x > 1.5f) color += float3(0.25f, 0.12f, 0.0f);              // selected-face glow, visible even when unlit
     return float4(pow(saturate(color), 1.0f / 2.2f), input.color.a);
 }
 
