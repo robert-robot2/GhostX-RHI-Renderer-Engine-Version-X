@@ -46,13 +46,13 @@ GhostX is a custom game engine built on a **native C++ DirectX 12 renderer (RHI-
 - [x] Phase 7.B: Sprite Sheet Animation Editor / .ghostanim files
 - **Pending**
 - [ ] Phase 8: Publish Release as Standalone Game
-- [ ] Phase : Mesh import fbx, gltf, textures, normal/specular maps, shadows, Z-up support, PBR materials
+- [ ] Phase : Mesh import fbx, gltf, textures, normal/specular maps, shadows, PBR materials
 - [ ] Phase : All camera types and features
 - [ ] Phase : Antialiasing and options menu
-- [ ] Phase : Spot Light
+- [ ] Phase : Spot Light / Ray Casting / Global Illumination / Bloom / Subsurface Scattering
 - [ ] Phase : Shadows
-- [ ] Phase : MetaHuman support
-- [ ] Phase : Tile map support
+- [ ] Phase : MetaHuman 
+- [ ] Phase : Tile Map 
 - [ ] Phase : Audio
 - [ ] Phase : AutoCad Mesh Integration .step import
 - [ ] Phase : Tab Grid Mesh editor
