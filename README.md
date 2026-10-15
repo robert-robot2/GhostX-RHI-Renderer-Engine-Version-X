@@ -44,7 +44,7 @@ GhostX is a custom game engine built on a **native C++ DirectX 12 renderer (RHI-
 - **Phase 5C: UI Designer**
 - **Phase 6: Drop and Drag SkySphere Cubemap with 47 Parameters and custom layers**
 - **Phase 6 also adds the ability for users to create and add their own custom mods to visual studio solution easily.**
-
+- **Phase 7.A: Sprite Sheet Editor Creator**
 ## Editor at a glance
 
 | Panel | What it does |
@@ -126,8 +126,10 @@ Exports for objects, lights, cameras, materials, textures, viewports, mouse inpu
 - [x] Phase 4: Project Save/Load/ Load in VS/ Load Game Template/ Basic UI/Play Mode Only
 - [x] Phase 5: UI Editor Designer
 - [x] Phase 6: Sky Sphere / Custom Mods
+- [x] Phase 7.A: Sprite Sheet Editor Creator
 - **Pending**
-- [ ] Phase 7: Publish Release as Standalone Game
+- [ ] Phase 7.B: Sprite Sheet Animation Editor
+- [ ] Phase 8: Publish Release as Standalone Game
 - [ ] Phase : Mesh import fbx, gltf, textures, normal/specular maps, shadows, Z-up support, PBR materials
 - [ ] Phase : All camera types and features
 - [ ] Phase : Antialiasing and options menu
