@@ -55,29 +55,20 @@ GhostX is a custom game engine built on a **native C++ DirectX 12 renderer (RHI-
 - [ ] Phase : Tile map support
 - [ ] Phase : Audio
 - [ ] Phase : AutoCad Mesh Integration .step import
-- [ ] Phase : Grid Mesh editor
+- [ ] Phase : Tab Grid Mesh editor
 - [ ] Phase : Animation Editor
 - [ ] Phase : Particle Manager
 
-## Rendering Hardware Interface (RHI)
+## Rendering Hardware Interface (RHI) Backends
 - **Featured**
-- [x] DirectX 12 backend
+- [x] DirectX 12 
 - **Pending**
-- [ ] DirectX 11 backend
-- [ ] Vulkan backend
-- [ ] OpenGL backend
+- [ ] DirectX 11 
+- [ ] Vulkan 
+- [ ] OpenGL 
 - [ ] Direct X 4
-- [ ] DirectX 9 backend
+- [ ] DirectX 9
 
-> **Priority:** Start with Vulkan, as it is a modern graphics API and an alternative to DirectX 11/12.
-
-## Future Editor Tools
-- **Featured**
-- [x] UI Panel Editor
-- **Pending**
-- [ ] Particle Editor
-- [ ] Animation Editor
-- [ ] Tab Grid Editor
 
 ## Editor at a glance
 
