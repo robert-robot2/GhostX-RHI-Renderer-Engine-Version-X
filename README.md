@@ -32,19 +32,53 @@ GhostX is a custom game engine built on a **native C++ DirectX 12 renderer (RHI-
 - 🖱️ **Click, drag and drop:** select, move and spawn everything in the viewport
 - 🔗 **Native/managed bridge:** a C++ engine DLL driven from C# through P/Invoke
 - 🌐 **Blazor WASM UI (experimental):** an optional web UI hosted in WebView2
-- **Project Save Load**
-- **Project Can Open In Visual Studio**
-- **Project Play/Stop Added**
-- **Object Roles**
-- **GhostGame.dll outputs to GhostShell.exe, Play mode requires built DLL**
-- **Game Module Template**
-- **Orbit Camera**
-- **Phase 5A: Text and the 2D layer**
-- **Phase 5B: Widgets, .ghostui files and the runtime**
-- **Phase 5C: UI Designer**
-- **Phase 6: Drop and Drag SkySphere Cubemap with 47 Parameters and custom layers**
-- **Phase 6 also adds the ability for users to create and add their own custom mods to visual studio solution easily.**
-- **Phase 7.A: Sprite Sheet Editor Creator**
+
+---
+## Roadmap
+- **Featured**
+- [x] Phase 1: Lighting, viewport icons, click/drag, editor panels
+- [x] Phase 2: Textures and materials, Free Camera entities
+- [x] Phase 3: Dockable editor, live camera viewports, per-camera resolution
+- [x] Phase 4: Project Save/Load/ Load in VS/ Load Game Template/ Basic UI/Play Mode Only/ Object Roles
+- [x] Phase 5: UI Editor Designer/ text And 2D Layer /Widgets, .ghostui files and the runtime**
+- [x] Phase 6: Sky Sphere / Custom Mods /Drop and Drag/ Cubemap with 47 Parameters and custom layers
+- [x] Phase 7.A: Sprite Sheet Editor Creator
+- [x] Phase 7.B: Sprite Sheet Animation Editor
+- **Pending**
+- [ ] Phase 8: Publish Release as Standalone Game
+- [ ] Phase : Mesh import fbx, gltf, textures, normal/specular maps, shadows, Z-up support, PBR materials
+- [ ] Phase : All camera types and features
+- [ ] Phase : Antialiasing and options menu
+- [ ] Phase : Spot Light
+- [ ] Phase : Shadows
+- [ ] Phase : MetaHuman support
+- [ ] Phase : Tile map support
+- [ ] Phase : Audio
+- [ ] Phase : AutoCad Mesh Integration .step import
+- [ ] Phase : Grid Mesh editor
+- [ ] Phase : Animation Editor
+- [ ] Phase : Particle Manager
+
+## Rendering Hardware Interface (RHI)
+- **Featured**
+- [x] DirectX 12 backend
+- **Pending**
+- [ ] DirectX 11 backend
+- [ ] Vulkan backend
+- [ ] OpenGL backend
+- [ ] Direct X 4
+- [ ] DirectX 9 backend
+
+> **Priority:** Start with Vulkan, as it is a modern graphics API and an alternative to DirectX 11/12.
+
+## Future Editor Tools
+- **Featured**
+- [x] UI Panel Editor
+- **Pending**
+- [ ] Particle Editor
+- [ ] Animation Editor
+- [ ] Tab Grid Editor
+
 ## Editor at a glance
 
 | Panel | What it does |
@@ -117,51 +151,6 @@ Exports for objects, lights, cameras, materials, textures, viewports, mouse inpu
 - The **Blazor UI** panel provides the web-based interface layer
 - The **DX12 renderer** runs in the background, rendering directly to the native window surface
 
----
-## Roadmap
-- **Featured**
-- [x] Phase 1: Lighting, viewport icons, click/drag, editor panels
-- [x] Phase 2: Textures and materials, Free Camera entities
-- [x] Phase 3: Dockable editor, live camera viewports, per-camera resolution
-- [x] Phase 4: Project Save/Load/ Load in VS/ Load Game Template/ Basic UI/Play Mode Only
-- [x] Phase 5: UI Editor Designer
-- [x] Phase 6: Sky Sphere / Custom Mods
-- [x] Phase 7.A: Sprite Sheet Editor Creator
-- **Pending**
-- [ ] Phase 7.B: Sprite Sheet Animation Editor
-- [ ] Phase 8: Publish Release as Standalone Game
-- [ ] Phase : Mesh import fbx, gltf, textures, normal/specular maps, shadows, Z-up support, PBR materials
-- [ ] Phase : All camera types and features
-- [ ] Phase : Antialiasing and options menu
-- [ ] Phase : Spot Light
-- [ ] Phase : Shadows
-- [ ] Phase : MetaHuman support
-- [ ] Phase : Tile map support
-- [ ] Phase : Audio
-- [ ] Phase : AutoCad Mesh Integration .step import
-- [ ] Phase : Grid Mesh editor
-- [ ] Phase : Animation Editor
-- [ ] Phase : Particle Manager
-
-## Rendering Hardware Interface (RHI)
-- **Featured**
-- [x] DirectX 12 backend
-- **Pending**
-- [ ] DirectX 11 backend
-- [ ] Vulkan backend
-- [ ] OpenGL backend
-- [ ] Direct X 4
-- [ ] DirectX 9 backend
-
-> **Priority:** Start with Vulkan, as it is a modern graphics API and an alternative to DirectX 11/12.
-
-## Future Editor Tools
-- **Featured**
-- [x] UI Panel Editor
-- **Pending**
-- [ ] Particle Editor
-- [ ] Animation Editor
-- [ ] Tab Grid Editor
 
 ## Known limitations
 
