@@ -135,22 +135,10 @@ GhostX is a custom game engine built on a **native C++ DirectX 12 renderer (RHI-
 Exports for objects, lights, cameras, materials, textures, viewports, mouse input and scene versioning, each with a P/Invoke on the C# side.
 ---
 
-## Usage
+## How To FAQ
 
-- Launch the application from Visual Studio (`Debug → Start`) or the compiled executable
-- Use the **File / Settings / Help** dropdown menus in the WinForms shell to interact with the application
-- The **Blazor UI** panel provides the web-based interface layer
-- The **DX12 renderer** runs in the background, rendering directly to the native window surface
+- Coming Soon
 
-
-## Known limitations
-
-- Camera windows show the scene only (no icons or selection highlight)
-- Picking and dragging work in the main view only
-- Camera windows aren't saved in the layout file
-- Viewport titles use WinForms text, since the engine has no text rendering yet
-- Property grid dropdowns use the light WinForms theme
-- 4 cameras maximum, 256 textures maximum
 
 ## Credits
 
