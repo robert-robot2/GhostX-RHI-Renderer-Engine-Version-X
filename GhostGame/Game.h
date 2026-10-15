@@ -29,6 +29,7 @@ struct GameState
     float camPos[3] = { 0, 0, 0 };
     bool  camSnap = true;
     bool  orbit = false;               // the engine moves the camera (Orbit mode)
+    float hurt = 0.0f;                 // seconds left of the Hurt pose
     int   coins = 0, totalCoins = 0;
     int   enemiesDown = 0, totalEnemies = 0;
     int   deaths = 0;
@@ -73,3 +74,6 @@ void PowerUp_Remove(int id);
 
 // ---- Game.cpp ----
 void Game_Restart(bool died);
+// Sprite helpers: they do nothing (and return 0) if the object is a plain cube
+int  Sprite_Play(int id, const char* clip, const char* fallback);   // 1 if a clip was set
+void Sprite_FaceScreen(int id, float screenVx);                     // > 0 faces right, < 0 faces left

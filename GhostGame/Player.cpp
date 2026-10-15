@@ -102,7 +102,7 @@ void Player_Update(float dt)
             }
             else if (S.invuln <= 0.0f)
             {
-                if (S.big) { Shrink(b); S.invuln = Cfg::Invulnerable; g_vel[1] = 6.0f; }
+                if (S.big) { Shrink(b); S.invuln = Cfg::Invulnerable; S.hurt = 0.45f; g_vel[1] = 6.0f; }
                 else { Game_Restart(true); return; }
             }
         }
@@ -112,7 +112,20 @@ void Player_Update(float dt)
     if (b.pos[1] < Cfg::FallLimit) { Game_Restart(true); return; }
 
     G->SetPosition(S.player, b.pos);
+    // ---- Sprite animation (does nothing if the Player is a plain cube) ----
+    {
+        const float yaw2 = S.camYaw * 0.0174532925f;
+        Sprite_FaceScreen(S.player, g_vel[0] * cosf(yaw2) - g_vel[2] * sinf(yaw2));   // left / right as seen on screen
 
+        const float planar = sqrtf(g_vel[0] * g_vel[0] + g_vel[2] * g_vel[2]);
+        if (S.hurt > 0.0f)        Sprite_Play(S.player, "Hurt", "Idle");
+        else if (!g_grounded)     Sprite_Play(S.player, g_vel[1] > 0.0f ? "Jump" : "Fall", "Jump");
+        else if (planar > 0.4f)   Sprite_Play(S.player, "Walk", "Idle");
+        else                      Sprite_Play(S.player, "Idle", nullptr);
+
+        G->SpriteSetSpeed(S.player, (g_grounded && planar > 0.4f && G->KeyDown(VK_SHIFT)) ? 1.6f : 1.0f);   // running looks faster
+        if (S.hurt > 0.0f) S.hurt -= dt;
+    }
     // ---- Blink while invulnerable ----
     if (S.invuln > 0.0f)
     {

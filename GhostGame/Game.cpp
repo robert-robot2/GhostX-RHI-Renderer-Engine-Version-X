@@ -2,13 +2,24 @@
 
 const GhostGameAPI* G = nullptr;
 GameState S;
+int Sprite_Play(int id, const char* clip, const char* fallback)
+{
+    if (G->SpriteSetClip(id, clip)) return 1;
+    return (fallback && G->SpriteSetClip(id, fallback)) ? 1 : 0;
+}
+
+void Sprite_FaceScreen(int id, float v)
+{
+    if (v > 0.2f) G->SpriteSetFlip(id, 0);
+    else if (v < -0.2f) G->SpriteSetFlip(id, 1);
+}
 static int g_ui = 0;                // handle of Content/UI/HUD.ghostui (0 = failed to load)
 
 void Game_Restart(bool died)
 {
     if (died) S.deaths++;
     S.coins = 0; S.enemiesDown = 0;
-    S.big = false; S.invuln = 0.0f; S.complete = false;
+    S.big = false; S.invuln = 0.0f; S.hurt = 0.0f; S.complete = false;
     Level_Reset();
     Player_Reset();
     S.camSnap = true;
@@ -136,6 +147,7 @@ GHOST_GAME_EXPORT void GhostGame_Update(float dt)
     if (G->KeyPressed('R')) Game_Restart(false);
     if (g_ui && S.complete && G->UIButtonClicked(g_ui, "AgainButton")) Game_Restart(false);
     if (!S.complete) Player_Update(dt);
+    else Sprite_Play(S.player, "Idle", nullptr);
     Entities_Update(dt);
     Camera_Update(dt);
     Hud();

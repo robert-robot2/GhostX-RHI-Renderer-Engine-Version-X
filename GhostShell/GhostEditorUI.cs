@@ -794,7 +794,8 @@ namespace GhostShell
 
         private GhostUIDesigner _designer = null!;
         private PanelDock _dockDesigner = null!;
-
+        private GhostAnimEditor _animEditor = null!;
+        private PanelDock _dockAnim = null!;
 
         private bool _visible = true;
         private bool _syncing;
@@ -820,6 +821,7 @@ namespace GhostShell
             };
             _bottom = browser;
             browser.OpenUIRequested += path => OpenDesigner(path);
+            browser.OpenAnimRequested += path => OpenAnimEditor(path);
             // ---- Left: palette ----
             _left = new Panel { Dock = DockStyle.Fill, BackColor = Bg };
             _palette = new ListBox
@@ -1016,6 +1018,8 @@ namespace GhostShell
             _tools.AddRange(new[] { _dockPalette, _dockHierarchy, _dockDetails, _dockContent });
             _designer = new GhostUIDesigner();
             _dockDesigner = new PanelDock("UIDesigner", "UI Designer", _designer, ToolAreas | DockAreas.Document);
+            _animEditor = new GhostAnimEditor();
+            _dockAnim = new PanelDock("AnimEditor", "Animation Editor", _animEditor, ToolAreas | DockAreas.Document);
             _form.Controls.Add(_dock);
             _dock.BringToFront();                    // the dock fills whatever the menu strip leaves
             _form.MainMenuStrip?.SendToBack();
@@ -1031,6 +1035,7 @@ namespace GhostShell
             "Details" => _dockDetails,
             "Content" => _dockContent,
             "UIDesigner" => _dockDesigner,
+            "AnimEditor" => _dockAnim,
             _ => null!,
         };
 
@@ -1097,11 +1102,12 @@ namespace GhostShell
             _hiddenByToggle.Clear();
             foreach (PanelDock d in _tools) d.DockPanel = null!;
             if (_dockDesigner.DockPanel != null) _dockDesigner.DockPanel = null!;
+            if (_dockAnim.DockPanel != null) _dockAnim.DockPanel = null!;
             ApplyDefaultLayout();
         }
         private bool IsInsideDesigner(Control? c)
         {
-            for (; c != null; c = c.Parent) if (c == _designer) return true;
+            for (; c != null; c = c.Parent) if (c == _designer || c == _animEditor) return true;
             return false;
         }
 
@@ -1120,14 +1126,34 @@ namespace GhostShell
             _designer.FocusCanvas();
         }
 
-        public bool ConfirmDiscardDesigner(IWin32Window owner) => _designer == null || _designer.ConfirmDiscard(owner);
+        public bool ConfirmDiscardDesigner(IWin32Window owner) =>
+        (_designer == null || _designer.ConfirmDiscard(owner)) &&
+        (_animEditor == null || _animEditor.ConfirmDiscard(owner));
 
-        // Ctrl+S is a menu shortcut for Save Scene; while the designer has focus it saves the UI instead
+        // Ctrl+S is a menu shortcut for Save Scene; while an editor window has focus it saves that file instead
         public bool SaveDesignerIfFocused()
         {
-            if (_designer == null || !IsInsideDesigner(Control.FromHandle(GhostShell.Win32.GetFocus()))) return false;
-            _designer.Save();
-            return true;
+            for (Control? c = Control.FromHandle(GhostShell.Win32.GetFocus()); c != null; c = c.Parent)
+            {
+                if (c == _designer) { _designer.Save(); return true; }
+                if (c == _animEditor) { _animEditor.Save(); return true; }
+            }
+            return false;
+        }
+
+        public void OpenAnimEditor(string? path)
+        {
+            if (_dockAnim.DockState == DockState.Unknown)
+            {
+                Rectangle r = _form.Bounds;
+                var b = new Rectangle(r.X + 80, r.Y + 100,
+                    Math.Max(900, Math.Min(1500, r.Width - 140)), Math.Max(560, Math.Min(800, r.Height - 160)));
+                _dockAnim.Show(_dock, b);
+            }
+            else _dockAnim.Show(_dock);
+
+            if (path != null) _animEditor.OpenFile(path);
+            _animEditor.FocusCanvas();
         }
         private bool IsShown(PanelDock d) => d.DockPanel != null && !d.IsHidden;
 
@@ -1153,6 +1179,9 @@ namespace GhostShell
             var uiItem = new ToolStripMenuItem("UI Designer");
             uiItem.Click += (s, e) => OpenDesigner(null);
             menu.DropDownItems.Add(uiItem);
+            var animItem = new ToolStripMenuItem("Animation Editor");
+            animItem.Click += (s, e) => OpenAnimEditor(null);
+            menu.DropDownItems.Add(animItem);
             menu.DropDownItems.Add(new ToolStripSeparator());
             var reset = new ToolStripMenuItem("Reset Layout");
             reset.Click += (s, e) => ResetLayout();
@@ -1164,6 +1193,7 @@ namespace GhostShell
                     ((ToolStripMenuItem)menu.DropDownItems[i]).Checked = IsShown(_tools[i]);
                 // this may be wrong order
                 uiItem.Checked = IsShown(_dockDesigner);
+                animItem.Checked = IsShown(_dockAnim);
             };
 
             int at = strip.Items.Count;                                   // before Help

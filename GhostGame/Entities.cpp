@@ -2,7 +2,7 @@
 #include <vector>
 
 struct Saved { int id; float pos[3], scale[3], color[3]; char tag[32]; int visible; };
-struct Enemy { int id; float homeX; float dir; float vy; bool alive; };
+struct Enemy { int id; float homeX; float dir; float vy; bool alive; float dieTimer; };
 
 static std::vector<Saved> g_saved;
 static std::vector<int>   g_coins, g_enemyIds, g_blocks;
@@ -79,7 +79,14 @@ void Coin_Collect(int id)
 void Enemy_Kill(int id)
 {
     for (Enemy& e : g_enemies)
-        if (e.id == id && e.alive) { e.alive = false; G->SetVisible(id, 0); S.enemiesDown++; }
+        if (e.id == id && e.alive)
+        {
+            e.alive = false;
+            S.enemiesDown++;
+            G->SetTag(id, "Defeated");                       // no longer hurts you or blocks you
+            if (Sprite_Play(id, "Die", "Hurt")) e.dieTimer = 0.5f;   // a sprite plays its Die clip for a moment
+            else G->SetVisible(id, 0);                       // a plain cube just vanishes
+        }
 }
 
 void PowerUp_Remove(int id)
@@ -127,7 +134,11 @@ void Entities_Update(float dt)
     // ---- Enemies: patrol along X, turn at walls and at the patrol limit ----
     for (Enemy& e : g_enemies)
     {
-        if (!e.alive) continue;
+        if (!e.alive)
+        {
+            if (e.dieTimer > 0.0f) { e.dieTimer -= dt; if (e.dieTimer <= 0.0f) G->SetVisible(e.id, 0); }
+            continue;
+        }
         Body b;
         if (!LoadBody(e.id, b)) continue;
 
@@ -141,7 +152,11 @@ void Entities_Update(float dt)
         if (r.hitX) e.dir = -e.dir;
         if (b.pos[0] > e.homeX + Cfg::EnemyPatrol) e.dir = -1.0f;
         else if (b.pos[0] < e.homeX - Cfg::EnemyPatrol) e.dir = 1.0f;
-
+        {
+            const float yaw = S.camYaw * 0.0174532925f;
+            Sprite_FaceScreen(e.id, e.dir * cosf(yaw));      // enemies walk along X, so the screen direction follows the camera
+            Sprite_Play(e.id, "Walk", "Idle");
+        }
         G->SetPosition(e.id, b.pos);
     }
 }
