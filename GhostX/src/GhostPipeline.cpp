@@ -221,6 +221,13 @@ static std::wstring ShaderPath(const wchar_t* file)
     if (GetFileAttributesW(a.c_str()) != INVALID_FILE_ATTRIBUTES) return a;
     return std::wstring(L"shaders/") + file;
 }
+// Every draw that uses the main root signature binds the shadow maps (parameter 3)
+static void BindShadowTable(ID3D12GraphicsCommandList* cmd, GhostPipeline* p)
+{
+    D3D12_GPU_DESCRIPTOR_HANDLE h = p->cbvHeap->GetGPUDescriptorHandleForHeapStart();
+    h.ptr += (UINT64)GHOST_SHADOW_SRV_INDEX * p->srvIncrement;
+    cmd->SetGraphicsRootDescriptorTable(3, h);
+}
 // ---- Mip chain (box filter in linear space, RGBA8 sRGB in/out) ----
 struct MipLevel { unsigned int w, h; std::vector<unsigned char> px; };
 
@@ -321,7 +328,15 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
     srvRange.RegisterSpace = 0;
     srvRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
-    D3D12_ROOT_PARAMETER rp[3] = {};
+    // add after SRV range block this may be incorrrect
+    D3D12_DESCRIPTOR_RANGE shadowRange = {};
+    shadowRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    shadowRange.NumDescriptors = 1;
+    shadowRange.BaseShaderRegister = 1;                       // t1
+    shadowRange.RegisterSpace = 0;
+    shadowRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+    D3D12_ROOT_PARAMETER rp[4] = {};
 
     // b0 — per-object CB (transform + material), VS and PS.
     rp[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
@@ -340,6 +355,12 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
     rp[2].DescriptorTable.NumDescriptorRanges = 1;
     rp[2].DescriptorTable.pDescriptorRanges = &srvRange;
     rp[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+    // t1 — the shadow maps (texture array), pixel shader only
+    rp[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    rp[3].DescriptorTable.NumDescriptorRanges = 1;
+    rp[3].DescriptorTable.pDescriptorRanges = &shadowRange;
+    rp[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
     // s0 linear/wrap, s1 linear/clamp, s2 point/wrap, s3 point/clamp
     D3D12_STATIC_SAMPLER_DESC samplers[4] = {};
@@ -367,7 +388,7 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
     }
 
     D3D12_ROOT_SIGNATURE_DESC rsd = {};
-    rsd.NumParameters = 3;
+    rsd.NumParameters = 4;
     rsd.pParameters = rp;
     rsd.NumStaticSamplers = 4;
     rsd.pStaticSamplers = samplers;
@@ -386,7 +407,35 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
     {
         delete p; return GHOST_FAIL;
     }
+    // ---- Shadow root signature: b0 object, b2 root constants (light matrix etc.), t0 texture (sprite alpha) ----
+    D3D12_ROOT_PARAMETER sp[3] = {};
+    sp[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    sp[0].Descriptor.ShaderRegister = 0;
+    sp[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    sp[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+    sp[1].Constants.ShaderRegister = 2;
+    sp[1].Constants.RegisterSpace = 0;
+    sp[1].Constants.Num32BitValues = 24;
+    sp[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    sp[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    sp[2].DescriptorTable.NumDescriptorRanges = 1;
+    sp[2].DescriptorTable.pDescriptorRanges = &srvRange;
+    sp[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
+    D3D12_ROOT_SIGNATURE_DESC ssd = {};
+    ssd.NumParameters = 3;
+    ssd.pParameters = sp;
+    ssd.NumStaticSamplers = 4;
+    ssd.pStaticSamplers = samplers;
+    ssd.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+
+    ComPtr<ID3DBlob> ssBlob, ssErr;
+    if (FAILED(D3D12SerializeRootSignature(&ssd, D3D_ROOT_SIGNATURE_VERSION_1, &ssBlob, &ssErr)) ||
+        FAILED(device->CreateRootSignature(0, ssBlob->GetBufferPointer(), ssBlob->GetBufferSize(),
+            IID_PPV_ARGS(&p->shadowRootSig))))
+    {
+        delete p; return GHOST_FAIL;
+    }
     // ---- Shaders ----
     ComPtr<ID3DBlob> vs, ps;
     if (CompileShaderFromFile(ShaderPath(L"GhostVS.hlsl").c_str(), "VSMain", "vs_5_0", &vs) != GHOST_OK)
@@ -534,6 +583,37 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
         delete p; return GHOST_FAIL;
     }
 
+    // ---- Shadow PSO: depth only, double sided, the pixel shader writes the depth ----
+    ComPtr<ID3DBlob> shv, shp;
+    if (CompileShaderFromFile(ShaderPath(L"GhostVS.hlsl").c_str(), "ShadowVS", "vs_5_0", &shv) != GHOST_OK ||
+        CompileShaderFromFile(ShaderPath(L"GhostPS.hlsl").c_str(), "ShadowPS", "ps_5_0", &shp) != GHOST_OK)
+    {
+        delete p; return GHOST_FAIL;
+    }
+
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC shd = {};
+    shd.pRootSignature = p->shadowRootSig.Get();
+    shd.VS = { shv->GetBufferPointer(), shv->GetBufferSize() };
+    shd.PS = { shp->GetBufferPointer(), shp->GetBufferSize() };
+    shd.InputLayout = { layout, 4 };
+    shd.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    shd.NumRenderTargets = 0;
+    shd.SampleDesc.Count = 1;
+    shd.SampleMask = UINT_MAX;
+    shd.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+    shd.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+    shd.RasterizerState.DepthClipEnable = FALSE;            // casters in front of the light's near plane still count
+    shd.DepthStencilState.DepthEnable = TRUE;
+    shd.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+    shd.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
+    shd.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+
+    if (FAILED(device->CreateGraphicsPipelineState(&shd, IID_PPV_ARGS(&p->shadowPso))))
+    {
+        delete p; return GHOST_FAIL;
+    }
+
+
     D3D12_GRAPHICS_PIPELINE_STATE_DESC iconDesc = psoDesc;
     iconDesc.VS = { ivs->GetBufferPointer(), ivs->GetBufferSize() };
     iconDesc.PS = { ips->GetBufferPointer(), ips->GetBufferSize() };
@@ -565,7 +645,7 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
 
     // ---- CBV Heap ----
     D3D12_DESCRIPTOR_HEAP_DESC hd = {};
-    hd.NumDescriptors = GHOST_MAX_TEXTURES + GHOST_MAX_SURFACES;     // textures first, then one SRV per offscreen target
+      hd.NumDescriptors = GHOST_MAX_TEXTURES + GHOST_MAX_SURFACES + 1;     // textures, offscreen targets, then the shadow maps
     hd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
     hd.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     device->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&p->cbvHeap));
@@ -586,7 +666,72 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
     p->rtvIncrement = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
     CreateDepthBuffer(device, desc->width, desc->height, p, 0);
+    // ---- Shadow maps: one array texture, a DSV per slice, one SRV over the whole array ----
+    {
+        D3D12_HEAP_PROPERTIES hp = {};
+        hp.Type = D3D12_HEAP_TYPE_DEFAULT;
 
+        D3D12_RESOURCE_DESC rd = {};
+        rd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        rd.Width = GHOST_SHADOW_SIZE;
+        rd.Height = GHOST_SHADOW_SIZE;
+        rd.DepthOrArraySize = GHOST_SHADOW_SLICES;
+        rd.MipLevels = 1;
+        rd.Format = DXGI_FORMAT_R32_TYPELESS;
+        rd.SampleDesc.Count = 1;
+        rd.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+        rd.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+
+        D3D12_CLEAR_VALUE cv = {};
+        cv.Format = DXGI_FORMAT_D32_FLOAT;
+        cv.DepthStencil.Depth = 1.0f;
+
+        if (FAILED(device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd,
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &cv, IID_PPV_ARGS(&p->shadowMap))))
+        {
+            delete p; return GHOST_FAIL;
+        }
+
+        D3D12_DESCRIPTOR_HEAP_DESC sdh = {};
+        sdh.NumDescriptors = GHOST_SHADOW_SLICES;
+        sdh.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+        if (FAILED(device->CreateDescriptorHeap(&sdh, IID_PPV_ARGS(&p->shadowDsvHeap))))
+        {
+            delete p; return GHOST_FAIL;
+        }
+        p->shadowDsvInc = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
+        for (UINT i = 0; i < GHOST_SHADOW_SLICES; i++)
+        {
+            D3D12_DEPTH_STENCIL_VIEW_DESC dv = {};
+            dv.Format = DXGI_FORMAT_D32_FLOAT;
+            dv.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2DARRAY;
+            dv.Texture2DArray.MipSlice = 0;
+            dv.Texture2DArray.FirstArraySlice = i;
+            dv.Texture2DArray.ArraySize = 1;
+            D3D12_CPU_DESCRIPTOR_HANDLE h = p->shadowDsvHeap->GetCPUDescriptorHandleForHeapStart();
+            h.ptr += (SIZE_T)i * p->shadowDsvInc;
+            device->CreateDepthStencilView(p->shadowMap.Get(), &dv, h);
+        }
+
+        D3D12_SHADER_RESOURCE_VIEW_DESC sv = {};
+        sv.Format = DXGI_FORMAT_R32_FLOAT;
+        sv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
+        sv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        sv.Texture2DArray.MostDetailedMip = 0;
+        sv.Texture2DArray.MipLevels = 1;
+        sv.Texture2DArray.FirstArraySlice = 0;
+        sv.Texture2DArray.ArraySize = GHOST_SHADOW_SLICES;
+        D3D12_CPU_DESCRIPTOR_HANDLE sh = p->cbvHeap->GetCPUDescriptorHandleForHeapStart();
+        sh.ptr += (SIZE_T)GHOST_SHADOW_SRV_INDEX * p->srvIncrement;
+        device->CreateShaderResourceView(p->shadowMap.Get(), &sv, sh);
+
+        if (CreateUploadBuffer(device, GHOST_OBJECT_CB_STRIDE * GHOST_MAX_SHADOW_CASTERS, &p->shadowCB) != GHOST_OK)
+        {
+            delete p; return GHOST_FAIL;
+        }
+        D3D12_RANGE srr = { 0, 0 };
+        p->shadowCB->Map(0, &srr, &p->shadowCBMapped);
+    }
     *outPipeline = p;
     return GHOST_OK;
 }
@@ -721,6 +866,7 @@ void GhostDrawIcon(IGhostRHI* rhi, GhostPipeline* p, unsigned int slot)
     cmd->SetDescriptorHeaps(1, heaps);
     cmd->SetPipelineState(p->iconPso.Get());
     cmd->SetGraphicsRootSignature(p->rootSignature.Get());
+    BindShadowTable(cmd, p);
     cmd->SetGraphicsRootConstantBufferView(
         0, p->constantBuffer->GetGPUVirtualAddress() + slot * GHOST_OBJECT_CB_STRIDE);
     cmd->SetGraphicsRootConstantBufferView(1, p->sceneBuffer->GetGPUVirtualAddress());
@@ -742,7 +888,8 @@ void GhostDrawMesh(IGhostRHI* rhi, GhostPipeline* p, int meshId, unsigned int sl
 
     ID3D12DescriptorHeap* heaps[] = { p->cbvHeap.Get() };
     cmd->SetDescriptorHeaps(1, heaps);
-    cmd->SetPipelineState(p->pso.Get());
+    cmd->SetGraphicsRootSignature(p->rootSignature.Get());
+    BindShadowTable(cmd, p);
     cmd->SetGraphicsRootSignature(p->rootSignature.Get());
     cmd->SetGraphicsRootConstantBufferView(
         0, p->constantBuffer->GetGPUVirtualAddress() + slot * GHOST_OBJECT_CB_STRIDE);
@@ -797,6 +944,8 @@ void GhostPipelineDestroy(GhostPipeline* pipeline)
         pipeline->sceneBuffer->Unmap(0, nullptr);
     if (pipeline->uiMapped)
         pipeline->uiVB->Unmap(0, nullptr);
+    if (pipeline->shadowCBMapped)
+        pipeline->shadowCB->Unmap(0, nullptr);
     delete pipeline;
 }
 
@@ -921,6 +1070,7 @@ void GhostDrawBlit(IGhostRHI* rhi, GhostPipeline* p, int id, float x, float y, f
     cmd->SetDescriptorHeaps(1, heaps);
     cmd->SetPipelineState(p->blitPso.Get());
     cmd->SetGraphicsRootSignature(p->rootSignature.Get());
+    BindShadowTable(cmd, p);
     cmd->SetGraphicsRootConstantBufferView(0, p->constantBuffer->GetGPUVirtualAddress());
     cmd->SetGraphicsRootConstantBufferView(1, p->sceneBuffer->GetGPUVirtualAddress());
 
@@ -976,6 +1126,7 @@ void GhostDrawUI(IGhostRHI* rhi, GhostPipeline* p, const std::vector<GhostUIQuad
     cmd->SetDescriptorHeaps(1, heaps);
     cmd->SetPipelineState(p->uiPso.Get());
     cmd->SetGraphicsRootSignature(p->rootSignature.Get());
+    BindShadowTable(cmd, p);
     cmd->SetGraphicsRootConstantBufferView(0, p->constantBuffer->GetGPUVirtualAddress());
     cmd->SetGraphicsRootConstantBufferView(1, p->sceneBuffer->GetGPUVirtualAddress());
 
@@ -1005,7 +1156,8 @@ void GhostDrawSky(IGhostRHI* rhi, GhostPipeline* p, unsigned int slot, unsigned 
 
     ID3D12DescriptorHeap* heaps[] = { p->cbvHeap.Get() };
     cmd->SetDescriptorHeaps(1, heaps);
-    cmd->SetPipelineState(p->skyPso.Get());
+    cmd->SetGraphicsRootSignature(p->rootSignature.Get());
+    BindShadowTable(cmd, p);
     cmd->SetGraphicsRootSignature(p->rootSignature.Get());
     cmd->SetGraphicsRootConstantBufferView(
         0, p->constantBuffer->GetGPUVirtualAddress() + slot * GHOST_OBJECT_CB_STRIDE);
@@ -1021,4 +1173,91 @@ void GhostDrawSky(IGhostRHI* rhi, GhostPipeline* p, unsigned int slot, unsigned 
 
     cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     cmd->DrawInstanced(3, 1, 0, 0);
+}
+
+
+// ============================================================
+//  Shadow pass
+// ============================================================
+void GhostUpdateShadowCB(GhostPipeline* p, unsigned int slot, const GhostObjectCB* cb)
+{
+    if (slot >= GHOST_MAX_SHADOW_CASTERS || !p->shadowCBMapped) return;
+    memcpy((char*)p->shadowCBMapped + slot * GHOST_OBJECT_CB_STRIDE, cb, sizeof(GhostObjectCB));
+}
+
+void GhostShadowBegin(IGhostRHI* rhi, GhostPipeline* p)
+{
+    auto* cmd = rhi->GetCmdList();
+
+    D3D12_RESOURCE_BARRIER b = {};
+    b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    b.Transition.pResource = p->shadowMap.Get();
+    b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    b.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    b.Transition.StateAfter = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+    cmd->ResourceBarrier(1, &b);
+
+    ID3D12DescriptorHeap* heaps[] = { p->cbvHeap.Get() };
+    cmd->SetDescriptorHeaps(1, heaps);
+    cmd->SetPipelineState(p->shadowPso.Get());
+    cmd->SetGraphicsRootSignature(p->shadowRootSig.Get());
+    cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+}
+
+void GhostShadowSlice(IGhostRHI* rhi, GhostPipeline* p, int slice, const float* vp16, const float* posFar4, float mode)
+{
+    auto* cmd = rhi->GetCmdList();
+
+    D3D12_CPU_DESCRIPTOR_HANDLE dsv = p->shadowDsvHeap->GetCPUDescriptorHandleForHeapStart();
+    dsv.ptr += (SIZE_T)slice * p->shadowDsvInc;
+    cmd->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+    cmd->OMSetRenderTargets(0, nullptr, FALSE, &dsv);
+
+    D3D12_VIEWPORT vp = { 0.0f, 0.0f, (float)GHOST_SHADOW_SIZE, (float)GHOST_SHADOW_SIZE, 0.0f, 1.0f };
+    D3D12_RECT sc = { 0, 0, (LONG)GHOST_SHADOW_SIZE, (LONG)GHOST_SHADOW_SIZE };
+    cmd->RSSetViewports(1, &vp);
+    cmd->RSSetScissorRects(1, &sc);
+
+    float k[24] = {};
+    memcpy(k, vp16, 16 * sizeof(float));
+    memcpy(k + 16, posFar4, 4 * sizeof(float));
+    k[20] = mode;
+    cmd->SetGraphicsRoot32BitConstants(1, 24, k, 0);
+}
+
+void GhostShadowDraw(IGhostRHI* rhi, GhostPipeline* p, int meshId, unsigned int slot, unsigned int texIndex)
+{
+    if (meshId < 0 || meshId >= GHOST_MESH_COUNT || slot >= GHOST_MAX_SHADOW_CASTERS) return;
+    const GhostMesh& m = p->meshes[meshId];
+    auto* cmd = rhi->GetCmdList();
+
+    cmd->SetGraphicsRootConstantBufferView(0, p->shadowCB->GetGPUVirtualAddress() + slot * GHOST_OBJECT_CB_STRIDE);
+
+    if (texIndex >= p->textureCount) texIndex = 0;
+    D3D12_GPU_DESCRIPTOR_HANDLE srv = p->cbvHeap->GetGPUDescriptorHandleForHeapStart();
+    srv.ptr += (UINT64)texIndex * p->srvIncrement;
+    cmd->SetGraphicsRootDescriptorTable(2, srv);
+
+    cmd->IASetVertexBuffers(0, 1, &m.vbView);
+    cmd->IASetIndexBuffer(&m.ibView);
+    cmd->DrawIndexedInstanced(m.indexCount, 1, 0, 0, 0);
+}
+
+// Back to a readable texture, and restore the viewport the main pass expects
+void GhostShadowEnd(IGhostRHI* rhi, GhostPipeline* p, unsigned int w, unsigned int h)
+{
+    auto* cmd = rhi->GetCmdList();
+
+    D3D12_RESOURCE_BARRIER b = {};
+    b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    b.Transition.pResource = p->shadowMap.Get();
+    b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    b.Transition.StateBefore = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+    b.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    cmd->ResourceBarrier(1, &b);
+
+    D3D12_VIEWPORT vp = { 0.0f, 0.0f, (float)w, (float)h, 0.0f, 1.0f };
+    D3D12_RECT sc = { 0, 0, (LONG)w, (LONG)h };
+    cmd->RSSetViewports(1, &vp);
+    cmd->RSSetScissorRects(1, &sc);
 }

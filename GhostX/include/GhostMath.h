@@ -80,7 +80,16 @@ struct GhostMat4
         r.m[0][3] = x; r.m[1][3] = y; r.m[2][3] = z;
         return r;
     }
-
+    static GhostMat4 OrthoLH(float w, float h, float zn, float zf)
+    {
+        GhostMat4 r;
+        r.m[0][0] = 2.0f / w;
+        r.m[1][1] = 2.0f / h;
+        r.m[2][2] = 1.0f / (zf - zn);
+        r.m[2][3] = -zn / (zf - zn);
+        r.m[3][3] = 1.0f;
+        return r;
+    }
     static GhostMat4 PerspectiveFovLH(float fovY, float aspect, float zNear, float zFar)
     {
         float yScale = 1.0f / tanf(fovY * 0.5f);

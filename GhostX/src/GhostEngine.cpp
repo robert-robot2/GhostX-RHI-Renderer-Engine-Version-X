@@ -851,6 +851,156 @@ static GhostCamera* InputCamera()
     return c ? c : FindCamera(g_scene.activeCameraId);
 }
 
+
+// ============================================================
+//  Shadows: a depth map per directional light, six (a cube) per point / rect light.
+//  Rendered inside every viewport's command list, before the main pass.
+// ============================================================
+static bool ShadowEligible(const GhostObject& o, const GhostLight& l)
+{
+    return o.shadowMode == 1 || (o.shadowMode == 2 && o.shadowLightId == l.id);
+}
+
+static void RenderShadowPass(GhostSceneCB& cb, const GhostVec3& eye, unsigned int rw, unsigned int rh)
+{
+    for (unsigned int i = 0; i < GHOST_MAX_LIGHTS; i++) cb.lights[i].shadow[0] = -1.0f;   // "no shadow" by default
+    cb.shadowGlobal[0] = 0.0f;
+    cb.shadowGlobal[1] = (float)GHOST_SHADOW_SIZE;
+    if (!g_scene.shadowsEnabled || g_scene.shadowStrength <= 0.0f || cb.lightCount == 0) return;
+
+    bool anyLight = false;
+    for (const GhostLight& l : g_scene.lights) if (l.castShadows) anyLight = true;
+    if (!anyLight) return;
+
+    const bool playing = g_playState != GhostPlayState::Editing;
+
+    // ---- casters: written once into the shadow constant buffer, reused by every slice ----
+    struct Caster { const GhostObject* o; unsigned int slot; unsigned int tex; };
+    static std::vector<Caster> casters;
+    casters.clear();
+
+    GhostVec3 bmin = { 1e30f, 1e30f, 1e30f }, bmax = { -1e30f, -1e30f, -1e30f };
+    unsigned int slot = 0;
+    for (const GhostObject& o : g_scene.objects)
+    {
+        if (!o.visible && playing) continue;
+
+        const GhostVec3 mn = kMeshMin[o.meshId], mx = kMeshMax[o.meshId];       // scene bounds from every visible object
+        const float ex = fmaxf(fabsf(mn.x), fabsf(mx.x)) * fabsf(o.scale.x);
+        const float ey = fmaxf(fabsf(mn.y), fabsf(mx.y)) * fabsf(o.scale.y);
+        const float ez = fmaxf(fabsf(mn.z), fabsf(mx.z)) * fabsf(o.scale.z);
+        const float r = sqrtf(ex * ex + ey * ey + ez * ez);
+        bmin.x = fminf(bmin.x, o.position.x - r); bmax.x = fmaxf(bmax.x, o.position.x + r);
+        bmin.y = fminf(bmin.y, o.position.y - r); bmax.y = fmaxf(bmax.y, o.position.y + r);
+        bmin.z = fminf(bmin.z, o.position.z - r); bmax.z = fmaxf(bmax.z, o.position.z + r);
+
+        if (o.shadowMode == 0 || slot >= GHOST_MAX_SHADOW_CASTERS) continue;
+
+        GhostObjectCB c = {};
+        float byw;
+        c.model = GhostObjectModel(o, BillYaw(o, eye, byw));
+        unsigned int texIdx = 0;
+        if (o.meshId == GHOST_MESH_QUAD)                                        // sprite: alpha-tested, same frame as the main pass
+        {
+            const GhostSprite& sp = o.sprite;
+            int tex, cols, rows, frame;
+            SpriteDrawInfo(o, tex, cols, rows, frame);
+            c.pad[1] = sp.alphaClip ? 1.0f : 0.0f;
+            const int col = frame % cols, row = frame / cols;
+            c.uvParams[0] = (sp.flipX ? -1.0f : 1.0f) / (float)cols;
+            c.uvParams[1] = 1.0f / (float)rows;
+            c.uvParams[2] = ((float)col + 0.5f) / (float)cols - 0.5f;
+            c.uvParams[3] = ((float)row + 0.5f) / (float)rows - 0.5f;
+            texIdx = (unsigned int)(tex > 0 ? tex : 0);
+        }
+        GhostUpdateShadowCB(g_pipeline, slot, &c);
+        casters.push_back({ &o, slot, texIdx });
+        slot++;
+    }
+    if (casters.empty()) return;
+
+    const GhostVec3 center = (bmin + bmax) * 0.5f;
+    float R = (bmax - bmin).Length() * 0.5f;
+    R = R < 1.0f ? 1.0f : (R > 1000.0f ? 1000.0f : R);
+
+    // ---- one job per map slice ----
+    struct Job { const GhostLight* light; int slice; float vp[16]; float posFar[4]; float mode; };
+    static std::vector<Job> jobs;
+    jobs.clear();
+
+    auto push = [&](const GhostLight& l, int slice, const GhostMat4& vpm, const GhostVec3& pos, float farW, float mode)
+        {
+            Job j;
+            j.light = &l; j.slice = slice; j.mode = mode;
+            memcpy(j.vp, vpm.m, 16 * sizeof(float));
+            j.posFar[0] = pos.x; j.posFar[1] = pos.y; j.posFar[2] = pos.z; j.posFar[3] = farW;
+            memcpy(cb.shadowVP[slice], vpm.m, 16 * sizeof(float));
+            jobs.push_back(j);
+        };
+
+    static const GhostVec3 kFaceDir[6] = { { 1, 0, 0 },{ -1, 0, 0 },{ 0, 1, 0 },{ 0, -1, 0 },{ 0, 0, 1 },{ 0, 0, -1 } };
+    static const GhostVec3 kFaceUp[6] = { { 0, 1, 0 },{ 0, 1, 0 },{ 0, 0, 1 },{ 0, 0, 1 },{ 0, 1, 0 },{ 0, 1, 0 } };
+    const float kTanHalf = 1.05f;                              // a little wider than 90 degrees, so soft edges stay inside a face
+
+    int next = 0;
+    for (size_t li = 0; li < g_scene.lights.size() && li < cb.lightCount; li++)
+    {
+        const GhostLight& l = g_scene.lights[li];
+        if (!l.castShadows) continue;
+
+        bool has = false;
+        for (const Caster& c : casters) if (ShadowEligible(*c.o, l)) { has = true; break; }
+        if (!has) continue;
+
+        const bool dirL = (l.type == GhostLightType::Directional);
+        const int need = dirL ? 1 : 6;
+        if (next + need > (int)GHOST_SHADOW_SLICES) continue;       // out of maps: this light casts no shadows
+
+        GhostGPULight& g = cb.lights[li];
+        g.shadow[0] = (float)next;
+
+        if (dirL)
+        {
+            const GhostVec3 dir = LightForward(l).Normalize();
+            const GhostVec3 up = fabsf(dir.y) > 0.99f ? GhostVec3(0, 0, 1) : GhostVec3(0, 1, 0);
+            const GhostVec3 from = center - dir * (R * 1.1f);
+            const float farW = R * 2.2f;
+            const GhostMat4 vpm = GhostMat4::OrthoLH(2.0f * R, 2.0f * R, 0.0f, farW) * GhostMat4::LookAtLH(from, center, up);
+            g.shadow[1] = farW;
+            g.shadow[2] = (2.0f * R) / (float)GHOST_SHADOW_SIZE;
+            push(l, next, vpm, center, farW, 0.0f);
+        }
+        else
+        {
+            const float farW = fmaxf(l.range, 0.5f);
+            const GhostMat4 proj = GhostMat4::PerspectiveFovLH(2.0f * atanf(kTanHalf), 1.0f, 0.05f, farW);
+            g.shadow[1] = farW;
+            g.shadow[2] = (2.0f * kTanHalf) / (float)GHOST_SHADOW_SIZE;
+            for (int f = 0; f < 6; f++)
+                push(l, next + f, proj * GhostMat4::LookAtLH(l.position, l.position + kFaceDir[f], kFaceUp[f]),
+                    l.position, farW, 1.0f);
+        }
+        next += need;
+    }
+    if (jobs.empty()) return;
+
+    cb.shadowGlobal[0] = g_scene.shadowStrength;
+
+    GhostShadowBegin(g_rhi, g_pipeline);
+    for (const Job& j : jobs)
+    {
+        GhostShadowSlice(g_rhi, g_pipeline, j.slice, j.vp, j.posFar, j.mode);
+        for (const Caster& c : casters)
+            if (ShadowEligible(*c.o, *j.light)) GhostShadowDraw(g_rhi, g_pipeline, c.o->meshId, c.slot, c.tex);
+    }
+    GhostShadowEnd(g_rhi, g_pipeline, rw, rh);
+}
+
+
+
+
+
+
 // ============================================================
 //  One viewport = one surface + one camera. The GPU is idle between viewports
 //  (EndFrame waits), so the constant buffer slots are simply reused.
@@ -924,6 +1074,7 @@ static void RenderViewport(int vp)
 
     GhostSceneCB sceneCB;
     BuildSceneCB(g_scene, sceneCB);
+    RenderShadowPass(sceneCB, eye, rw, rh);          // renders the shadow maps and fills the shadow fields
     GhostUpdateSceneCB(g_pipeline, &sceneCB);
 
     // ---- Draw scene objects (one draw per run of faces that share a material) ----
@@ -967,6 +1118,7 @@ static void RenderViewport(int vp)
             cb.proj = proj;
             cb.color[0] = sp.tint[0]; cb.color[1] = sp.tint[1]; cb.color[2] = sp.tint[2]; cb.color[3] = 1.0f;
             cb.pad[0] = selected ? 1.0f : 0.0f;
+            cb.pad[2] = o.receiveShadows ? 0.0f : 1.0f;
             cb.pad[1] = (float)((sp.alphaClip ? 1 : 0) | (sp.unlit ? 2 : 0) | 4);   // shader flags
             const int col = frame % cols, row = frame / cols;
             cb.uvParams[0] = (sp.flipX ? -1.0f : 1.0f) / (float)cols;
@@ -998,6 +1150,7 @@ static void RenderViewport(int vp)
             cb.color[0] = m.tint[0]; cb.color[1] = m.tint[1]; cb.color[2] = m.tint[2]; cb.color[3] = 1.0f;
             cb.useVertexColor = o.useVertexColor ? 1.0f : 0.0f;
             cb.pad[0] = selected ? ((f == hl) ? 2.0f : 1.0f) : 0.0f;   // 1 = selected, 2 = selected face
+            cb.pad[2] = o.receiveShadows ? 0.0f : 1.0f;
             cb.uvParams[0] = m.tiling[0]; cb.uvParams[1] = m.tiling[1];
             cb.uvParams[2] = m.offset[0]; cb.uvParams[3] = m.offset[1];
             cb.mapParams[0] = (float)m.mapMode;
@@ -1618,7 +1771,8 @@ void GhostEngine_ClearScene()
     g_scene.lights.clear();
     g_scene.cameras.clear(); g_scene.mods.clear();
     g_scene.ambientColor[0] = g_scene.ambientColor[1] = g_scene.ambientColor[2] = 1.0f;
-    g_scene.ambientIntensity = 0.15f;
+    g_scene.ambientIntensity = 0.15f;    g_scene.shadowsEnabled = true;
+    g_scene.shadowStrength = 1.0f;
     g_scene.nextId = 1;
     g_scene.selectedId = 0;
     g_scene.selectedFace = -1;
@@ -2519,3 +2673,56 @@ void GhostEngine_SetSpriteText(int id, int which, const char* text)
 }
 
 void GhostEngine_ReloadAnimations() { ReloadAnims(); }
+
+// ============================================================
+//  Exported: shadows
+// ============================================================
+int GhostEngine_GetObjectShadow(int id, int* mode, int* lightId, int* receive)
+{
+    GhostObject* o = FindObject(id);
+    if (!o) return 0;
+    if (mode) *mode = o->shadowMode;
+    if (lightId) *lightId = o->shadowLightId;
+    if (receive) *receive = o->receiveShadows ? 1 : 0;
+    return 1;
+}
+
+void GhostEngine_SetObjectShadow(int id, int mode, int lightId, int receive)
+{
+    GhostObject* o = FindObject(id);
+    if (!o) return;
+    if (mode < 0) mode = 0;
+    if (mode > 2) mode = 2;
+    if (mode == 2)
+    {
+        bool ok = false;
+        for (const GhostLight& l : g_scene.lights) if (l.id == lightId) ok = true;
+        if (!ok) { mode = 1; lightId = 0; }
+    }
+    o->shadowMode = mode;
+    o->shadowLightId = (mode == 2) ? lightId : 0;
+    o->receiveShadows = (receive != 0);
+}
+
+int GhostEngine_GetLightShadows(int id)
+{
+    for (const GhostLight& l : g_scene.lights) if (l.id == id) return l.castShadows ? 1 : 0;
+    return -1;
+}
+
+void GhostEngine_SetLightShadows(int id, int on)
+{
+    for (GhostLight& l : g_scene.lights) if (l.id == id) { l.castShadows = (on != 0); return; }
+}
+
+void GhostEngine_GetShadowSettings(int* enabled, float* strength)
+{
+    if (enabled) *enabled = g_scene.shadowsEnabled ? 1 : 0;
+    if (strength) *strength = g_scene.shadowStrength;
+}
+
+void GhostEngine_SetShadowSettings(int enabled, float strength)
+{
+    g_scene.shadowsEnabled = (enabled != 0);
+    g_scene.shadowStrength = strength < 0.0f ? 0.0f : (strength > 1.0f ? 1.0f : strength);
+}

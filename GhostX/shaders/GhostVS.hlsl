@@ -171,3 +171,28 @@ SkyPSInput SkyVS(uint vid : SV_VertexID)
     o.dir = view[0].xyz * v.x + view[1].xyz * v.y + view[2].xyz * v.z;   // view rows are the camera axes
     return o;
 }
+
+// ---------------- Shadows: depth-only pass from a light ----------------
+cbuffer ShadowParams : register(b2)
+{
+    row_major float4x4 lightVP;
+    float4 lightPosFar;          // xyz = light position, w = far distance (point lights)
+    float4 shadowMode;           // x: 0 = directional (depth = clip z), 1 = point (depth = distance / far)
+};
+
+struct ShadowPSInput
+{
+    float4 pos : SV_POSITION;
+    float2 uv : TEXCOORD0;
+    float3 worldPos : TEXCOORD1;
+};
+
+ShadowPSInput ShadowVS(VSInput input)
+{
+    float4 wp = mul(model, float4(input.pos, 1.0f));
+    ShadowPSInput o;
+    o.pos = mul(lightVP, wp);
+    o.uv = input.uv;
+    o.worldPos = wp.xyz;
+    return o;
+}

@@ -7,6 +7,7 @@ struct Light
     float4 colorIntensity;  // rgb color, w intensity
     float4 rectRight;       // xyz right axis, w half-width
     float4 rectUp;          // xyz up axis, w half-height
+    float4 shadow;          // x first map slice (-1 = none), y far, z texel size
 };
 
 cbuffer SceneBuffer : register(b1)
@@ -14,7 +15,9 @@ cbuffer SceneBuffer : register(b1)
     float4 ambientColor;    // rgb = color * intensity
     uint   lightCount;
     uint3  padScene;
+    float4 shadowGlobal;    // x strength (0 = off), y map size
     Light  lights[MAX_LIGHTS];
+    row_major float4x4 shadowVP[MAX_LIGHTS];
 };
 
 Texture2D    gTexture : register(t0);
@@ -22,6 +25,7 @@ SamplerState sLinWrap : register(s0);
 SamplerState sLinClamp : register(s1);
 SamplerState sPtWrap : register(s2);
 SamplerState sPtClamp : register(s3);
+Texture2DArray<float> gShadowMap : register(t1);
 
 cbuffer ObjectBuffer : register(b0)       // same layout as MVPBuffer in GhostVS.hlsl
 {
@@ -174,6 +178,53 @@ float3 SpecularGGX(float NoL, float NoV, float NoH, float VoH, float3 f0, float 
 }
 
 
+float ShadowTap(float2 uv, float slice, float refDepth)
+{
+    float stored = gShadowMap.SampleLevel(sPtClamp, float3(uv, slice), 0);
+    return refDepth <= stored ? 1.0f : 0.0f;
+}
+
+// 0 = fully shadowed, 1 = lit. Normal-offset plus a small depth bias, then a 3x3 soft edge.
+float ShadowFactor(Light L, float3 worldPos, float3 N, int type)
+{
+    const float  farW = max(L.shadow.y, 1e-3f);
+    const float3 rel = worldPos - L.posRange.xyz;
+    const float  dist = length(rel);
+    const float  texel = (type == 0) ? L.shadow.z : L.shadow.z * dist;
+    const float3 p = worldPos + N * (texel * 1.5f);
+    const float  bias = (texel * 2.0f) / farW;
+
+    float  slice = L.shadow.x;
+    float4 clip;
+    float  refDepth;
+
+    if (type == 0)                                           // directional: orthographic, depth = clip z
+    {
+        clip = mul(shadowVP[(int)slice], float4(p, 1.0f));
+        refDepth = min(clip.z, 1.0f) - bias;
+    }
+    else                                                     // point / rect: pick the cube face, depth = distance / far
+    {
+        float3 a = abs(rel);
+        int face = (a.x >= a.y && a.x >= a.z) ? (rel.x > 0.0f ? 0 : 1)
+            : ((a.y >= a.z) ? (rel.y > 0.0f ? 2 : 3) : (rel.z > 0.0f ? 4 : 5));
+        slice += face;
+        clip = mul(shadowVP[(int)slice], float4(p, 1.0f));
+        refDepth = length(p - L.posRange.xyz) / farW - bias;
+    }
+
+    if (clip.w <= 1e-4f) return 1.0f;
+    float2 uv = float2(clip.x / clip.w * 0.5f + 0.5f, 0.5f - clip.y / clip.w * 0.5f);
+    if (uv.x < 0.0f || uv.x > 1.0f || uv.y < 0.0f || uv.y > 1.0f) return 1.0f;      // outside the map: lit
+
+    const float step = 1.0f / shadowGlobal.y;
+    float lit = 0.0f;
+    [unroll] for (int y = -1; y <= 1; y++)
+        [unroll] for (int x = -1; x <= 1; x++)
+        lit += ShadowTap(uv + float2((float)x, (float)y) * step, slice, refDepth);
+    return lit / 9.0f;
+}
+
 float4 PSMain(PSInput input, bool isFront : SV_IsFrontFace) : SV_TARGET
 {
     // Culling is off, so flip the normal on back faces
@@ -184,6 +235,7 @@ float4 PSMain(PSInput input, bool isFront : SV_IsFrontFace) : SV_TARGET
     float4 texel = MappedTexel(input);
     const int spriteFlags = (int)(objPad.y + 0.5f);
     if ((spriteFlags & 1) != 0 && texel.a < 0.5f) discard;
+    const bool receive = objPad.z < 0.5f;                  // Receive Shadows
     float3 albedo = pow(input.color.rgb, 2.2f) * texel.rgb;
 
     // ---- PBR inputs ----
@@ -237,6 +289,8 @@ float4 PSMain(PSInput input, bool isFront : SV_IsFrontFace) : SV_TARGET
         }
 
         float NoL = saturate(dot(N, toLight));
+        if (receive && NoL > 0.0f && atten > 0.0f && L.shadow.x >= 0.0f)
+            atten *= lerp(1.0f, ShadowFactor(L, input.worldPos, N, type), shadowGlobal.x);
         diffuseSum += radiance * NoL * atten;
 
         if (usePbr && NoL > 0.0f)
@@ -457,4 +511,32 @@ float4 SkyPS(SkyPSInput input) : SV_TARGET
     float m = max(enc.r, max(enc.g, enc.b));
     float mask = lerp(1.0f, smoothstep(sky[11].x, sky[11].x + max(sky[11].y, 1e-4f), m), sky[10].w);
     return float4(enc * sky[9].rgb, sky[9].w * mask * (1.0f - groundAmt));
+}
+
+// ---------------- Shadows: depth-only pass ----------------
+cbuffer ShadowParams : register(b2)
+{
+    row_major float4x4 lightVP;
+    float4 lightPosFar;
+    float4 shadowMode;
+};
+
+struct ShadowPSInput
+{
+    float4 pos : SV_POSITION;
+    float2 uv : TEXCOORD0;
+    float3 worldPos : TEXCOORD1;
+};
+
+float ShadowPS(ShadowPSInput input) : SV_Depth
+{
+    // sprites cast the shadow of their opaque pixels (same frame mapping as the main pass)
+    if (((int)(objPad.y + 0.5f) & 1) != 0)
+    {
+        float2 uv = (input.uv - 0.5f) * uvParams.xy + 0.5f + uvParams.zw;
+        if (gTexture.SampleLevel(sPtClamp, uv, 0).a < 0.5f) discard;
+    }
+    if (shadowMode.x > 0.5f)                                  // point light: distance / far
+        return saturate(length(input.worldPos - lightPosFar.xyz) / max(lightPosFar.w, 1e-3f));
+    return input.pos.z;                                       // directional: orthographic depth
 }

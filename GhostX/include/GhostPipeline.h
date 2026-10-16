@@ -31,6 +31,9 @@ struct GhostObjectCB            // matches cbuffer MVPBuffer (VS) and ObjectBuff
     // [4..6] emissive rgb, [7] = 1 when the draw uses PBR (sprites leave it 0)
 };
 static_assert(sizeof(GhostObjectCB) == 544, "GhostObjectCB layout must match the HLSL cbuffer");
+constexpr unsigned int GHOST_SHADOW_SIZE = 1024;     // each shadow map is 1024 x 1024
+constexpr unsigned int GHOST_SHADOW_SLICES = 16;       // a directional light uses 1, a point or rect light 6
+
 struct GhostGPULight                // matches struct Light in GhostPS.hlsl
 {
     float posRange[4];              // xyz position, w range
@@ -38,15 +41,18 @@ struct GhostGPULight                // matches struct Light in GhostPS.hlsl
     float colorIntensity[4];        // rgb color, w intensity
     float rectRight[4];             // xyz right axis, w half-width
     float rectUp[4];                // xyz up axis, w half-height
-};                                  // 80 bytes
+    float shadow[4];                // x first map slice (-1 = no shadow), y far (world units), z texel size, w unused
+};                                  // 96 bytes
 
 struct GhostSceneCB                 // matches cbuffer SceneBuffer (b1)
 {
     float        ambient[4];        // rgb = color * intensity
     unsigned int lightCount;
     unsigned int pad[3];
+    float        shadowGlobal[4];   // x strength (0 = off), y map size
     GhostGPULight lights[GHOST_MAX_LIGHTS];
-};                                  // 32 + 16*80 = 1312 bytes
+    float        shadowVP[GHOST_SHADOW_SLICES][16];     // light view-projection per slice
+};                               // 32 + 16*80 = 1312 bytes
 
 
 // does this line get deleted as well?
@@ -58,7 +64,8 @@ constexpr unsigned long long GHOST_OBJECT_CB_STRIDE = 768;     // room for the S
 static_assert(sizeof(GhostObjectCB) <= GHOST_OBJECT_CB_STRIDE, "GhostObjectCB too large");
 
 constexpr unsigned int       GHOST_MAX_TEXTURES = 256;
-
+constexpr unsigned int GHOST_MAX_SHADOW_CASTERS = 256;
+constexpr unsigned int GHOST_SHADOW_SRV_INDEX = GHOST_MAX_TEXTURES + GHOST_MAX_SURFACES;   // last slot of the SRV heap
 
 struct GhostMesh
 {
@@ -99,9 +106,19 @@ struct GhostPipeline
     ComPtr<ID3D12PipelineState>  blitPso;
     ComPtr<ID3D12PipelineState>  uiPso;
     ComPtr<ID3D12PipelineState>  skyPso;
+    // ---- Shadows ----
+    ComPtr<ID3D12RootSignature>  shadowRootSig;
+    ComPtr<ID3D12PipelineState>  shadowPso;
+    ComPtr<ID3D12Resource>       shadowMap;            // Texture2DArray, GHOST_SHADOW_SLICES slices
+    ComPtr<ID3D12DescriptorHeap> shadowDsvHeap;
+    unsigned int                 shadowDsvInc = 0;
+    ComPtr<ID3D12Resource>       shadowCB;             // per-caster constant buffers (GhostObjectCB layout)
+    void* shadowCBMapped = nullptr;
+
     ComPtr<ID3D12Resource>       uiVB;
     void* uiMapped = nullptr;
     bool                         rtvOverrideActive = false;
+
     D3D12_CPU_DESCRIPTOR_HANDLE  rtvOverride = {};
     ComPtr<ID3D12DescriptorHeap> dsvHeap; 
 
@@ -157,3 +174,11 @@ void GhostDrawUI(IGhostRHI* rhi, GhostPipeline* pipeline, const std::vector<Ghos
     unsigned int w, unsigned int h, float scale);
 
 void GhostDrawSky(IGhostRHI* rhi, GhostPipeline* pipeline, unsigned int slot, unsigned int textureIndex);
+
+// ---- Shadow pass ----
+void GhostUpdateShadowCB(GhostPipeline* pipeline, unsigned int slot, const GhostObjectCB* cb);
+void GhostShadowBegin(IGhostRHI* rhi, GhostPipeline* pipeline);
+void GhostShadowSlice(IGhostRHI* rhi, GhostPipeline* pipeline, int slice,
+    const float* vp16, const float* posFar4, float mode);       // mode 0 = directional, 1 = point
+void GhostShadowDraw(IGhostRHI* rhi, GhostPipeline* pipeline, int meshId, unsigned int slot, unsigned int textureIndex);
+void GhostShadowEnd(IGhostRHI* rhi, GhostPipeline* pipeline, unsigned int w, unsigned int h);

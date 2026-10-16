@@ -468,6 +468,61 @@ namespace GhostShell
         protected override string[] Items => Names;
     }
 
+    internal static class GhostShadowUI
+    {
+        public const string Off = "Off", All = "All Lights";
+
+        public static List<string> Choices()
+        {
+            var list = new List<string> { All, Off };
+            foreach (var (_, name) in GhostEntityList.Of(1)) list.Add(name);      // one entry per light
+            return list;
+        }
+
+        public static string GetCast(int objectId)
+        {
+            if (GhostEngine.GhostEngine_GetObjectShadow(objectId, out int mode, out int light, out _) == 0) return All;
+            if (mode == 0) return Off;
+            if (mode == 2)
+            {
+                string n = GhostNames.Of(light);
+                if (n.Length > 0) return n;
+            }
+            return All;
+        }
+
+        public static void SetCast(int objectId, string value)
+        {
+            GhostEngine.GhostEngine_GetObjectShadow(objectId, out _, out _, out int receive);
+            int mode = 1, light = 0;
+            if (value == Off) mode = 0;
+            else if (value != All)
+                foreach (var (id, name) in GhostEntityList.Of(1))
+                    if (name == value) { mode = 2; light = id; }
+            GhostEngine.GhostEngine_SetObjectShadow(objectId, mode, light, receive);
+        }
+
+        public static bool GetReceive(int objectId)
+        {
+            GhostEngine.GhostEngine_GetObjectShadow(objectId, out _, out _, out int receive);
+            return receive != 0;
+        }
+
+        public static void SetReceive(int objectId, bool on)
+        {
+            if (GhostEngine.GhostEngine_GetObjectShadow(objectId, out int mode, out int light, out _) == 0) return;
+            GhostEngine.GhostEngine_SetObjectShadow(objectId, mode, light, on ? 1 : 0);
+        }
+    }
+
+    internal sealed class ShadowCasterConverter : StringConverter
+    {
+        public override bool GetStandardValuesSupported(ITypeDescriptorContext? context) => true;
+        public override bool GetStandardValuesExclusive(ITypeDescriptorContext? context) => true;
+        public override StandardValuesCollection GetStandardValues(ITypeDescriptorContext? context)
+            => new StandardValuesCollection(GhostShadowUI.Choices());
+    }
+
 
     internal class ObjectProxy
     {
@@ -717,7 +772,21 @@ namespace GhostShell
             get => ReadMat().emissiveStrength;
             set => EditMat((ref GhostMaterialInfo m) => m.emissiveStrength = value);
         }
+        // ---- Shadows ----
+        [Category("Shadows"), DisplayName("Cast Shadows")]
+        [TypeConverter(typeof(ShadowCasterConverter))]
+        public string CastShadows
+        {
+            get => GhostShadowUI.GetCast(_id);
+            set => GhostShadowUI.SetCast(_id, value);
+        }
 
+        [Category("Shadows"), DisplayName("Receive Shadows")]
+        public bool ReceiveShadows
+        {
+            get => GhostShadowUI.GetReceive(_id);
+            set => GhostShadowUI.SetReceive(_id, value);
+        }
         // ---- Gameplay ----
         private GhostGameplayInfo GetG() { var g = new GhostGameplayInfo(); GhostEngine.GhostEngine_GetGameplay(_id, ref g); return g; }
         private void SetG(GhostGameplayInfo g) => GhostEngine.GhostEngine_SetGameplay(ref g);
@@ -794,6 +863,12 @@ namespace GhostShell
 
         [Category("Light")]
         public float Intensity { get => Get().intensity; set { var i = Get(); i.intensity = value; Set(i); } }
+        [Category("Light"), DisplayName("Cast Shadows")]
+        public bool CastShadows
+        {
+            get => GhostEngine.GhostEngine_GetLightShadows(Id) > 0;
+            set => GhostEngine.GhostEngine_SetLightShadows(Id, value ? 1 : 0);
+        }
     }
 
     internal class DirectionalLightProxy : LightProxy
@@ -870,6 +945,19 @@ namespace GhostShell
                 foreach (var (cid, name) in GhostEntityList.Of(2)) if (name == value) id = cid;
                 GhostEngine.GhostEngine_SetGameStartCamera(id);
             }
+        }
+        [Category("Shadows"), DisplayName("Shadows Enabled")]
+        public bool ShadowsEnabled
+        {
+            get { GhostEngine.GhostEngine_GetShadowSettings(out int e, out _); return e != 0; }
+            set { GhostEngine.GhostEngine_GetShadowSettings(out _, out float s); GhostEngine.GhostEngine_SetShadowSettings(value ? 1 : 0, s); }
+        }
+
+        [Category("Shadows"), DisplayName("Shadow Strength")]
+        public float ShadowStrength
+        {
+            get { GhostEngine.GhostEngine_GetShadowSettings(out _, out float s); return s; }
+            set { GhostEngine.GhostEngine_GetShadowSettings(out int e, out _); GhostEngine.GhostEngine_SetShadowSettings(e, value); }
         }
     }
 
@@ -1562,7 +1650,8 @@ namespace GhostShell
             if (id == 0)
             {
                 GhostEngine.GhostEngine_GetAmbient(out float r, out float g, out float b, out float k);
-                return (r, g, b, k, GhostEngine.GhostEngine_GetGameStartCamera());
+                GhostEngine.GhostEngine_GetShadowSettings(out int se, out float ss);
+                return (r, g, b, k, GhostEngine.GhostEngine_GetGameStartCamera(), se, ss);
             }
             var o = new GhostObjectInfo();
             if (GhostEngine.GhostEngine_GetObject(id, ref o) != 0)

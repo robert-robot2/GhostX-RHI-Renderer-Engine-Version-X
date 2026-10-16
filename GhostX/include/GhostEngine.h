@@ -198,4 +198,11 @@ extern "C"
     GHOST_API int  GhostEngine_GetSpriteText(int objectId, int which, char* buf, int bufSize);
     GHOST_API void GhostEngine_SetSpriteText(int objectId, int which, const char* utf8);
     GHOST_API void GhostEngine_ReloadAnimations();
+    // ---- Shadows ----
+    GHOST_API int  GhostEngine_GetObjectShadow(int objectId, int* mode, int* lightId, int* receive);   // mode: 0 off, 1 all lights, 2 one light
+    GHOST_API void GhostEngine_SetObjectShadow(int objectId, int mode, int lightId, int receive);
+    GHOST_API int  GhostEngine_GetLightShadows(int lightId);                  // 1 casts, 0 doesn't, -1 no such light
+    GHOST_API void GhostEngine_SetLightShadows(int lightId, int on);
+    GHOST_API void GhostEngine_GetShadowSettings(int* enabled, float* strength);
+    GHOST_API void GhostEngine_SetShadowSettings(int enabled, float strength);
 }

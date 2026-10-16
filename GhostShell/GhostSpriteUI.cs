@@ -193,7 +193,21 @@ namespace GhostShell
             }
             return dlg.FileName;
         }
+        // ---- Shadows ----
+        [Category("Shadows"), DisplayName("Cast Shadows")]
+        [TypeConverter(typeof(ShadowCasterConverter))]
+        public string CastShadows
+        {
+            get => GhostShadowUI.GetCast(_id);
+            set => GhostShadowUI.SetCast(_id, value);
+        }
 
+        [Category("Shadows"), DisplayName("Receive Shadows")]
+        public bool ReceiveShadows
+        {
+            get => GhostShadowUI.GetReceive(_id);
+            set => GhostShadowUI.SetReceive(_id, value);
+        }
         // ---- Transform ----
         [Category("Transform")] public Vec3Edit Position { get; }
         [Category("Transform"), DisplayName("Scale (width, height)")] public Vec3Edit Scale { get; }

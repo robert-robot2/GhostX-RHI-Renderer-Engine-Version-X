@@ -127,7 +127,7 @@ bool GhostScene_Save(const GhostScene& s, const std::string& root, const std::st
         amb["color"] = F3(s.ambientColor);
         amb["intensity"] = s.ambientIntensity;
         j["ambient"] = amb;
-
+        j["shadows"] = json{ { "enabled", s.shadowsEnabled },{ "strength", s.shadowStrength } };
         std::set<int> saved;
         json texs = json::array();
         for (const GhostTextureInfo& t : s.textures)
@@ -158,6 +158,7 @@ bool GhostScene_Save(const GhostScene& s, const std::string& root, const std::st
             jo["collider"] = o.collider;
             jo["colliderSize"] = V3(o.colliderSize);
             jo["visible"] = o.visible;
+            jo["shadow"] = json{ { "mode", o.shadowMode },{ "light", o.shadowLightId },{ "receive", o.receiveShadows } };
             if (o.meshId == GHOST_MESH_QUAD)
             {
                 const GhostSprite& sp = o.sprite;
@@ -203,6 +204,7 @@ bool GhostScene_Save(const GhostScene& s, const std::string& root, const std::st
             jl["range"] = l.range;
             jl["width"] = l.width;
             jl["height"] = l.height;
+            jl["castShadows"] = l.castShadows;
             lights.push_back(jl);
         }
         j["lights"] = lights;
@@ -357,7 +359,14 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
             ReadF(j["ambient"], "color", s.ambientColor, 3);
             s.ambientIntensity = j["ambient"].value("intensity", 0.15f);
         }
-
+        s.shadowsEnabled = true;
+        s.shadowStrength = 1.0f;
+        if (j.contains("shadows") && j["shadows"].is_object())
+        {
+            s.shadowsEnabled = j["shadows"].value("enabled", true);
+            float st = j["shadows"].value("strength", 1.0f);
+            s.shadowStrength = st < 0.0f ? 0.0f : (st > 1.0f ? 1.0f : st);
+        }
         if (j.contains("objects") && j["objects"].is_array())
             for (const json& jo : j["objects"])
             {
@@ -379,6 +388,13 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
                 o.collider = jo.value("collider", false);
                 ReadV3(jo, "colliderSize", o.colliderSize);
                 o.visible = jo.value("visible", true);
+                if (jo.contains("shadow") && jo["shadow"].is_object())
+                {
+                    const json& sh = jo["shadow"];
+                    o.shadowMode = Clampi(sh.value("mode", 1), 0, 2);
+                    o.shadowLightId = sh.value("light", 0);
+                    o.receiveShadows = sh.value("receive", true);
+                }
                 if (mesh == GHOST_MESH_QUAD && jo.contains("sprite") && jo["sprite"].is_object())
                 {
                     const json& js = jo["sprite"];
@@ -424,6 +440,7 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
                 l.range = jl.value("range", 10.0f);
                 l.width = jl.value("width", 1.0f);
                 l.height = jl.value("height", 1.0f);
+                l.castShadows = jl.value("castShadows", true);
                 s.lights.push_back(l);
             }
 
@@ -512,6 +529,13 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
         s.gameStartCameraId = 0;
         int gs = j.value("gameStartCamera", 0);
         for (const GhostCamera& c : s.cameras) if (c.id == gs) s.gameStartCameraId = gs;
+        for (GhostObject& o : s.objects)         // a designated light that no longer exists -> All Lights
+            if (o.shadowMode == 2)
+            {
+                bool ok = false;
+                for (const GhostLight& l : s.lights) if (l.id == o.shadowLightId) ok = true;
+                if (!ok) { o.shadowMode = 1; o.shadowLightId = 0; }
+            }
         return true;
     }
     catch (const std::exception& e)
@@ -539,6 +563,7 @@ unsigned int GhostScene_Hash(const GhostScene& s)
 
     I(s.activeCameraId);
     I(s.gameStartCameraId);
+    I(s.shadowsEnabled ? 1 : 0); F(s.shadowStrength);
     F(s.ambientColor[0]); F(s.ambientColor[1]); F(s.ambientColor[2]); F(s.ambientIntensity);
 
     for (const GhostObject& o : s.objects)
@@ -547,6 +572,7 @@ unsigned int GhostScene_Hash(const GhostScene& s)
         V(o.position); V(o.rotationDeg); V(o.scale);
         I(o.useVertexColor ? 1 : 0);
         I(o.role); S(o.customTag); I(o.collider ? 1 : 0); V(o.colliderSize); I(o.visible ? 1 : 0);
+        I(o.shadowMode); I(o.shadowLightId); I(o.receiveShadows ? 1 : 0);
         const int n = GhostMesh_FaceCount(o.meshId);
         for (int f = 0; f < n; f++) mix(&o.faces[f], sizeof(GhostMaterial));
         if (o.meshId == GHOST_MESH_QUAD)
@@ -564,6 +590,7 @@ unsigned int GhostScene_Hash(const GhostScene& s)
         V(l.position); F(l.yawDeg); F(l.pitchDeg);
         F(l.color[0]); F(l.color[1]); F(l.color[2]);
         F(l.intensity); F(l.range); F(l.width); F(l.height);
+        I(l.castShadows ? 1 : 0);
     }
     for (const GhostCamera& c : s.cameras)
     {

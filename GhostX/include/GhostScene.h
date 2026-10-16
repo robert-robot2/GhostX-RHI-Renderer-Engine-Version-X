@@ -111,6 +111,9 @@ struct GhostObject
     GhostVec3   colliderSize = { 1, 1, 1 };   // world size = colliderSize * scale
     bool        visible = true;               // false = hidden while playing
     GhostSprite sprite;                       // only used when meshId == GHOST_MESH_QUAD
+    int  shadowMode = 1;                      // 0 = off, 1 = casts from every light, 2 = casts only from shadowLightId
+    int  shadowLightId = 0;
+    bool receiveShadows = true;
     bool      useVertexColor = false;
 };
 // The tag the game module searches by: the role's name, or the custom text
@@ -132,6 +135,7 @@ struct GhostLight
     float          intensity = 1.0f;
     float          range = 10.0f;                    // point + rect
     float          width = 1.0f, height = 1.0f;      // rect only
+    bool           castShadows = true;
 };
 struct GhostCamera
 {
@@ -188,6 +192,8 @@ struct GhostScene
     int          nextId = 1;          // ONE id space for objects and lights
     int          selectedId = 0;      // 0 = nothing selected
     int          selectedFace = -1;   // -1 = all faces; always belongs to selectedId
+    bool         shadowsEnabled = true;
+    float        shadowStrength = 1.0f;          // 1 = a shadowed spot gets only ambient light
     unsigned int version = 0;         // bumps on any structural change
 };
 
@@ -257,6 +263,8 @@ inline bool GhostScene_Remove(GhostScene& s, int id)
         if (s.mods[i].id == id) { s.mods.erase(s.mods.begin() + i); goto removed; }
     return false;
 removed:
+    for (GhostObject& o : s.objects)             // an object set to a deleted light goes back to "All Lights"
+        if (o.shadowMode == 2 && o.shadowLightId == id) { o.shadowMode = 1; o.shadowLightId = 0; }
     if (s.selectedId == id) s.selectedId = 0;
     s.version++;
     return true;
