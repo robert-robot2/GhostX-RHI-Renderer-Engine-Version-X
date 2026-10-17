@@ -124,7 +124,9 @@ d3dcompiler.lib;Comdlg32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Manifest>
     <PostBuildEvent>
       <Command>xcopy /Y "$(OutDir)GhostX.dll" "$(SolutionDir)GhostShell\bin\Debug\net10.0-windows\"
-xcopy /Y /E /I "$(ProjectDir)shaders" "$(SolutionDir)GhostShell\bin\Debug\net10.0-windows\shaders\"</Command>
+xcopy /Y /E /I "$(ProjectDir)shaders" "$(SolutionDir)GhostShell\bin\Debug\net10.0-windows\shaders\"
+xcopy /Y "$(OutDir)GhostX.dll" "$(SolutionDir)GhostShell\bin\x64\Debug\net10.0-windows\"
+xcopy /Y /E /I "$(ProjectDir)shaders" "$(SolutionDir)GhostShell\bin\x64\Debug\net10.0-windows\shaders\"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -133,7 +135,7 @@ xcopy /Y /E /I "$(ProjectDir)shaders" "$(SolutionDir)GhostShell\bin\Debug\net10.
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions);GHOSTENGINE_EXPORTS;WIN32;_DEBUG</PreprocessorDefinitions>
+      <PreprocessorDefinitions>NDEBUG;GHOSTENGINE_EXPORTS;_WINDOWS;_USRDLL;WIN32;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
     </ClCompile>
@@ -147,6 +149,12 @@ d3dcompiler.lib;Comdlg32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     <Manifest>
       <EnableSegmentHeap>true</EnableSegmentHeap>
     </Manifest>
+    <PostBuildEvent>
+      <Command>xcopy /Y "$(OutDir)GhostX.dll" "$(SolutionDir)GhostShell\bin\Release\net10.0-windows\"
+xcopy /Y /E /I "$(ProjectDir)shaders" "$(SolutionDir)GhostShell\bin\Release\net10.0-windows\shaders\"
+xcopy /Y "$(OutDir)GhostX.dll" "$(SolutionDir)GhostShell\bin\x64\Release\net10.0-windows\"
+xcopy /Y /E /I "$(ProjectDir)shaders" "$(SolutionDir)GhostShell\bin\x64\Release\net10.0-windows\shaders\"</Command>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="include\Ghost3D1.h" />
@@ -169,7 +177,9 @@ d3dcompiler.lib;Comdlg32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     <ClInclude Include="include\stb_image.h" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="src\GhostAnim.cpp" />
+    <ClCompile Include="src\GhostAnim.cpp">
+      <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NDEBUG;GHOSTENGINE_EXPORTS;_WINDOWS;_USRDLL;WIN32;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
     <ClCompile Include="src\GhostEngine.cpp" />
     <ClCompile Include="src\GhostGameModule.cpp" />
     <ClCompile Include="src\GhostImage.cpp" />
