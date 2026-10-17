@@ -52,7 +52,7 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [x] Phase 7.B: Sprite Sheet Animation Editor / .ghostanim files
 - [x] Phase 8: PBR Materials Layout
 - [x] Phase 9: Object Shadows
-- [x] Phase 10: AnyCPU/X64 Debug/Release Builds/Docking Suite viewport error
+- [x] Phase 10: AnyCPU/X64 Debug/Release Builds/Docking Suite XML Delete to Clear
 - **Pending**
 - [ ] Phase : Publish Release as Standalone Game
 - [ ] Phase : Mesh import fbx, gltf, textures, normal/specular maps, shadows, PBR materials
