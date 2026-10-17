@@ -19,7 +19,8 @@
 </div>
 
 GhostX is a custom game engine built on a **native C++ DirectX 12 renderer (RHI-style)** with a **C# WinForms editor shell** and a Blazor WASM UI. Drag lights, primitives and cameras into a live scene, texture them, and fly through multiple camera viewports, all in one dockable editor.
--**Notes:**
+
+## Notes:
 -**Fully works in anycpu/x62 debug/release**
 -**Errors:**
 -**Docking Suite Viewport Needs to be patched does not initially load after X64 debug/releae build.**
