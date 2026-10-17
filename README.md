@@ -22,9 +22,9 @@ GhostX is a custom game engine built on a **native C++ DirectX 12 renderer (RHI-
 
 ## Notes:
 -**Fully works in anycpu/x62 debug/release**
--**Errors:**
+## Errors:
 -**Docking Suite Viewport Needs to be patched does not initially load after X64 debug/releae build.**
--**Development:**
+## Development:
 - **Does not generate exe yet for Game Builds only outputs DLL to GhostShell.Exe For Play Mode. Phase ?? Is Test Build Publish Exe**
 ---
 
