@@ -123,10 +123,9 @@ d3dcompiler.lib;Comdlg32.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <EnableSegmentHeap>true</EnableSegmentHeap>
     </Manifest>
     <PostBuildEvent>
-      <Command>xcopy /Y "$(OutDir)GhostX.dll" "$(SolutionDir)GhostShell\bin\Debug\net10.0-windows\"
-xcopy /Y /E /I "$(ProjectDir)shaders" "$(SolutionDir)GhostShell\bin\Debug\net10.0-windows\shaders\"
-xcopy /Y "$(OutDir)GhostX.dll" "$(SolutionDir)GhostShell\bin\x64\Debug\net10.0-windows\"
-xcopy /Y /E /I "$(ProjectDir)shaders" "$(SolutionDir)GhostShell\bin\x64\Debug\net10.0-windows\shaders\"</Command>
+      <Command>xcopy /Y "$(OutDir)GhostX.dll" "$(SolutionDir)GhostShell\bin\x64\Debug\net10.0-windows\"
+xcopy /Y /E /I "$(ProjectDir)shaders" "$(SolutionDir)GhostShell\bin\x64\Debug\net10.0-windows\shaders\"
+</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -150,9 +149,7 @@ d3dcompiler.lib;Comdlg32.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <EnableSegmentHeap>true</EnableSegmentHeap>
     </Manifest>
     <PostBuildEvent>
-      <Command>xcopy /Y "$(OutDir)GhostX.dll" "$(SolutionDir)GhostShell\bin\Release\net10.0-windows\"
-xcopy /Y /E /I "$(ProjectDir)shaders" "$(SolutionDir)GhostShell\bin\Release\net10.0-windows\shaders\"
-xcopy /Y "$(OutDir)GhostX.dll" "$(SolutionDir)GhostShell\bin\x64\Release\net10.0-windows\"
+      <Command>xcopy /Y "$(OutDir)GhostX.dll" "$(SolutionDir)GhostShell\bin\x64\Release\net10.0-windows\"
 xcopy /Y /E /I "$(ProjectDir)shaders" "$(SolutionDir)GhostShell\bin\x64\Release\net10.0-windows\shaders\"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
