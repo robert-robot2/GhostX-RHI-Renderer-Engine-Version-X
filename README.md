@@ -2,6 +2,7 @@
 
 ROFL I TRIED IN 5 DAYS TO MAKE A GAME ENGINE I GOT FAR BUT ITS TOO BROKEN TOO FAST AND I DONT CARE BEERUS DESTRUCT IGNORE THIS PROJECT PLEASE
 THIS WASY MY MISTAKE WHY DID YOU THIS --->>>. Phase 10: AnyCPU/X64 Debug/Release Builds/Docking Suite XML Delete to Clear
+you have to have a main controller files, DO not let the AI create the layout they are incapable, otherwise you cnaqt manage a massive project. I CAN BUILD WEBGPU WITHOUT KNOWING AND WEBGL BUT I FAILED A DIRECTX 12??????????? what the farquer? and i know direct x 12
 ## IS THE DOCKING SUITE? IF I ADD AN AUTO CLEAR TO THE LAYOUT WHY DOE SIT GET MESSED UP EERVY LAUNCHEROO
 ## DED GAME
 ## DED GAME
