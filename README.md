@@ -5,6 +5,7 @@
 Because in ANYCPU debug i had ZERO erros in the project, as soon as switching to reelase nothing but errors.
 
 ## Why did the entire project break when the AI said to switch to X 64 for release?
+## i cant get a straight answer form the AI ON THIS WHY?
 ## this feels incorrect from previous programming DLLs cant be build in release only debug.
 ## why does the AI flip flop on this?
 ## Question of the year its mroe complex to create the debug /release layout THEN IT IS TO MAKE THE ENTIRE PROJECT WHY?
