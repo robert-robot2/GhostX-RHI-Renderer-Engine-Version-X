@@ -1,5 +1,8 @@
 <div align="center">
 
+ROFL I TRIED IN 5 DAYS TO MAKE A GAME ENGINE I GOT FAR BUT ITS TOO BROKEN TOO FAST AND I DONT CARE BEERUS DESTRUCT IGNORE THIS PROJECT PLEASE
+
+
 # 👻 GhostX Version X 👻💡🧊💡👻
 
 **DirectX12 RHI Renderer Engine Winforms Blazor WASM UI with a Visual Studio Docking Suite Editor**
