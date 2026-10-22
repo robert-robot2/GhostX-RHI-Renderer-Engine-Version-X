@@ -1,5 +1,9 @@
 <div align="center">
 
+## What is the actual correct Layout to this?
+## IS it built in any cpu the dll in debug, then the DLL form Dbeug gets transfered to the release folder?
+Because in ANYCPU debug i had ZERO erros in the project, as soon as switching to reelase nothing but errors.
+
 ## Why did the entire project break when the AI said to switch to X 64 for release?
 ## this feels incorrect from previous programming DLLs cant be build in release only debug.
 ## why does the AI flip flop on this?
