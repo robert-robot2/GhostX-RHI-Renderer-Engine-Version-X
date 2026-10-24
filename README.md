@@ -171,8 +171,20 @@ Exports for objects, lights, cameras, materials, textures, viewports, mouse inpu
 ## Credits
 
 - [DockPanelSuite](https://github.com/dockpanelsuite/dockpanelsuite) (MIT) for the docking UI
+- to Be added , Assimp
+---
 
+## Prerequisites
 
+- Windows 10/11 (x64)
+- [.NET 10.0 SDK](https://dotnet.microsoft.com/download)
+- [Visual Studio 2022+](https://visualstudio.microsoft.com/) with:
+  - ASP.NET and web development workload
+  - Desktop development with C++ workload
+- [WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/)
+- DirectX 12 compatible GPU
+- **NuGet packages (GhostShell):** `DockPanelSuite`, `DockPanelSuite.ThemeVS2015`, `Microsoft.Web.WebView2`
+---
 ## License
 
 This project is licensed under the **MIT License**.
@@ -226,20 +238,6 @@ GhostX/
 │   └── GhostMenuBuilder.cs        # Menu bar
 └── GhostBlazorUI/                 # Blazor WASM UI (experimental)
 ```
-
----
-
-## Prerequisites
-
-- Windows 10/11 (x64)
-- [.NET 10.0 SDK](https://dotnet.microsoft.com/download)
-- [Visual Studio 2022+](https://visualstudio.microsoft.com/) with:
-  - ASP.NET and web development workload
-  - Desktop development with C++ workload
-- [WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/)
-- DirectX 12 compatible GPU
-- **NuGet packages (GhostShell):** `DockPanelSuite`, `DockPanelSuite.ThemeVS2015`, `Microsoft.Web.WebView2`
----
 
 ## Setup & Installation
 
