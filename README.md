@@ -203,6 +203,14 @@ This guide covers building and testing Level 1 and Level 2, verifying gameplay t
 - Open **File → New Project...**
 - Set the project name to `TestGame`.
 - Select the **Blank** template.
+- Packaged Structure:
+```json
+MyGame\
+  MyGame.exe          (a renamed GhostShell.exe: it plays the game when it finds Data\)
+  GhostX.dll, GhostGame.dll, GhostShell.dll, shaders\, and the other libraries
+  vcruntime140.dll etc. (copied from your Windows folder, so no VC++ redistributable install)
+Data\               (MyGame.ghostproject, Content\, Scenes\
+```
 - HUD.ghostui
 ```json
 {
