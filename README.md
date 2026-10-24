@@ -203,6 +203,9 @@ This guide covers building and testing Level 1 and Level 2, verifying gameplay t
 - Open **File → New Project...**
 - Set the project name to `TestGame`.
 - Select the **Blank** template.
+```json
+"startScene": "Scenes/Level1.ghostscene",
+```
 
 ### 2. Build Level 1
 
