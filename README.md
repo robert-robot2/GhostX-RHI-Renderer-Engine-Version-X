@@ -44,7 +44,7 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 
 ---
 ## Roadmap
-- **Featured**
+- **Featured/Assimilated**
 - [x] Phase 1: Lighting, viewport icons, click/drag, editor panels
 - [x] Phase 2: Textures and materials, Free Camera entities
 - [x] Phase 3: Dockable editor, live camera viewports, per-camera resolution
