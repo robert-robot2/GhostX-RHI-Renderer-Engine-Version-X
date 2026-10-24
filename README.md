@@ -12,8 +12,11 @@
 ![UI](https://img.shields.io/badge/editor-WinForms%20%2B%20DockPanelSuite-orange)
 ![UI](https://img.shields.io/badge/editor-Blazor%20WASM-orange)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
-
-
+![C#](https://img.shields.io/badge/C%23-512BD4?logo=csharp&logoColor=white)
+![C++](https://img.shields.io/badge/C%2B%2B-00599C?logo=cplusplus&logoColor=white)
+![JavaScript](https://img.shields.io/badge/JavaScript-F7DF1E?logo=javascript&logoColor=black)
+![HTML5](https://img.shields.io/badge/HTML5-E34F26?logo=html5&logoColor=white)
+![CSS3](https://img.shields.io/badge/CSS3-1572B6?logo=css3&logoColor=white)
 <img width="1920" height="1080" alt="Screenshot 2026-10-13 022109" src="https://github.com/user-attachments/assets/5eae52c7-5924-4e51-b141-df4295c34245" />
 <img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/541c4975-bb92-4538-9c3c-0df61e4e67e1" />
 
