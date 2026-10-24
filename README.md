@@ -23,7 +23,7 @@
 GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (RHI-style)** with a **C# WinForms editor shell** and a Blazor WASM UI.
 
 ## Notes:
-- **Working: X64/release/Debug --- Working: AnyCPU Release ---Not working: anyCPU Debug cant find DLL**
+- **Working: X64/Release/Debug --- Working: anyCPU Release ---Not working: anyCPU Debug cant find DLL**
 - **If you use this app and the Dock Suite Doesn't show correctly Please delete the XML file in %LocalAppData%\GhostX and your app will run correctly.**
 ## Development:
 - **Does not generate exe yet for Game Builds only outputs DLL to GhostShell.Exe For Play Mode. Phase ?? Is Test Build Publish Exe**
