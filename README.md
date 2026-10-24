@@ -1,38 +1,6 @@
 <div align="center">
 
-## What is the actual correct Layout to this?
-## IS it built in any cpu the dll in debug, then the DLL form Dbeug gets transfered to the release folder?
-Because in ANYCPU debug i had ZERO erros in the project, as soon as switching to reelase nothing but errors.
-
-## Why did the entire project break when the AI said to switch to X 64 for release?
-## i cant get a straight answer form the AI ON THIS WHY?
-## this feels incorrect from previous programming DLLs cant be build in release only debug.
-## why does the AI flip flop on this?
-## Question of the year its mroe complex to create the debug /release layout THEN IT IS TO MAKE THE ENTIRE PROJECT WHY?
-
-
-
-
-ROFL I TRIED IN 5 DAYS TO MAKE A GAME ENGINE I GOT FAR BUT ITS TOO BROKEN TOO FAST AND I DONT CARE BEERUS DESTRUCT IGNORE THIS PROJECT PLEASE
-THIS WASY MY MISTAKE WHY DID YOU THIS --->>>. Phase 10: AnyCPU/X64 Debug/Release Builds/Docking Suite XML Delete to Clear
-you have to have a main controller files, DO not let the AI create the layout they are incapable, otherwise you cnaqt manage a massive project. I CAN BUILD WEBGPU WITHOUT KNOWING AND WEBGL BUT I FAILED A DIRECTX 12??????????? what the farquer? and i know direct x 12
-## IS THE DOCKING SUITE? IF I ADD AN AUTO CLEAR TO THE LAYOUT WHY DOE SIT GET MESSED UP EERVY LAUNCHEROO
-## DED GAME
-## DED GAME
-## DED GAME
-## DED GAME
-## DED GAME
-## DED GAME
-## DED GAME
-## DED GAME
-
-## DED GAME
-## DED GAME
-
-## DED GAME
-## DED GAME
-
-## DED GAME
+## Game on Wayne!
 
 # 👻 GhostX Version X 👻💡🧊💡👻
 
