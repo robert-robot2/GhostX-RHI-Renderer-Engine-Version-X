@@ -59,15 +59,13 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [x] Phase 11.A: FBX Imports as Default Color Import. Must Be Set to 2 For Sit Largest Side TO Default for Default Import(2 should be the auto default not 0?)
 - [x] Phase 11.B: Saving models, the Models palette and Content Browser tiles.
 - [x] Phase 11.C: Materials, collider fit, re-import.
-- **Active**
-
+- **Active Core**
 - [ ] Phase A: Build Level One of Test Game
 - [ ] Phase B: Build Level Two of TestGame
 - [ ] Phase C: Publish Release as Standalone Game
-
-- **Active**
+- **Active SubCore**
 - [ ] Phase : UI Features: Origins, XYZ Axis, Selection, Toggle Grids, Toggle Dimensions, Object Selection Rotation/Scale/Transform/Dimension/Translation
-
+- [ ] Add All Editors Windows Popups to Be able to Reshow if Closed or malfunctioning to docking Suite and Dropdown Windows Selection
 - **Publish/Release**
 - [ ] Phase : Install Shield Wizard/ Packaged Install for Download
 - [ ] Phase : Install Wizard Setup for Standalone Game
