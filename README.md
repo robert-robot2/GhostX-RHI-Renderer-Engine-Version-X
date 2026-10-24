@@ -60,6 +60,7 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [ ] Phase 11.B: Saving models, the Models palette and Content Browser tiles.
 - [ ] Phase 11.C: Materials, collider fit, re-import.
 - **Publish/Release**
+- [ ] Phase : Install Shield Wizard
 - [ ] Phase : Publish Release as Standalone Game
 - [ ] Phase : RHI Vulkan Backend
 - **Pending**
