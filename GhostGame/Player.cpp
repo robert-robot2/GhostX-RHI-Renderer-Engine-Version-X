@@ -30,6 +30,7 @@ static void Grow(Body& b)
     float s[3] = { g_baseScale[0] * Cfg::GrowFactor, g_baseScale[1] * Cfg::GrowFactor, g_baseScale[2] * Cfg::GrowFactor };
     G->SetScale(S.player, s);
     b.pos[1] += b.half[1] * (Cfg::GrowFactor - 1.0f) + 0.01f;      // feet stay where they were
+    for (int i = 0; i < 3; i++) b.off[i] *= Cfg::GrowFactor;
 }
 
 static void Shrink(Body& b)
@@ -37,6 +38,7 @@ static void Shrink(Body& b)
     S.big = false;
     G->SetScale(S.player, g_baseScale);
     b.pos[1] -= b.half[1] * (1.0f - 1.0f / Cfg::GrowFactor);
+    for (int i = 0; i < 3; i++) b.off[i] /= Cfg::GrowFactor;
 }
 
 void Player_Update(float dt)
@@ -111,7 +113,7 @@ void Player_Update(float dt)
     // ---- Falling off the world ----
     if (b.pos[1] < Cfg::FallLimit) { Game_Restart(true); return; }
 
-    G->SetPosition(S.player, b.pos);
+    StoreBody(b);
     // ---- Sprite animation (does nothing if the Player is a plain cube) ----
     {
         const float yaw2 = S.camYaw * 0.0174532925f;

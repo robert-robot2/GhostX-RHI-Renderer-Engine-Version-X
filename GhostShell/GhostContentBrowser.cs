@@ -139,7 +139,11 @@ namespace GhostShell
             if (models.Length > 0)                                             // after the drop finishes, so Explorer isn't held up by the dialog
                 BeginInvoke(new Action(() => ModelFilesDropped?.Invoke(models)));
         }
-
+        private void ReimportTile(Entry e, bool ask)
+        {
+            int mid = GhostModels.LoadFile(e.Path!);
+            if (mid >= 0) BeginInvoke(new Action(() => GhostModels.Reimport(FindForm()!, mid, ask)));
+        }
         // -------------------------------------------------------
         //  Explorer drop (files)
         // -------------------------------------------------------
@@ -401,9 +405,17 @@ namespace GhostShell
             };
             tile.Controls.Add(pic);
             tile.Controls.Add(lbl);
-
+            ContextMenuStrip? ctx = null;
+            if (e.IsModel)
+            {
+                ctx = new ContextMenuStrip();
+                ctx.Items.Add("Re-import from source", null, (s, ev) => ReimportTile(e, false));
+                ctx.Items.Add("Re-import with settings...", null, (s, ev) => ReimportTile(e, true));
+                tile.Disposed += (s, ev) => ctx.Dispose();
+            }
             foreach (Control c in new Control[] { tile, pic, lbl })
             {
+                if (ctx != null) c.ContextMenuStrip = ctx;
                 _tip.SetToolTip(c, e.Tip);
                 WireFileDrop(c);                                   // dropping files on a tile still imports them
 

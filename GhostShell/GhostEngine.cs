@@ -57,6 +57,7 @@ namespace GhostShell
     {
         public int id, role, collider;
         public float csx, csy, csz;
+        public float cox, coy, coz;
         public int visible;
     }
 
@@ -88,6 +89,8 @@ namespace GhostShell
         public int builtin, faceCount;
         public uint vertexCount, triangleCount;
         public float minX, minY, minZ, maxX, maxY, maxZ;
+        public float importScale, importFit;
+        public int importUp, importFlags;
     }
     internal static class GhostEngine
     {
@@ -322,6 +325,12 @@ namespace GhostShell
         public static extern int GhostEngine_GetMeshText(int meshId, int which, [Out] byte[] buf, int bufSize);
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern int GhostEngine_GetObjectMissingMesh(int objectId, [Out] byte[] buf, int bufSize);
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_ReimportModel(int meshId, int useStored, float scale, float fitSize, int upAxis,
+    int flags, [Out] byte[] msg, int msgSize);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_ApplyMeshDefaults(int objectId, int what);
 
     }
 }

@@ -157,6 +157,6 @@ void Entities_Update(float dt)
             Sprite_FaceScreen(e.id, e.dir * cosf(yaw));      // enemies walk along X, so the screen direction follows the camera
             Sprite_Play(e.id, "Walk", "Idle");
         }
-        G->SetPosition(e.id, b.pos);
+        StoreBody(b);
     }
 }

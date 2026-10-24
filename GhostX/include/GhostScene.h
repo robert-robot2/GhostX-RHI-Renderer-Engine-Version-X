@@ -48,7 +48,7 @@ inline bool GhostMaterial_Equal(const GhostMaterial& a, const GhostMaterial& b)
 constexpr int GHOST_MAX_MESHES = 64;
 
 // A face (material slot) is a contiguous range of the mesh's index buffer
-struct GhostFaceDef { std::string name; unsigned int firstIndex = 0, indexCount = 0; };
+struct GhostFaceDef { std::string name; unsigned int firstIndex = 0, indexCount = 0; GhostMaterial mat; bool hasMat = false; };
 
 struct GhostMeshInfo
 {
@@ -61,6 +61,8 @@ struct GhostMeshInfo
     GhostVec3    bmax = { 0.5f,  0.5f,  0.5f };
     GhostVec3    defaultScale = { 1, 1, 1 };
     unsigned int vertexCount = 0, triangleCount = 0;
+    float        importScale = 1.0f, importFit = 0.0f;   // the options the model was imported with (re-import reuses them)
+    int          importUp = 0, importFlags = 0;          // flags: 1 = flip winding, 2 = no materials
     std::vector<GhostFaceDef> faces;
 };
 
@@ -139,6 +141,13 @@ inline const GhostFaceDef& GhostMesh_Face(int id, int face)
 inline GhostVec3 GhostMesh_Min(int id) { const GhostMeshInfo* m = GhostMesh_Info(id); return m ? m->bmin : GhostVec3(-0.5f, -0.5f, -0.5f); }
 inline GhostVec3 GhostMesh_Max(int id) { const GhostMeshInfo* m = GhostMesh_Info(id); return m ? m->bmax : GhostVec3(0.5f, 0.5f, 0.5f); }
 
+// The collider that fits a mesh exactly: local size and the local-space center
+inline void GhostMesh_FitCollider(const GhostMeshInfo& m, GhostVec3& size, GhostVec3& offset)
+{
+    auto d = [](float v) { v = v < 0.0f ? -v : v; return v < 0.01f ? 0.01f : v; };
+    size = { d(m.bmax.x - m.bmin.x), d(m.bmax.y - m.bmin.y), d(m.bmax.z - m.bmin.z) };
+    offset = { (m.bmin.x + m.bmax.x) * 0.5f, (m.bmin.y + m.bmax.y) * 0.5f, (m.bmin.z + m.bmax.z) * 0.5f };
+}
 
 struct GhostTextureInfo
 {
@@ -183,6 +192,7 @@ struct GhostObject
     std::string customTag;                    // used when role == GHOST_ROLE_CUSTOM (max 31 chars)
     bool        collider = false;
     GhostVec3   colliderSize = { 1, 1, 1 };   // world size = colliderSize * scale
+    GhostVec3   colliderOffset = { 0, 0, 0 }; // local-space center of the collider (multiplied by scale)
     bool        visible = true;               // false = hidden while playing
     GhostSprite sprite;                       // only used when meshId == GHOST_MESH_QUAD
     int  shadowMode = 1;                      // 0 = off, 1 = casts from every light, 2 = casts only from shadowLightId
@@ -298,8 +308,15 @@ inline GhostObject* GhostScene_AddObject(GhostScene& s, int meshId)
     o.meshId = meshId;
     o.scale = mi->defaultScale;
     o.name = mi->name + " " + std::to_string(o.id);
-    // imported models get a fitted collider in 11.C
-    o.collider = (meshId == GHOST_MESH_CUBE || meshId == GHOST_MESH_SQUARE || meshId == GHOST_MESH_QUAD);
+    if (mi->builtin)
+        o.collider = (meshId == GHOST_MESH_CUBE || meshId == GHOST_MESH_SQUARE || meshId == GHOST_MESH_QUAD);
+    else                                                 // imported model: fitted collider and the model's own materials
+    {
+        o.collider = true;
+        GhostMesh_FitCollider(*mi, o.colliderSize, o.colliderOffset);
+        const int n = GhostMesh_FaceCount(meshId);
+        for (int f = 0; f < n; f++) if (mi->faces[(size_t)f].hasMat) o.faces[f] = mi->faces[(size_t)f].mat;
+    }
     s.objects.push_back(o);
     s.version++;
     return &s.objects.back();

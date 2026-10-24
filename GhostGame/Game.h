@@ -47,6 +47,7 @@ struct Body
     float pos[3] = { 0, 0, 0 };        // collider center
     float half[3] = { 0.5f, 0.5f, 0.5f };
     float vel[3] = { 0, 0, 0 };
+    float off[3] = { 0, 0, 0 };        // collider center minus the object's position
 };
 struct MoveResult
 {
@@ -57,7 +58,7 @@ bool       IsSolid(int id);                                   // Static and Bloc
 bool       LoadBody(int id, Body& b);                         // false if the object is missing or has no collider
 MoveResult MoveBody(Body& b, float dt);                       // moves by vel * dt: X, then Z, then Y
 int        QueryBody(const Body& b, int* ids, int maxCount);  // colliders overlapping the body (never itself)
-
+void       StoreBody(const Body& b);                          // writes the object's position back (center minus the offset)
 // ---- Player.cpp ----
 void Player_Init();
 void Player_Reset();

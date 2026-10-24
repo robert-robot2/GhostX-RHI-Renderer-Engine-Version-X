@@ -14,13 +14,22 @@ bool LoadBody(int id, Body& b)
 {
     float mn[3], mx[3];
     if (!G->GetBounds(id, mn, mx)) return false;
+    float p[3] = { 0, 0, 0 };
+    G->GetPosition(id, p);
     b.id = id;
     for (int i = 0; i < 3; i++)
     {
         b.pos[i] = (mn[i] + mx[i]) * 0.5f;
         b.half[i] = (mx[i] - mn[i]) * 0.5f;
+        b.off[i] = b.pos[i] - p[i];
     }
     return true;
+}
+
+void StoreBody(const Body& b)
+{
+    const float p[3] = { b.pos[0] - b.off[0], b.pos[1] - b.off[1], b.pos[2] - b.off[2] };
+    G->SetPosition(b.id, p);
 }
 
 int QueryBody(const Body& b, int* ids, int maxCount)

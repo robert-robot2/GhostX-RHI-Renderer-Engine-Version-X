@@ -15,7 +15,9 @@
 #include "../include/GhostModelImport.h"
 #include <string.h>
 #include <filesystem>
-
+#include <map>
+#include <set> 
+#include <fstream>
 
 // ---- Engine state ----
 static IGhostRHI* g_rhi = nullptr;
@@ -82,7 +84,7 @@ static float g_fitX = 0.0f, g_fitY = 0.0f, g_fitW = 1280.0f, g_fitH = 720.0f;
 
 // Forward Declarations? are interaction state
 static int LoadModelFile(const std::string& absFile, std::string& err);
-
+static std::string g_modelWarn;                     // warnings from model files loaded during a scene load
 
 
 
@@ -1780,6 +1782,7 @@ int GhostEngine_LoadScene(const char* path, char* msg, int msgSize)
 {
     if (!g_rhi || !g_pipeline || !path) { CopyMsg("The engine is not ready.", msg, msgSize); return 0; }
     GhostEngine_Stop();
+    g_modelWarn.clear();
     GhostScene backup = g_scene;
     std::string err, warn;
     bool ok = GhostScene_Load(g_scene, g_projectRoot, path, LoadSceneTexture,
@@ -1793,7 +1796,7 @@ int GhostEngine_LoadScene(const char* path, char* msg, int msgSize)
         CopyMsg(err, msg, msgSize);
         return 0;
     }
-
+    warn += g_modelWarn;
     g_hoverId = 0; g_dragging = false; g_dragId = 0; g_inputCameraId = 0;
     g_scene.version++;
     CopyMsg(warn, msg, msgSize);
@@ -1957,8 +1960,11 @@ static bool ColliderBounds(const GhostObject& o, GhostVec3& mn, GhostVec3& mx)
     GhostVec3 h = { fabsf(o.colliderSize.x * o.scale.x) * 0.5f,
                     fabsf(o.colliderSize.y * o.scale.y) * 0.5f,
                     fabsf(o.colliderSize.z * o.scale.z) * 0.5f };
-    mn = o.position - h;
-    mx = o.position + h;
+    GhostVec3 c = { o.position.x + o.colliderOffset.x * o.scale.x,
+                    o.position.y + o.colliderOffset.y * o.scale.y,
+                    o.position.z + o.colliderOffset.z * o.scale.z };
+    mn = c - h;
+    mx = c + h;
     return true;
 }
 
@@ -2398,8 +2404,10 @@ int GhostEngine_GetGameplay(int objectId, GhostGameplayInfo* out)
 {
     GhostObject* o = FindObject(objectId);
     if (!o || !out) return 0;
-    *out = { o->id, o->role, o->collider ? 1 : 0,
-             o->colliderSize.x, o->colliderSize.y, o->colliderSize.z, o->visible ? 1 : 0 };
+      *out = { o->id, o->role, o->collider ? 1 : 0,
+             o->colliderSize.x, o->colliderSize.y, o->colliderSize.z,
+             o->colliderOffset.x, o->colliderOffset.y, o->colliderOffset.z,
+             o->visible ? 1 : 0 };
     return 1;
 }
 
@@ -2412,6 +2420,7 @@ void GhostEngine_SetGameplay(const GhostGameplayInfo* in)
     o->role = in->role < 0 ? 0 : (in->role >= GHOST_ROLE_COUNT ? GHOST_ROLE_COUNT - 1 : in->role);
     o->collider = (in->collider != 0);
     o->colliderSize = { size(in->csx), size(in->csy), size(in->csz) };
+    o->colliderOffset = { in->cox, in->coy, in->coz };
     o->visible = (in->visible != 0);
 }
 
@@ -2763,12 +2772,21 @@ void GhostEngine_SetShadowSettings(int enabled, float strength)
     g_scene.shadowStrength = strength < 0.0f ? 0.0f : (strength > 1.0f ? 1.0f : strength);
 }
 
+
+
+
+
 // ============================================================
-//  Exported: model import and .ghostmesh loading
+//  Exported: model import, materials, re-import and .ghostmesh loading
 // ============================================================
 static std::string StemOf(const std::string& path)
 {
     return GhostWideToUtf8(std::filesystem::path(GhostUtf8ToWide(path)).stem().wstring());
+}
+
+static std::string FileNameOf(const std::string& path)
+{
+    return GhostWideToUtf8(std::filesystem::path(GhostUtf8ToWide(path)).filename().wstring());
 }
 
 static std::string ModelFilePath(const std::string& name)
@@ -2792,9 +2810,137 @@ static std::string UniqueModelName(std::string base, bool checkFile)
     }
 }
 
+// Project-relative with '/', or absolute when the file is outside the project
+static std::string StoredRel(const std::string& absUtf8)
+{
+    namespace fs = std::filesystem;
+    fs::path p = fs::path(GhostUtf8ToWide(absUtf8)).lexically_normal();
+    if (!g_projectRoot.empty())
+    {
+        fs::path rel = p.lexically_relative(fs::path(GhostUtf8ToWide(g_projectRoot)).lexically_normal());
+        if (!rel.empty() && *rel.begin() != fs::path(L"..")) return GhostWideToUtf8(rel.generic_wstring());
+    }
+    return GhostWideToUtf8(p.generic_wstring());
+}
+
+static std::string ModelTexDir(const std::string& name)
+{
+    if (!g_projectRoot.empty()) return GhostPath_Normalize(g_projectRoot + "\\Content\\Textures\\" + name);
+    wchar_t t[MAX_PATH + 2];
+    const DWORD n = GetTempPathW(MAX_PATH, t);                     // no project: textures go to a temp folder for this session
+    return GhostPath_Normalize(GhostWideToUtf8(std::wstring(t, n)) + "GhostX\\ModelTextures\\" + name);
+}
+
+// Copies (or extracts) every texture the importer found into the project, and points the slot at the copy
+static void PlaceModelTextures(GhostModelResult& r, const std::string& name, std::string& warn)
+{
+    namespace fs = std::filesystem;
+    const fs::path dir(GhostUtf8ToWide(ModelTexDir(name)));
+    std::map<std::string, fs::path> placed;                        // source file -> where it went
+    std::set<std::wstring> usedNames;
+    int embedded = 0;
+
+    for (GhostModelSub& s : r.subs)
+    {
+        GhostModelMat& m = s.mat;
+        if (m.texSource.empty() && m.texData.empty()) continue;
+
+        std::error_code ec;
+        fs::create_directories(dir, ec);
+        fs::path dest;
+        bool ok = false;
+
+        if (!m.texSource.empty())
+        {
+            auto it = placed.find(m.texSource);
+            if (it != placed.end()) { dest = it->second; ok = true; }
+            else
+            {
+                const fs::path src(GhostUtf8ToWide(m.texSource));
+                const std::wstring stem = src.stem().wstring(), ext = src.extension().wstring();
+                dest = dir / src.filename();
+                for (int k = 2; usedNames.count(dest.filename().wstring()); k++)
+                    dest = dir / (stem + L"_" + std::to_wstring(k) + ext);
+                usedNames.insert(dest.filename().wstring());
+
+                if (src.lexically_normal() == dest.lexically_normal()) ok = true;
+                else { fs::copy_file(src, dest, fs::copy_options::overwrite_existing, ec); ok = !ec; }
+                if (ok) placed[m.texSource] = dest;
+            }
+        }
+        else
+        {
+            dest = dir / (GhostUtf8ToWide(name) + L"_embedded_" + std::to_wstring(++embedded) + L"." + GhostUtf8ToWide(m.texExt));
+            std::ofstream f(dest, std::ios::binary);
+            f.write((const char*)m.texData.data(), (std::streamsize)m.texData.size());
+            ok = (bool)f;
+        }
+
+        if (ok)
+        {
+            m.texPath = StoredRel(GhostWideToUtf8(dest.wstring()));
+            m.tint[0] = m.tint[1] = m.tint[2] = 1.0f;              // a textured slot shows the image at full strength
+        }
+        else warn += "Could not copy the texture for \"" + s.name + "\" into the project.\n";
+        m.texSource.clear();
+        m.texData.clear();
+        m.texData.shrink_to_fit();
+    }
+}
+
+// One material slot of the registry: the stored defaults, with the texture loaded onto the GPU
+static GhostFaceDef MakeFace(const GhostModelSub& s, std::string& warn)
+{
+    GhostFaceDef fd;
+    fd.name = s.name;
+    fd.firstIndex = s.firstIndex;
+    fd.indexCount = s.indexCount;
+    const GhostModelMat& m = s.mat;
+    if (!m.hasMat) return fd;
+
+    GhostMaterial g;
+    for (int k = 0; k < 3; k++) { g.tint[k] = m.tint[k]; g.emissive[k] = m.emissive[k]; }
+    g.metallic = m.metallic;
+    g.roughness = m.roughness;
+    g.specular = m.specular;
+    g.emissiveStrength = m.emissiveStrength;
+    if (!m.texPath.empty())
+    {
+        const std::string abs = StoredToAbs(m.texPath);
+        const int id = LoadSceneTexture(abs, FileNameOf(abs));
+        if (id > 0) g.textureId = id;
+        else warn += "Missing texture: " + m.texPath + "\n";
+    }
+    fd.mat = g;
+    fd.hasMat = true;
+    return fd;
+}
+
+static GhostMeshInfo BuildMeshInfo(const GhostModelResult& r, const std::string& name, const std::string& source,
+    const std::string& file, std::string& warn)
+{
+    GhostMeshInfo mi;
+    mi.name = name;
+    mi.source = source;
+    mi.file = file;
+    mi.builtin = false;
+    mi.index32 = true;
+    mi.bmin = { r.bmin[0], r.bmin[1], r.bmin[2] };
+    mi.bmax = { r.bmax[0], r.bmax[1], r.bmax[2] };
+    mi.defaultScale = { 1, 1, 1 };
+    mi.vertexCount = (unsigned int)r.vertices.size();
+    mi.triangleCount = r.triangleCount;
+    mi.importScale = r.opts.scale;
+    mi.importFit = r.opts.fitSize;
+    mi.importUp = r.opts.upAxis;
+    mi.importFlags = (r.opts.flipWinding ? 1 : 0) | (r.opts.importMaterials ? 0 : 2);
+    for (const GhostModelSub& s : r.subs) mi.faces.push_back(MakeFace(s, warn));
+    return mi;
+}
+
 // Uploads a converted model and adds it to the registry
 static int RegisterModel(const GhostModelResult& r, const std::string& name, const std::string& source,
-    const std::string& file, std::string& err)
+    const std::string& file, std::string& err, std::string& warn)
 {
     static_assert(GHOST_MODEL_MAX_SLOTS == GHOST_MAX_FACES, "importer slot limit must match GHOST_MAX_FACES");
     static_assert(sizeof(GhostMeshVertex) == sizeof(GhostVertex), "GhostMeshVertex must match GhostVertex");
@@ -2811,22 +2957,12 @@ static int RegisterModel(const GhostModelResult& r, const std::string& name, con
         err = "The GPU upload failed (out of memory?)."; return -1;
     }
 
-    GhostMeshInfo mi;
-    mi.name = name;
-    mi.source = source;
-    mi.file = file;
-    mi.builtin = false;
-    mi.index32 = true;
-    mi.bmin = { r.bmin[0], r.bmin[1], r.bmin[2] };
-    mi.bmax = { r.bmax[0], r.bmax[1], r.bmax[2] };
-    mi.defaultScale = { 1, 1, 1 };
-    mi.vertexCount = (unsigned int)r.vertices.size();
-    mi.triangleCount = r.triangleCount;
-    for (const GhostModelSub& s : r.subs) mi.faces.push_back(GhostFaceDef{ s.name, s.firstIndex, s.indexCount });
-    if (GhostMesh_Register(mi) != id) { err = "The mesh registry is out of sync."; return -1; }
+    if (GhostMesh_Register(BuildMeshInfo(r, name, source, file, warn)) != id)
+    {
+        err = "The mesh registry is out of sync."; return -1;
+    }
     return id;
 }
-
 
 // Finds a loaded mesh by its .ghostmesh path, or loads the file
 static int LoadModelFile(const std::string& absFile, std::string& err)
@@ -2845,10 +2981,13 @@ static int LoadModelFile(const std::string& absFile, std::string& err)
 
     const std::string name = UniqueModelName(StemOf(abs), false);
     r.name = name;
-    return RegisterModel(r, name, source, abs, err);
+    std::string warn;
+    const int id = RegisterModel(r, name, source, abs, err, warn);
+    if (id >= 0 && !warn.empty()) g_modelWarn += "Model \"" + name + "\":\n" + warn;
+    return id;
 }
 
-int GhostEngine_ImportModel(const char* path, float scale, float fitSize, int upAxis, int flipWinding,
+int GhostEngine_ImportModel(const char* path, float scale, float fitSize, int upAxis, int flags,
     char* msg, int msgSize)
 {
     if (!g_rhi || !g_pipeline || !path) { CopyMsg("The engine is not ready.", msg, msgSize); return -1; }
@@ -2859,7 +2998,8 @@ int GhostEngine_ImportModel(const char* path, float scale, float fitSize, int up
     opt.scale = (scale > 0.0001f && scale <= 10000.0f) ? scale : 1.0f;
     opt.fitSize = fitSize > 0.0f ? (fitSize > 10000.0f ? 10000.0f : fitSize) : 0.0f;
     opt.upAxis = upAxis < 0 ? 0 : (upAxis > 2 ? 2 : upAxis);
-    opt.flipWinding = (flipWinding != 0);
+    opt.flipWinding = (flags & 1) != 0;
+    opt.importMaterials = (flags & 2) == 0;
 
     GhostModelResult r;
     std::string err;
@@ -2870,6 +3010,8 @@ int GhostEngine_ImportModel(const char* path, float scale, float fitSize, int up
     const std::string name = UniqueModelName(r.name, toProject);
     r.name = name;
 
+    PlaceModelTextures(r, name, r.warn);
+
     std::string file, saveWarn;
     if (toProject)                                       // convert once; scenes load the .ghostmesh from now on
     {
@@ -2879,7 +3021,8 @@ int GhostEngine_ImportModel(const char* path, float scale, float fitSize, int up
         else saveWarn = "Could not save the converted mesh: " + serr + "\nThe model works in this session only.";
     }
 
-    const int id = RegisterModel(r, name, src, file, err);
+    std::string regWarn;
+    const int id = RegisterModel(r, name, src, file, err, regWarn);
     if (id < 0)
     {
         if (!file.empty())
@@ -2893,19 +3036,145 @@ int GhostEngine_ImportModel(const char* path, float scale, float fitSize, int up
 
     std::string text = "Imported \"" + name + "\":\n" + r.info;
     if (!file.empty()) text += "\nSaved as Content/Models/" + name + ".ghostmesh";
-    if (!r.warn.empty()) text += "\n\n" + r.warn;
+    const std::string allWarn = r.warn + regWarn;
+    if (!allWarn.empty()) text += "\n\n" + allWarn;
     if (!saveWarn.empty()) text += "\n\n" + saveWarn;
     if (!toProject) text += "\n\nNo project is open, so this model lives only in this session. Open or create a project to keep it.";
     CopyMsg(text, msg, msgSize);
     return id;
 }
 
+// ---- re-import: keep a placed object's own edits, refresh everything it hadn't touched ----
+static bool NearV(const GhostVec3& a, const GhostVec3& b)
+{
+    return fabsf(a.x - b.x) < 0.001f && fabsf(a.y - b.y) < 0.001f && fabsf(a.z - b.z) < 0.001f;
+}
+
+static void RemapObjectToMesh(GhostObject& o, const GhostMeshInfo& oldM, const GhostMeshInfo& newM)
+{
+    GhostMaterial prev[GHOST_MAX_FACES];
+    for (int f = 0; f < GHOST_MAX_FACES; f++) prev[f] = o.faces[f];
+    const int oc = (int)oldM.faces.size() > GHOST_MAX_FACES ? GHOST_MAX_FACES : (int)oldM.faces.size();
+    const int nc = (int)newM.faces.size() > GHOST_MAX_FACES ? GHOST_MAX_FACES : (int)newM.faces.size();
+
+    for (int f = 0; f < GHOST_MAX_FACES; f++) o.faces[f] = GhostMaterial();
+    for (int f = 0; f < nc; f++)
+    {
+        const GhostFaceDef& nf = newM.faces[(size_t)f];
+        o.faces[f] = nf.hasMat ? nf.mat : GhostMaterial();
+        for (int k = 0; k < oc; k++)
+        {
+            const GhostFaceDef& of = oldM.faces[(size_t)k];
+            if (_stricmp(of.name.c_str(), nf.name.c_str()) != 0) continue;
+            const GhostMaterial oldDefault = of.hasMat ? of.mat : GhostMaterial();
+            if (!GhostMaterial_Equal(prev[k], oldDefault)) o.faces[f] = prev[k];   // the user changed this slot: keep it
+            break;
+        }
+    }
+
+    GhostVec3 os, oo, ns, no;
+    GhostMesh_FitCollider(oldM, os, oo);
+    GhostMesh_FitCollider(newM, ns, no);
+    if (NearV(o.colliderSize, os) && NearV(o.colliderOffset, oo)) { o.colliderSize = ns; o.colliderOffset = no; }
+}
+
+int GhostEngine_ReimportModel(int meshId, int useStored, float scale, float fitSize, int upAxis, int flags,
+    char* msg, int msgSize)
+{
+    if (!g_rhi || !g_pipeline) { CopyMsg("The engine is not ready.", msg, msgSize); return -1; }
+    if (g_playState != GhostPlayState::Editing) { CopyMsg("Stop playing before re-importing a model.", msg, msgSize); return -1; }
+    const GhostMeshInfo* probe = GhostMesh_Info(meshId);
+    if (!probe || probe->builtin) { CopyMsg("Only imported models can be re-imported.", msg, msgSize); return -1; }
+
+    GhostMeshInfo& cur = GhostMeshes()[(size_t)meshId];
+    if (cur.source.empty() || !std::filesystem::exists(std::filesystem::path(GhostUtf8ToWide(cur.source))))
+    {
+        CopyMsg("The original file was not found:\n" + (cur.source.empty() ? std::string("(unknown)") : cur.source), msg, msgSize);
+        return -1;
+    }
+
+    GhostModelOptions opt;
+    if (useStored)
+    {
+        opt.scale = cur.importScale > 0.0001f ? cur.importScale : 1.0f;
+        opt.fitSize = cur.importFit > 0.0f ? cur.importFit : 0.0f;
+        opt.upAxis = cur.importUp;
+        opt.flipWinding = (cur.importFlags & 1) != 0;
+        opt.importMaterials = (cur.importFlags & 2) == 0;
+    }
+    else
+    {
+        opt.scale = (scale > 0.0001f && scale <= 10000.0f) ? scale : 1.0f;
+        opt.fitSize = fitSize > 0.0f ? (fitSize > 10000.0f ? 10000.0f : fitSize) : 0.0f;
+        opt.upAxis = upAxis < 0 ? 0 : (upAxis > 2 ? 2 : upAxis);
+        opt.flipWinding = (flags & 1) != 0;
+        opt.importMaterials = (flags & 2) == 0;
+    }
+
+    GhostModelResult r;
+    std::string err;
+    if (!GhostModel_Load(cur.source, opt, r, err)) { CopyMsg(err, msg, msgSize); return -1; }   // nothing has changed yet
+    const std::string name = cur.name;
+    r.name = name;
+    PlaceModelTextures(r, name, r.warn);
+
+    if (GhostUploadMeshData(g_rhi, g_pipeline, meshId, r.vertices.data(), (unsigned int)r.vertices.size(),
+        r.indices.data(), (unsigned int)r.indices.size()) != GHOST_OK)
+    {
+        CopyMsg("The GPU upload failed (out of memory?).", msg, msgSize); return -1;
+    }
+
+    std::string file = cur.file, saveWarn;
+    if (file.empty() && !g_projectRoot.empty()) file = ModelFilePath(name);
+    if (!file.empty())
+    {
+        std::string serr;
+        if (!GhostMeshFile_Save(file, r, cur.source, serr))
+        {
+            saveWarn = "Could not save the converted mesh: " + serr; file = cur.file;
+        }
+    }
+
+    const GhostMeshInfo old = cur;
+    std::string regWarn;
+    cur = BuildMeshInfo(r, name, old.source, file, regWarn);
+    for (GhostObject& o : g_scene.objects)
+        if (o.meshId == meshId && o.missingMesh.empty() && o.missingMeshFile.empty()) RemapObjectToMesh(o, old, cur);
+    g_scene.selectedFace = -1;
+    g_scene.version++;                                           // the hierarchy and Details refresh
+
+    std::string text = "Re-imported \"" + name + "\":\n" + r.info;
+    const std::string allWarn = r.warn + regWarn;
+    if (!allWarn.empty()) text += "\n\n" + allWarn;
+    if (!saveWarn.empty()) text += "\n\n" + saveWarn;
+    CopyMsg(text, msg, msgSize);
+    return meshId;
+}
+
+void GhostEngine_ApplyMeshDefaults(int objectId, int what)
+{
+    if (g_playState != GhostPlayState::Editing) return;
+    GhostObject* o = FindObject(objectId);
+    const GhostMeshInfo* mi = o ? GhostMesh_Info(o->meshId) : nullptr;
+    if (!o || !mi || !o->missingMesh.empty() || !o->missingMeshFile.empty()) return;
+
+    if (what & 1)                                                // materials
+    {
+        for (int f = 0; f < GHOST_MAX_FACES; f++) o->faces[f] = GhostMaterial();
+        const int n = GhostMesh_FaceCount(o->meshId);
+        for (int f = 0; f < n; f++) if (mi->faces[(size_t)f].hasMat) o->faces[f] = mi->faces[(size_t)f].mat;
+        o->useVertexColor = false;
+    }
+    if (what & 2) GhostMesh_FitCollider(*mi, o->colliderSize, o->colliderOffset);
+}
+
 int GhostEngine_LoadModelFile(const char* path, char* msg, int msgSize)
 {
     if (!path) { CopyMsg("No file given.", msg, msgSize); return -1; }
+    g_modelWarn.clear();
     std::string err;
     const int id = LoadModelFile(path, err);
-    CopyMsg(id < 0 ? err : std::string(), msg, msgSize);
+    CopyMsg(id < 0 ? err : g_modelWarn, msg, msgSize);
     return id;
 }
 
@@ -2916,7 +3185,8 @@ int GhostEngine_GetMeshInfo(int id, GhostMeshStats* out)
     const GhostMeshInfo* m = GhostMesh_Info(id);
     if (!m || !out) return 0;
     *out = { m->builtin ? 1 : 0, GhostMesh_FaceCount(id), m->vertexCount, m->triangleCount,
-             m->bmin.x, m->bmin.y, m->bmin.z, m->bmax.x, m->bmax.y, m->bmax.z };
+             m->bmin.x, m->bmin.y, m->bmin.z, m->bmax.x, m->bmax.y, m->bmax.z,
+             m->importScale, m->importFit, m->importUp, m->importFlags };
     return 1;
 }
 

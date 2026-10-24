@@ -18,12 +18,24 @@ namespace GhostShell
         private readonly NumericUpDown _scale = new(), _fit = new();
         private readonly ComboBox _up = new();
         private readonly CheckBox _flip = new(), _place = new();
-
+        private readonly CheckBox _mats = new();
         public float Scale => (float)_scale.Value;
         public float FitSize => (float)_fit.Value;
         public int UpAxis => Math.Max(_up.SelectedIndex, 0);
         public bool FlipWinding => _flip.Checked;
         public bool PlaceInScene => _place.Visible && _place.Checked;
+
+        public int Flags => (_flip.Checked ? 1 : 0) | (_mats.Checked ? 0 : 2);
+
+        // Fills the controls with the settings a model was imported with (used by Re-import with settings)
+        public void Preset(float scale, float fit, int up, int flags)
+        {
+            _scale.Value = Math.Clamp((decimal)scale, _scale.Minimum, _scale.Maximum);
+            _fit.Value = Math.Clamp((decimal)fit, _fit.Minimum, _fit.Maximum);
+            _up.SelectedIndex = Math.Clamp(up, 0, 2);
+            _flip.Checked = (flags & 1) != 0;
+            _mats.Checked = (flags & 2) == 0;
+        }
 
         public ModelImportDialog(string[] files, bool offerPlace)
         {
@@ -31,7 +43,7 @@ namespace GhostShell
             FormBorderStyle = FormBorderStyle.FixedDialog;
             StartPosition = FormStartPosition.CenterParent;
             MaximizeBox = false; MinimizeBox = false; ShowInTaskbar = false;
-            ClientSize = new Size(470, 282);
+            ClientSize = new Size(470, 316);
             BackColor = Bg; ForeColor = Fg;
 
             string title = files.Length == 1 ? Path.GetFileName(files[0]) : $"{files.Length} files (the same settings apply to each)";
@@ -60,9 +72,13 @@ namespace GhostShell
             _place.Checked = true; _place.Visible = offerPlace;
             Controls.Add(_place);
 
+            _mats.Text = "Import materials and textures from the file";
+            _mats.Location = new Point(16, 214); _mats.AutoSize = true; _mats.ForeColor = Fg; _mats.Checked = true;
+            Controls.Add(_mats);
+
             Controls.Add(new Label
             {
-                Location = new Point(16, 214),
+                Location = new Point(16, 244),
                 Size = new Size(438, 20),
                 ForeColor = Color.Gray,
                 Text = "Fit is applied first, then Scale. Tip: Fit = 2 gives a predictable size.",
@@ -71,7 +87,7 @@ namespace GhostShell
             var ok = new Button
             {
                 Text = "Import",
-                Location = new Point(280, 244),
+                Location = new Point(244, 278),
                 Size = new Size(84, 28),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Bg2,
@@ -151,10 +167,13 @@ namespace GhostShell
         // ---------------- loading converted files ----------------
         public static int LoadFile(string path)
         {
-            var buf = new byte[2048];
+            var buf = new byte[4096];
             int id = GhostEngine.GhostEngine_LoadModelFile(path, buf, buf.Length);
-            if (id < 0 && Reported.Add(path))                // one message per bad file, not one per palette refresh
-                MessageBox.Show($"{Path.GetFileName(path)}:\n{Utf8(buf)}", "Model", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            string text = Utf8(buf);
+            if (id < 0 && Reported.Add(path))                // one message per file, not one per palette refresh
+                MessageBox.Show($"{Path.GetFileName(path)}:\n{text}", "Model", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            else if (id >= 0 && text.Length > 0 && Reported.Add(path))
+                MessageBox.Show(text, "Model loaded with warnings", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return id;
         }
 
@@ -205,7 +224,7 @@ namespace GhostShell
                 {
                     var buf = new byte[4096];
                     int id = GhostEngine.GhostEngine_ImportModel(f, dlg.Scale, dlg.FitSize, dlg.UpAxis,
-                        dlg.FlipWinding ? 1 : 0, buf, buf.Length);
+                        dlg.Flags, buf, buf.Length);
                     string msg = Utf8(buf);
 
                     if (id < 0)
@@ -226,5 +245,58 @@ namespace GhostShell
             MessageBox.Show(owner, report.ToString().TrimEnd(), anyFailed ? "Import finished with problems" : "Import Model",
                 MessageBoxButtons.OK, anyFailed ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
         }
+
+        // ---------------- re-import ----------------
+        public static void ReimportSelected(IWin32Window owner, bool askSettings)
+        {
+            int sel = GhostEngine.GhostEngine_GetSelected();
+            var o = new GhostObjectInfo();
+            if (sel == 0 || GhostEngine.GhostEngine_GetObject(sel, ref o) == 0 || IsBuiltin(o.meshId))
+            {
+                MessageBox.Show(owner, "Select a placed imported model first.", "Re-import",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            Reimport(owner, o.meshId, askSettings);
+        }
+
+        public static void Reimport(IWin32Window owner, int meshId, bool askSettings)
+        {
+            if (GhostPlay.State != 0)
+            {
+                MessageBox.Show(owner, "Stop playing before re-importing a model.", "Re-import",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            string src = MeshText(meshId, 2);
+            if (IsBuiltin(meshId) || src.Length == 0 || !File.Exists(src))
+            {
+                MessageBox.Show(owner, "The original file was not found:\n" + (src.Length == 0 ? "(unknown)" : src) +
+                    "\n\nRe-import needs the source file where it was when you imported it.",
+                    "Re-import", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            int useStored = 1, up = 0, flags = 0;
+            float scale = 1f, fit = 0f;
+            if (askSettings)
+            {
+                GhostEngine.GhostEngine_GetMeshInfo(meshId, out GhostMeshStats st);
+                using var dlg = new ModelImportDialog(new[] { src }, false);
+                dlg.Preset(st.importScale, st.importFit, st.importUp, st.importFlags);
+                if (dlg.ShowDialog(owner) != DialogResult.OK) return;
+                useStored = 0; scale = dlg.Scale; fit = dlg.FitSize; up = dlg.UpAxis; flags = dlg.Flags;
+            }
+
+            var buf = new byte[4096];
+            int id;
+            Cursor.Current = Cursors.WaitCursor;
+            try { id = GhostEngine.GhostEngine_ReimportModel(meshId, useStored, scale, fit, up, flags, buf, buf.Length); }
+            finally { Cursor.Current = Cursors.Default; }
+
+            MessageBox.Show(owner, Utf8(buf), id < 0 ? "Re-import failed" : "Model re-imported",
+                MessageBoxButtons.OK, id < 0 ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
+        }
+
     }
 }

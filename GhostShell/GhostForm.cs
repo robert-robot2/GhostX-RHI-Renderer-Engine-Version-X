@@ -160,15 +160,17 @@ namespace GhostShell
                     _ghostUI.Visible = false;
                 }
             };
+
             _menuBuilder.OnAbout += OnAbout;
             _menuBuilder.OnVersion += OnVersion;
+
             // ---- Engine editor panels (must come after the menu strip exists) ----
             _editor = new GhostEditorUI(this, _renderPanel);
             _editor.Build();
             _menuBuilder.OnToggleEditorUI += (s, e) => _editor.ToggleVisible();
-
             _menuBuilder.OnImportModel += (s, e) => GhostModels.ImportInteractive(this);
-
+            _menuBuilder.OnReimportModel += (s, e) => GhostModels.ReimportSelected(this, false);
+            _menuBuilder.OnReimportModelSettings += (s, e) => GhostModels.ReimportSelected(this, true);
             _menuBuilder.OnNewScene += (s, e) => { if (GhostSceneFile.ConfirmDiscard(this)) GhostSceneFile.New(); };
             _menuBuilder.OnOpenScene += (s, e) => GhostSceneFile.OpenInteractive(this);
             _menuBuilder.OnSaveScene += (s, e) => { if (!_editor.SaveDesignerIfFocused()) GhostSceneFile.SaveInteractive(this); };
@@ -185,7 +187,9 @@ namespace GhostShell
             _menuBuilder.OnGameModuleInfo += (s, e) => GhostPlay.ShowModuleInfo(this);
             _menuBuilder.OnReloadAnimations += (s, e) => GhostEngine.GhostEngine_ReloadAnimations();
             _menuBuilder.OnCreateTestSprite += (s, e) => GhostTestSprite.Create(this);
+
             // Title bar: scene name, with * when there are unsaved changes
+
             var titleTimer = new System.Windows.Forms.Timer { Interval = 200 };
             titleTimer.Tick += (s, e) =>
             {

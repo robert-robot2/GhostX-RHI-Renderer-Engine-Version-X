@@ -67,6 +67,9 @@ namespace GhostShell
             ColliderSize = new Vec3Edit(
                 () => { var g = Gp(); return (g.csx, g.csy, g.csz); },
                 (x, y, z) => { var g = Gp(); g.csx = x; g.csy = y; g.csz = z; SetGp(g); });
+            ColliderOffset = new Vec3Edit(
+    () => { var g = Gp(); return (g.cox, g.coy, g.coz); },
+    (x, y, z) => { var g = Gp(); g.cox = x; g.coy = y; g.coz = z; SetGp(g); });
         }
 
         private GhostObjectInfo Obj() { var i = new GhostObjectInfo(); GhostEngine.GhostEngine_GetObject(_id, ref i); return i; }
@@ -223,6 +226,7 @@ namespace GhostShell
 
         [Category("Gameplay")] public bool Collider { get => Gp().collider != 0; set { var g = Gp(); g.collider = value ? 1 : 0; SetGp(g); } }
         [Category("Gameplay"), DisplayName("Collider Size")] public Vec3Edit ColliderSize { get; }
+        [Category("Gameplay"), DisplayName("Collider Offset")] public Vec3Edit ColliderOffset { get; }
 
         [Category("Gameplay"), DisplayName("Visible In Game")]
         public bool VisibleInGame { get => Gp().visible != 0; set { var g = Gp(); g.visible = value ? 1 : 0; SetGp(g); } }

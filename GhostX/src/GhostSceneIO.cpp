@@ -174,6 +174,7 @@ bool GhostScene_Save(const GhostScene& s, const std::string& root, const std::st
             jo["customTag"] = o.customTag;
             jo["collider"] = o.collider;
             jo["colliderSize"] = V3(o.colliderSize);
+            jo["colliderOffset"] = V3(o.colliderOffset);
             jo["visible"] = o.visible;
             jo["shadow"] = json{ { "mode", o.shadowMode },{ "light", o.shadowLightId },{ "receive", o.receiveShadows } };
             if (o.meshId == GHOST_MESH_QUAD)
@@ -432,6 +433,7 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
                 if (o.customTag.size() > 31) o.customTag.resize(31);
                 o.collider = jo.value("collider", false);
                 ReadV3(jo, "colliderSize", o.colliderSize);
+                ReadV3(jo, "colliderOffset", o.colliderOffset);
                 o.visible = jo.value("visible", true);
                 if (jo.contains("shadow") && jo["shadow"].is_object())
                 {
@@ -632,7 +634,7 @@ unsigned int GhostScene_Hash(const GhostScene& s)
         I(o.id); I(o.meshId); S(o.name);
         V(o.position); V(o.rotationDeg); V(o.scale);
         I(o.useVertexColor ? 1 : 0);
-        I(o.role); S(o.customTag); I(o.collider ? 1 : 0); V(o.colliderSize); I(o.visible ? 1 : 0);
+        I(o.role); S(o.customTag); I(o.collider ? 1 : 0); V(o.colliderSize); V(o.colliderOffset); I(o.visible ? 1 : 0);
         I(o.shadowMode); I(o.shadowLightId); I(o.receiveShadows ? 1 : 0);
         const int n = GhostMesh_FaceCount(o.meshId);
         for (int f = 0; f < n; f++) mix(&o.faces[f], sizeof(GhostMaterial));

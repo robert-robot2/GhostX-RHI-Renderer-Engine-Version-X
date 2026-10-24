@@ -3,6 +3,7 @@
 #define STBI_ONLY_PNG
 #define STBI_ONLY_JPEG
 #define STBI_ONLY_BMP
+#define STBI_ONLY_TGA
 #include "../include/stb_image.h"
 #include "../include/GhostImage.h"
 #include <cstdio>

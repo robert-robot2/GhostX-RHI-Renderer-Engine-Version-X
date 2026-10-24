@@ -55,6 +55,7 @@ struct GhostGameplayInfo
     int   role;                 // 0 static, 1 player, 2 enemy, 3 coin, 4 block, 5 goal, 6 custom
     int   collider;
     float csx, csy, csz;        // collider size (multiplied by the object's scale)
+    float cox, coy, coz;        // collider center offset (multiplied by the object's scale)
     int   visible;
 };
 struct GhostModParamInfo
@@ -81,6 +82,8 @@ struct GhostMeshStats
     int          builtin, faceCount;
     unsigned int vertexCount, triangleCount;
     float        minX, minY, minZ, maxX, maxY, maxZ;       // local-space bounds
+    float        importScale, importFit;
+    int          importUp, importFlags;                    // flags: 1 flip winding, 2 no materials
 };
 
 
@@ -215,6 +218,11 @@ extern "C"
 // upAxis: 0 auto, 1 Y up, 2 Z up. fitSize 0 = off.
     GHOST_API int GhostEngine_ImportModel(const char* utf8Path, float scale, float fitSize, int upAxis,
         int flipWinding, char* msg, int msgSize);
+    // Re-reads the model's source file. useStored 1 = the original import options. Returns the mesh id, or -1 (msg = reason).
+    GHOST_API int  GhostEngine_ReimportModel(int meshId, int useStored, float scale, float fitSize, int upAxis, int flags,
+        char* msg, int msgSize);
+    GHOST_API void GhostEngine_ApplyMeshDefaults(int objectId, int what);   // 1 materials, 2 collider, 3 both
+
     // Loads a converted .ghostmesh (or finds it if it is already loaded). Returns the mesh id, or -1 (msg = reason).
     GHOST_API int  GhostEngine_LoadModelFile(const char* utf8Path, char* msg, int msgSize);
     GHOST_API int  GhostEngine_GetMeshCount();

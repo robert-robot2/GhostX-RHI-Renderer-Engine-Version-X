@@ -39,7 +39,120 @@ static bool MetaInt(const aiMetadata* md, const char* key, int& out)
     }
     return false;
 }
+static float Sat01(float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
 
+static std::string LowerExt(const std::string& s)
+{
+    std::string e = s;
+    for (char& c : e) c = (char)tolower((unsigned char)c);
+    return e;
+}
+
+static bool SupportedExt(const std::string& ext)
+{
+    const std::string e = LowerExt(ext);
+    return e == ".png" || e == ".jpg" || e == ".jpeg" || e == ".bmp" || e == ".tga";
+}
+
+// Looks for a texture the way exporters leave them: next to the model, in textures folders, in <name>.fbm, then anywhere below
+static std::string FindTextureFile(const std::string& modelPath, const std::string& raw)
+{
+    namespace fs = std::filesystem;
+    const fs::path model(GhostUtf8ToWide(modelPath));
+    const fs::path dir = model.parent_path();
+    const fs::path rawPath(GhostUtf8ToWide(raw));
+    const fs::path name = rawPath.filename();
+    if (name.empty()) return "";
+    std::error_code ec;
+
+    std::vector<fs::path> tries;
+    tries.push_back(rawPath.is_absolute() ? rawPath : dir / rawPath);
+    tries.push_back(dir / name);
+    tries.push_back(dir / L"textures" / name);
+    tries.push_back(dir / L"Textures" / name);
+    tries.push_back(dir / (model.stem().wstring() + L".fbm") / name);
+    tries.push_back(dir.parent_path() / L"textures" / name);
+    tries.push_back(dir.parent_path() / L"Textures" / name);
+    for (const fs::path& t : tries)
+        if (fs::is_regular_file(t, ec)) return GhostWideToUtf8(t.lexically_normal().wstring());
+
+    int visited = 0;
+    for (fs::recursive_directory_iterator it(dir, fs::directory_options::skip_permission_denied, ec), end;
+        !ec && it != end && visited < 5000; it.increment(ec), ++visited)
+        if (it->is_regular_file(ec) && _wcsicmp(it->path().filename().c_str(), name.c_str()) == 0)
+            return GhostWideToUtf8(it->path().lexically_normal().wstring());
+    return "";
+}
+
+static void ReadMaterial(const aiScene* scene, const aiMaterial* mat, const std::string& modelPath,
+    const std::string& slot, GhostModelMat& out, std::string& warn)
+{
+    out.hasMat = true;
+
+    aiColor3D c;
+    if (mat->Get(AI_MATKEY_COLOR_DIFFUSE, c) == aiReturn_SUCCESS)
+    {
+        out.tint[0] = Sat01(c.r); out.tint[1] = Sat01(c.g); out.tint[2] = Sat01(c.b);
+    }
+
+    float f = 0.0f;
+    if (mat->Get(AI_MATKEY_SHININESS, f) == aiReturn_SUCCESS && f > 1.0f)
+    {
+        const float r = powf(2.0f / (f + 2.0f), 0.25f);          // Blinn-Phong exponent -> the roughness our shader uses
+        out.roughness = r < 0.06f ? 0.06f : (r > 1.0f ? 1.0f : r);
+    }
+    if (mat->Get(AI_MATKEY_METALLIC_FACTOR, f) == aiReturn_SUCCESS) out.metallic = Sat01(f);
+    if (mat->Get(AI_MATKEY_ROUGHNESS_FACTOR, f) == aiReturn_SUCCESS) out.roughness = f < 0.06f ? 0.06f : (f > 1.0f ? 1.0f : f);
+
+    aiColor3D e;
+    if (mat->Get(AI_MATKEY_COLOR_EMISSIVE, e) == aiReturn_SUCCESS && (e.r > 0.01f || e.g > 0.01f || e.b > 0.01f))
+    {
+        out.emissive[0] = Sat01(e.r); out.emissive[1] = Sat01(e.g); out.emissive[2] = Sat01(e.b); out.emissiveStrength = 1.0f;
+    }
+
+    if (mat->Get(AI_MATKEY_OPACITY, f) == aiReturn_SUCCESS && f > 0.0f && f < 0.99f)
+        warn += "Material \"" + slot + "\" is transparent. GhostX draws it opaque.\n";
+
+    // ---- the diffuse texture ----
+    aiTextureType type = aiTextureType_DIFFUSE;
+    if (mat->GetTextureCount(type) == 0) type = aiTextureType_BASE_COLOR;
+    aiString tp;
+    if (mat->GetTextureCount(type) == 0 || mat->GetTexture(type, 0, &tp) != aiReturn_SUCCESS) return;
+    const std::string raw = tp.C_Str();
+    if (raw.empty()) return;
+
+    if (const aiTexture* et = scene->GetEmbeddedTexture(raw.c_str()))
+    {
+        if (et->mHeight != 0 || !et->pcData || et->mWidth == 0 || et->mWidth > 64u * 1024u * 1024u)
+        {
+            warn += "Material \"" + slot + "\": its embedded texture is in a format GhostX can't read.\n"; return;
+        }
+        std::string ext = et->achFormatHint;
+        if (ext.empty()) ext = "png";
+        if (ext == "jpeg") ext = "jpg";
+        if (!SupportedExt("." + ext))
+        {
+            warn += "Material \"" + slot + "\": its embedded texture is ." + ext + ", which GhostX can't read.\n"; return;
+        }
+        out.texData.assign((const unsigned char*)et->pcData, (const unsigned char*)et->pcData + et->mWidth);
+        out.texExt = ext;
+        return;
+    }
+
+    const std::string file = FindTextureFile(modelPath, raw);
+    if (file.empty())
+    {
+        warn += "Material \"" + slot + "\": the texture \"" + raw + "\" was not found next to the model "
+            "(looked beside it, in textures folders and below).\n";
+        return;
+    }
+    const std::string ext = std::filesystem::path(GhostUtf8ToWide(file)).extension().string();
+    if (!SupportedExt(ext))
+    {
+        warn += "Material \"" + slot + "\": the texture " + raw + " is a " + ext + " file. Only PNG, JPG, BMP and TGA can be loaded.\n"; return;
+    }
+    out.texSource = file;
+}
 // Source (right-handed) -> engine (left-handed, Y up). Both mappings mirror the model,
 // so the triangle winding is swapped below.
 static void Convert(bool zUp, float x, float y, float z, float& ox, float& oy, float& oz)
@@ -85,6 +198,9 @@ bool GhostModel_Load(const std::string& path, const GhostModelOptions& opt, Ghos
             std::to_string(GHOST_MODEL_MAX_TRIANGLES) + ".";
         return false;
     }
+
+    if (totalTris > GHOST_MODEL_WARN_TRIANGLES)
+        out.warn += "This is a large model (" + std::to_string(totalTris) + " triangles). Expect slower editing and shadows.\n";
 
     // ---- up axis ----
     bool zUp = (opt.upAxis == 2);
@@ -159,6 +275,8 @@ bool GhostModel_Load(const std::string& path, const GhostModelOptions& opt, Ghos
         sub.name = unique;
         sub.firstIndex = firstIndex;
         sub.indexCount = (unsigned int)I.size() - firstIndex;
+        if (opt.importMaterials && scene->mMaterials && g.first < scene->mNumMaterials)
+            ReadMaterial(scene, scene->mMaterials[g.first], path, unique, sub.mat, out.warn);
         out.subs.push_back(sub);
     }
     if (V.empty() || I.size() < 3 || out.subs.empty()) { err = "The file has no usable triangles."; return false; }
@@ -186,7 +304,7 @@ bool GhostModel_Load(const std::string& path, const GhostModelOptions& opt, Ghos
     s *= (opt.scale > 0.0f) ? opt.scale : 1.0f;
     for (GhostMeshVertex& v : V) { v.x *= s; v.y *= s; v.z *= s; }
     for (int k = 0; k < 3; k++) { out.bmin[k] = mn[k] * s; out.bmax[k] = mx[k] * s; }
-
+    out.opts = opt;
     out.triangleCount = (unsigned int)(I.size() / 3);
     out.name = GhostWideToUtf8(std::filesystem::path(GhostUtf8ToWide(path)).stem().wstring());
     if (out.name.empty()) out.name = "Model";
@@ -208,7 +326,8 @@ bool GhostModel_Load(const std::string& path, const GhostModelOptions& opt, Ghos
 //  name, source, per sub: name, firstIndex, indexCount, then the vertices and the 32-bit indices
 // ============================================================
 static const char         kMeshMagic[4] = { 'G', 'M', 'S', 'H' };
-static const unsigned int kMeshFileVersion = 1;
+
+static const unsigned int kMeshFileVersion = 2;
 
 bool GhostMeshFile_Save(const std::string& path, const GhostModelResult& r, const std::string& source, std::string& err)
 {
@@ -233,9 +352,23 @@ bool GhostMeshFile_Save(const std::string& path, const GhostModelResult& r, cons
             U((unsigned int)r.subs.size());
             for (int k = 0; k < 3; k++) F(r.bmin[k]);
             for (int k = 0; k < 3; k++) F(r.bmax[k]);
+            F(r.opts.scale);
+            F(r.opts.fitSize);
+            U((unsigned int)r.opts.upAxis);
+            U((r.opts.flipWinding ? 1u : 0u) | (r.opts.importMaterials ? 0u : 2u));
             S(r.name);
             S(source);
-            for (const GhostModelSub& s : r.subs) { S(s.name); U(s.firstIndex); U(s.indexCount); }
+            for (const GhostModelSub& s : r.subs)
+            {
+                const GhostModelMat& m = s.mat;
+                S(s.name); U(s.firstIndex); U(s.indexCount);
+                U(m.hasMat ? 1u : 0u);
+                for (int k = 0; k < 3; k++) F(m.tint[k]);
+                F(m.metallic); F(m.roughness); F(m.specular);
+                for (int k = 0; k < 3; k++) F(m.emissive[k]);
+                F(m.emissiveStrength);
+                S(m.texPath);
+            }
             f.write((const char*)r.vertices.data(), (std::streamsize)(r.vertices.size() * sizeof(GhostMeshVertex)));
             f.write((const char*)r.indices.data(), (std::streamsize)(r.indices.size() * sizeof(unsigned int)));
             if (!f) { err = "Writing the mesh file failed (disk full?)."; return false; }
@@ -263,7 +396,7 @@ bool GhostMeshFile_Load(const std::string& path, GhostModelResult& out, std::str
 
         auto left = [&]() -> long long { return size - (long long)f.tellg(); };
         auto U = [&](unsigned int& v) -> bool { f.read((char*)&v, 4); return (bool)f; };
-        auto F = [&](float& v) -> bool { f.read((char*)&v, 4); return (bool)f; };
+        auto F = [&](float& v) -> bool { f.read((char*)&v, 4); return (bool)f && v == v; };   // NaN is rejected
         auto S = [&](std::string& s) -> bool
             {
                 unsigned int n = 0;
@@ -288,6 +421,15 @@ bool GhostMeshFile_Load(const std::string& path, GhostModelResult& out, std::str
 
         for (int k = 0; k < 3; k++) if (!F(out.bmin[k])) { err = bad + "it is cut short."; return false; }
         for (int k = 0; k < 3; k++) if (!F(out.bmax[k])) { err = bad + "it is cut short."; return false; }
+
+        if (ver >= 2)
+        {
+            unsigned int up = 0, flags = 0;
+            if (!F(out.opts.scale) || !F(out.opts.fitSize) || !U(up) || !U(flags)) { err = bad + "the import options are unreadable."; return false; }
+            out.opts.upAxis = up > 2 ? 0 : (int)up;
+            out.opts.flipWinding = (flags & 1) != 0;
+            out.opts.importMaterials = (flags & 2) == 0;
+        }
         if (!S(out.name) || !S(source)) { err = bad + "a name is unreadable."; return false; }
 
         out.subs.resize(sc);
@@ -299,6 +441,24 @@ bool GhostMeshFile_Load(const std::string& path, GhostModelResult& out, std::str
                 (unsigned long long)s.firstIndex + s.indexCount > ic)
             {
                 err = bad + "a material slot is out of range."; return false;
+            }
+
+            if (ver >= 2)
+            {
+                GhostModelMat& m = s.mat;
+                unsigned int has = 0;
+                bool ok = U(has);
+                for (int k = 0; k < 3 && ok; k++) ok = F(m.tint[k]);
+                ok = ok && F(m.metallic) && F(m.roughness) && F(m.specular);
+                for (int k = 0; k < 3 && ok; k++) ok = F(m.emissive[k]);
+                ok = ok && F(m.emissiveStrength) && S(m.texPath);
+                if (!ok) { err = bad + "a material is unreadable."; return false; }
+                m.hasMat = has != 0;
+                for (int k = 0; k < 3; k++) { m.tint[k] = Sat01(m.tint[k]); m.emissive[k] = Sat01(m.emissive[k]); }
+                m.metallic = Sat01(m.metallic);
+                m.specular = Sat01(m.specular);
+                m.roughness = m.roughness < 0.06f ? 0.06f : (m.roughness > 1.0f ? 1.0f : m.roughness);
+                m.emissiveStrength = m.emissiveStrength < 0.0f ? 0.0f : (m.emissiveStrength > 20.0f ? 20.0f : m.emissiveStrength);
             }
         }
 

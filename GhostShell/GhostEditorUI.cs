@@ -522,7 +522,11 @@ namespace GhostShell
         public override StandardValuesCollection GetStandardValues(ITypeDescriptorContext? context)
             => new StandardValuesCollection(GhostShadowUI.Choices());
     }
-
+    internal class ModelDefaultsConverter : FixedListConverter
+    {
+        public static readonly string[] Names = { "(choose)", "Materials", "Collider", "Materials and Collider" };
+        protected override string[] Items => Names;
+    }
 
     internal class ObjectProxy
     {
@@ -549,6 +553,9 @@ namespace GhostShell
             ColliderSize = new Vec3Edit(
     () => { var g = GetG(); return (g.csx, g.csy, g.csz); },
     (x, y, z) => { var g = GetG(); g.csx = x; g.csy = y; g.csz = z; SetG(g); });
+            ColliderOffset = new Vec3Edit(
+    () => { var g = GetG(); return (g.cox, g.coy, g.coz); },
+    (x, y, z) => { var g = GetG(); g.cox = x; g.coy = y; g.coz = z; SetG(g); });
         }
 
         private GhostObjectInfo Get() { var i = new GhostObjectInfo(); GhostEngine.GhostEngine_GetObject(_id, ref i); return i; }
@@ -836,7 +843,17 @@ namespace GhostShell
 
         [Category("Mesh"), DisplayName("Source File")]
         public string SourceFile { get { string t = GhostModels.MeshText(MeshId(), 2); return t.Length == 0 ? "(built-in)" : t; } }
-
+        [Category("Mesh"), DisplayName("Reset To Model Defaults")]
+        [TypeConverter(typeof(ModelDefaultsConverter))]
+        public string ResetDefaults
+        {
+            get => ModelDefaultsConverter.Names[0];
+            set
+            {
+                int i = Array.IndexOf(ModelDefaultsConverter.Names, value);       // 1 materials, 2 collider, 3 both
+                if (i > 0) GhostEngine.GhostEngine_ApplyMeshDefaults(_id, i);
+            }
+        }
 
         // ---- Gameplay ----
         private GhostGameplayInfo GetG() { var g = new GhostGameplayInfo(); GhostEngine.GhostEngine_GetGameplay(_id, ref g); return g; }
@@ -876,6 +893,9 @@ namespace GhostShell
 
         [Category("Gameplay"), DisplayName("Collider Size")]
         public Vec3Edit ColliderSize { get; }
+
+        [Category("Gameplay"), DisplayName("Collider Offset")]
+        public Vec3Edit ColliderOffset { get; }
 
         [Category("Gameplay"), DisplayName("Visible In Game")]
         public bool VisibleInGame

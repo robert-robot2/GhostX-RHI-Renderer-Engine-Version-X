@@ -40,8 +40,9 @@ namespace GhostShell
         public event EventHandler? OnGameModuleInfo;
         public event EventHandler? OnReloadAnimations;
         public event EventHandler? OnCreateTestSprite;
-
         public event EventHandler? OnImportModel;
+        public event EventHandler? OnReimportModel;
+        public event EventHandler? OnReimportModelSettings;
 
         private ToolStripMenuItem _recentMenu = null!;
 
@@ -93,6 +94,8 @@ namespace GhostShell
             fileMenu.DropDownItems.Add(saveSceneAs);
             fileMenu.DropDownItems.Add(new ToolStripSeparator());
             fileMenu.DropDownItems.Add(MakeItem("Import Model...", (s, e) => OnImportModel?.Invoke(s, e)));
+            fileMenu.DropDownItems.Add(MakeItem("Re-import Selected Model", (s, e) => OnReimportModel?.Invoke(s, e)));
+            fileMenu.DropDownItems.Add(MakeItem("Re-import Selected Model with Settings...", (s, e) => OnReimportModelSettings?.Invoke(s, e)));
             fileMenu.DropDownItems.Add(MakeItem("Open in Visual Studio", (s, e) => OnOpenInVS?.Invoke(s, e)));
             fileMenu.DropDownItems.Add(new ToolStripSeparator());
             fileMenu.DropDownItems.Add(MakeItem("Exit", (s, e) => OnExit?.Invoke(s, e)));
