@@ -205,4 +205,9 @@ extern "C"
     GHOST_API void GhostEngine_SetLightShadows(int lightId, int on);
     GHOST_API void GhostEngine_GetShadowSettings(int* enabled, float* strength);
     GHOST_API void GhostEngine_SetShadowSettings(int enabled, float strength);
+    // ---- Models ----
+// Returns the new mesh id (>= 5), or -1 on failure (msg = the reason). On success msg holds a summary.
+// upAxis: 0 auto, 1 Y up, 2 Z up. fitSize 0 = off.
+    GHOST_API int GhostEngine_ImportModel(const char* utf8Path, float scale, float fitSize, int upAxis,
+        int flipWinding, char* msg, int msgSize);
 }

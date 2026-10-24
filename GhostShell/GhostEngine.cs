@@ -301,6 +301,10 @@ namespace GhostShell
         public static extern void GhostEngine_GetShadowSettings(out int enabled, out float strength);
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern void GhostEngine_SetShadowSettings(int enabled, float strength);
+        // ---- Models ----
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_ImportModel([MarshalAs(UnmanagedType.LPUTF8Str)] string path,
+            float scale, float fitSize, int upAxis, int flipWinding, [Out] byte[] msg, int msgSize);
 
     }
 }

@@ -167,6 +167,8 @@ namespace GhostShell
             _editor.Build();
             _menuBuilder.OnToggleEditorUI += (s, e) => _editor.ToggleVisible();
 
+            _menuBuilder.OnImportModel += (s, e) => GhostModels.ImportInteractive(this);
+
             _menuBuilder.OnNewScene += (s, e) => { if (GhostSceneFile.ConfirmDiscard(this)) GhostSceneFile.New(); };
             _menuBuilder.OnOpenScene += (s, e) => GhostSceneFile.OpenInteractive(this);
             _menuBuilder.OnSaveScene += (s, e) => { if (!_editor.SaveDesignerIfFocused()) GhostSceneFile.SaveInteractive(this); };

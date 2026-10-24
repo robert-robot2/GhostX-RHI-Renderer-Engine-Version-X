@@ -70,6 +70,12 @@
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Label="Vcpkg" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <VcpkgTriplet>x64-windows-static-md</VcpkgTriplet>
+  </PropertyGroup>
+  <PropertyGroup Label="Vcpkg" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <VcpkgTriplet>x64-windows-static-md</VcpkgTriplet>
+  </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
@@ -161,6 +167,7 @@ xcopy /Y /E /I "$(ProjectDir)shaders" "$(SolutionDir)GhostShell\bin\x64\Release\
     <ClInclude Include="include\GhostGameModule.h" />
     <ClInclude Include="include\GhostImage.h" />
     <ClInclude Include="include\GhostMath.h" />
+    <ClInclude Include="include\GhostModelImport.h" />
     <ClInclude Include="include\GhostMods.h" />
     <ClInclude Include="include\GhostPipeline.h" />
     <ClInclude Include="include\GhostRHI_DX12.h" />
@@ -180,6 +187,7 @@ xcopy /Y /E /I "$(ProjectDir)shaders" "$(SolutionDir)GhostShell\bin\x64\Release\
     <ClCompile Include="src\GhostEngine.cpp" />
     <ClCompile Include="src\GhostGameModule.cpp" />
     <ClCompile Include="src\GhostImage.cpp" />
+    <ClCompile Include="src\GhostModelImport.cpp" />
     <ClCompile Include="src\GhostMods.cpp" />
     <ClCompile Include="src\GhostPipeline.cpp" />
     <ClCompile Include="src\GhostRHI_DX12.cpp" />

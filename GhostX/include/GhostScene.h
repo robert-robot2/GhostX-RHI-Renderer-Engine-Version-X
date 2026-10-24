@@ -13,7 +13,8 @@ enum GhostRole {
 enum class GhostLightType : int { Directional = 0, Point = 1, RectArea = 2 };
 constexpr unsigned int GHOST_MAX_LIGHTS = 16;
 constexpr unsigned int GHOST_MAX_CAMERAS = 4;
-constexpr int GHOST_MAX_FACES = 6;
+// face cap???
+constexpr int GHOST_MAX_FACES = 32;
 constexpr int GHOST_FIRST_USER_TEXTURE = 3;     // ids 0..2 are the built-ins
 
 struct GhostMaterial
@@ -39,31 +40,103 @@ inline bool GhostMaterial_Equal(const GhostMaterial& a, const GhostMaterial& b)
     return memcmp(&a, &b, sizeof(GhostMaterial)) == 0;
 }
 
-// A face is a contiguous range of the mesh's index buffer
-struct GhostFaceDef { const char* name; unsigned int firstIndex, indexCount; };
 
-inline int GhostMesh_FaceCount(int meshId)
+
+// ============================================================
+//  Mesh registry: built-ins first (ids 0..GHOST_MESH_COUNT-1), imported models after
+// ============================================================
+constexpr int GHOST_MAX_MESHES = 64;
+
+// A face (material slot) is a contiguous range of the mesh's index buffer
+struct GhostFaceDef { std::string name; unsigned int firstIndex = 0, indexCount = 0; };
+
+struct GhostMeshInfo
 {
-      switch (meshId) { case GHOST_MESH_TRIANGLE: case GHOST_MESH_QUAD: return 1; default: return 6; }
+    std::string  name;
+    std::string  source;                           // file an imported model came from ("" for built-ins)
+    bool         builtin = true;
+    bool         index32 = false;                  // imported meshes use 32-bit indices
+    GhostVec3    bmin = { -0.5f, -0.5f, -0.5f };   // local-space bounds: picking, shadows, drop-to-ground
+    GhostVec3    bmax = { 0.5f,  0.5f,  0.5f };
+    GhostVec3    defaultScale = { 1, 1, 1 };
+    unsigned int vertexCount = 0, triangleCount = 0;
+    std::vector<GhostFaceDef> faces;
+};
+
+inline std::vector<GhostMeshInfo> GhostBuildBuiltinMeshes()
+{
+    std::vector<GhostMeshInfo> v(GHOST_MESH_COUNT);
+    const std::vector<GhostFaceDef> cubeFaces = {
+        { "Front", 0, 6 },{ "Back", 6, 6 },{ "Top", 12, 6 },{ "Bottom", 18, 6 },{ "Left", 24, 6 },{ "Right", 30, 6 } };
+    const std::vector<GhostFaceDef> shipFaces = {       // one triangle each; names are approximate
+        { "Hull Right", 0, 3 },{ "Hull Left", 3, 3 },{ "Hull Rear", 6, 3 },
+        { "Hull Bottom", 9, 3 },{ "Wing Right", 12, 3 },{ "Wing Left", 15, 3 } };
+
+    auto def = [&](int id, const char* name, GhostVec3 mn, GhostVec3 mx, GhostVec3 sc,
+        unsigned int verts, unsigned int tris, const std::vector<GhostFaceDef>& faces)
+        {
+            GhostMeshInfo& m = v[(size_t)id];
+            m.name = name; m.builtin = true; m.index32 = false;
+            m.bmin = mn; m.bmax = mx; m.defaultScale = sc;
+            m.vertexCount = verts; m.triangleCount = tris; m.faces = faces;
+        };
+    def(GHOST_MESH_CUBE, "Cube", { -0.5f, -0.5f, -0.5f }, { 0.5f, 0.5f, 0.5f }, { 1, 1, 1 }, 24, 12, cubeFaces);
+    def(GHOST_MESH_TRIANGLE, "Triangle", { -0.5f, 0.0f, -0.05f }, { 0.5f, 1.0f, 0.05f }, { 1, 1, 1 }, 3, 1, { { "Face", 0, 3 } });
+    def(GHOST_MESH_SHIP, "Ship", { -3.2f, -1.0f, -3.0f }, { 3.2f, 3.0f, 11.0f }, { 0.1f, 0.1f, 0.1f }, 10, 6, shipFaces);
+    def(GHOST_MESH_SQUARE, "Square", { -0.5f, -0.5f, -0.5f }, { 0.5f, 0.5f, 0.5f }, { 1, 1, 0.25f }, 24, 12, cubeFaces);
+    def(GHOST_MESH_QUAD, "Sprite", { -0.5f, -0.5f, -0.25f }, { 0.5f, 0.5f, 0.25f }, { 1, 1, 1 }, 4, 2, { { "Face", 0, 6 } });
+    return v;
 }
 
-inline const GhostFaceDef& GhostMesh_Face(int meshId, int face)
+inline std::vector<GhostMeshInfo>& GhostMeshes()
 {
-    static const GhostFaceDef cube[6] = {
-        { "Front", 0, 6 }, { "Back", 6, 6 }, { "Top", 12, 6 },
-        { "Bottom", 18, 6 }, { "Left", 24, 6 }, { "Right", 30, 6 } };
-    static const GhostFaceDef tri[1] = { { "Face", 0, 3 } };
-    static const GhostFaceDef quad[1] = { { "Face", 0, 6 } };
-    static const GhostFaceDef ship[6] = {      // one triangle each; names are approximate
-        { "Hull Right", 0, 3 }, { "Hull Left", 3, 3 }, { "Hull Rear", 6, 3 },
-        { "Hull Bottom", 9, 3 }, { "Wing Right", 12, 3 }, { "Wing Left", 15, 3 } };
-
-    if (face < 0 || face >= GhostMesh_FaceCount(meshId)) face = 0;
-    switch (meshId) {
-    case GHOST_MESH_TRIANGLE: return tri[face]; case GHOST_MESH_QUAD: return quad[face];
-    case GHOST_MESH_SHIP: return ship[face]; default: return cube[face];
-    }
+    static std::vector<GhostMeshInfo> meshes = GhostBuildBuiltinMeshes();
+    return meshes;
 }
+
+inline int  GhostMesh_Count() { return (int)GhostMeshes().size(); }
+inline bool GhostMesh_Valid(int id) { return id >= 0 && id < GhostMesh_Count(); }
+
+inline const GhostMeshInfo* GhostMesh_Info(int id)
+{
+    return GhostMesh_Valid(id) ? &GhostMeshes()[(size_t)id] : nullptr;
+}
+
+inline int GhostMesh_Register(const GhostMeshInfo& info)    // new id, or -1 if the registry is full
+{
+    std::vector<GhostMeshInfo>& v = GhostMeshes();
+    if ((int)v.size() >= GHOST_MAX_MESHES) return -1;
+    v.push_back(info);
+    return (int)v.size() - 1;
+}
+
+inline int GhostMesh_FindByName(const std::string& name)
+{
+    const std::vector<GhostMeshInfo>& v = GhostMeshes();
+    for (size_t i = 0; i < v.size(); i++)
+        if (_stricmp(v[i].name.c_str(), name.c_str()) == 0) return (int)i;
+    return -1;
+}
+
+inline int GhostMesh_FaceCount(int id)
+{
+    const GhostMeshInfo* m = GhostMesh_Info(id);
+    if (!m) return 0;
+    const int n = (int)m->faces.size();
+    return n > GHOST_MAX_FACES ? GHOST_MAX_FACES : n;
+}
+
+inline const GhostFaceDef& GhostMesh_Face(int id, int face)
+{
+    static const GhostFaceDef none = { "Face", 0, 0 };
+    const GhostMeshInfo* m = GhostMesh_Info(id);
+    if (!m || m->faces.empty()) return none;
+    if (face < 0 || face >= (int)m->faces.size()) face = 0;
+    return m->faces[(size_t)face];
+}
+
+inline GhostVec3 GhostMesh_Min(int id) { const GhostMeshInfo* m = GhostMesh_Info(id); return m ? m->bmin : GhostVec3(-0.5f, -0.5f, -0.5f); }
+inline GhostVec3 GhostMesh_Max(int id) { const GhostMeshInfo* m = GhostMesh_Info(id); return m ? m->bmax : GhostVec3(0.5f, 0.5f, 0.5f); }
 
 
 struct GhostTextureInfo
@@ -124,6 +197,19 @@ inline std::string GhostObject_Tag(const GhostObject& o)
     if (o.role >= 1 && o.role <= 5) return names[o.role];
     return "";
 }
+
+// Draw calls the main pass needs for this object: one per run of faces that share a material
+inline int GhostObject_DrawRuns(const GhostObject& o)
+{
+    const int n = GhostMesh_FaceCount(o.meshId);
+    if (n <= 0) return 0;
+    int runs = 1;
+    for (int f = 1; f < n; f++) if (!GhostMaterial_Equal(o.faces[f], o.faces[f - 1])) runs++;
+    return runs;
+}
+
+
+
 struct GhostLight
 {
     int            id = 0;
@@ -197,20 +283,20 @@ struct GhostScene
     unsigned int version = 0;         // bumps on any structural change
 };
 
-// NOTE: returned pointers are only valid until the next Add/Remove. Use immediately.
+// NOTE: returned pointers are only valid until the next Add/Remove. Use immediately. old comment
+
 inline GhostObject* GhostScene_AddObject(GhostScene& s, int meshId)
 {
-    if (meshId < 0 || meshId >= GHOST_MESH_COUNT) return nullptr;
-    static const char* names[GHOST_MESH_COUNT] = { "Cube", "Triangle", "Ship", "Square", "Sprite" };
-    static const GhostVec3 defScale[GHOST_MESH_COUNT] =
-    { { 1, 1, 1 },{ 1, 1, 1 },{ 0.1f, 0.1f, 0.1f },{ 1, 1, 0.25f },{ 1, 1, 1 } };
+    const GhostMeshInfo* mi = GhostMesh_Info(meshId);
+    if (!mi) return nullptr;
 
     GhostObject o;
     o.id = s.nextId++;
     o.meshId = meshId;
-    o.scale = defScale[meshId];
-    if (meshId == GHOST_MESH_SQUARE || meshId == GHOST_MESH_CUBE || meshId == GHOST_MESH_QUAD) o.collider = true;
-    o.name = std::string(names[meshId]) + " " + std::to_string(o.id);
+    o.scale = mi->defaultScale;
+    o.name = mi->name + " " + std::to_string(o.id);
+    // imported models get a fitted collider in 11.C
+    o.collider = (meshId == GHOST_MESH_CUBE || meshId == GHOST_MESH_SQUARE || meshId == GHOST_MESH_QUAD);
     s.objects.push_back(o);
     s.version++;
     return &s.objects.back();

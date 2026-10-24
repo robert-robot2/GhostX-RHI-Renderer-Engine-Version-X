@@ -5,6 +5,7 @@
 #include "../include/IGhostRHI.h"
 #include "../include/GhostScene.h"
 #include "../include/GhostText.h"
+#include <vector>
 #include <d3d12.h>
 #include <d3dcompiler.h>
 #include <wrl/client.h>
@@ -73,6 +74,19 @@ struct GhostMesh
     D3D12_VERTEX_BUFFER_VIEW vbView = {};
     D3D12_INDEX_BUFFER_VIEW  ibView = {};
     unsigned int             indexCount = 0;
+    std::vector<GhostVertex>  cpuVerts;       // imported meshes only: a CPU copy for picking
+    std::vector<unsigned int> cpuIdx;
+};
+
+// Read access to a mesh's triangles on the CPU, whatever the index width
+struct GhostMeshCPU
+{
+    const GhostVertex* verts = nullptr;
+    unsigned int          vertexCount = 0;
+    const unsigned short* idx16 = nullptr;
+    const unsigned int* idx32 = nullptr;
+    unsigned int          indexCount = 0;
+    unsigned int Index(unsigned int i) const { return idx32 ? idx32[i] : idx16[i]; }
 };
 
 struct GhostPipeline
@@ -80,7 +94,7 @@ struct GhostPipeline
     ComPtr<ID3D12RootSignature>  rootSignature;
     ComPtr<ID3D12PipelineState>  pso;
     ComPtr<ID3D12PipelineState> iconPso;
-    GhostMesh meshes[GHOST_MESH_COUNT];
+    GhostMesh meshes[GHOST_MAX_MESHES];
 
     // ---- Constant Buffer ----
     ComPtr<ID3D12Resource>       constantBuffer;
@@ -135,10 +149,15 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi, const GhostPipelineDesc* desc, G
 void        GhostPipelineDestroy(GhostPipeline* pipeline);
 
 // CPU-side mesh data (picking only). Returns false for an unknown mesh id.
-bool GhostGetMeshCPU(int meshId, const GhostVertex** verts,
-    const unsigned short** indices, unsigned int* indexCount);
+bool GhostGetMeshCPU(GhostPipeline* pipeline, int meshId, GhostMeshCPU* out);
+
+// Uploads an imported mesh into registry slot `meshId` (>= GHOST_MESH_COUNT) with 32-bit indices
+GhostResult GhostUploadMeshData(IGhostRHI* rhi, GhostPipeline* pipeline, int meshId,
+    const void* vertices, unsigned int vertexCount, const unsigned int* indices, unsigned int indexCount);
 
 GhostResult GhostUploadMeshes(IGhostRHI* rhi, GhostPipeline* pipeline);
+
+
 void GhostUpdateObjectCB(GhostPipeline* pipeline, unsigned int slot, const GhostObjectCB* cb);
 void GhostUpdateSceneCB(GhostPipeline* pipeline, const GhostSceneCB* cb);
 // rgba = tightly packed RGBA8, top row first. Builds mips, uploads, creates the SRV. Returns texture id or -1.

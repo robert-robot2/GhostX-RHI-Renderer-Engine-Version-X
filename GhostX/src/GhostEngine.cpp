@@ -12,6 +12,7 @@
 #include "../include/GhostUI.h"
 #include "../include/GhostMods.h"
 #include "../include/GhostAnim.h"
+#include "../include/GhostModelImport.h"
 #include <string.h>
 // ---- Engine state ----
 static IGhostRHI* g_rhi = nullptr;
@@ -102,11 +103,37 @@ static const float ICON_HALF_PX = 18.0f;
 static const float ICON_PICK_PX = ICON_HALF_PX + 4.0f;
 // the last 2 * GHOST_MAX_LIGHTS constant-buffer slots are reserved for light icons + arrows
 static const unsigned int MAX_SCENE_OBJECTS = GHOST_MAX_OBJECTS - 2 * GHOST_MAX_LIGHTS - 2 * GHOST_MAX_CAMERAS - GHOST_MAX_MODS - 4;
-// worst case an object needs one draw per face
-static const unsigned int MAX_SCENE_OBJECT_COUNT = MAX_SCENE_OBJECTS / GHOST_MAX_FACES;
+
+
+// Hard cap on objects (shadow casters are limited to the same number)
+static const unsigned int MAX_SCENE_OBJECT_COUNT = GHOST_MAX_SHADOW_CASTERS;
+
+// Draw slots the main pass needs: one per run of faces that share a material, plus 2 for the face highlight
+static unsigned int SceneDrawSlots()
+{
+    unsigned int n = 2;
+    for (const GhostObject& o : g_scene.objects) n += (unsigned int)GhostObject_DrawRuns(o);
+    return n;
+}
+
+// A new object is counted at its worst case (a different material on every face) until it's actually edited
+static bool CanAddObject(int meshId)
+{
+    if (!GhostMesh_Valid(meshId) || g_scene.objects.size() >= MAX_SCENE_OBJECT_COUNT) return false;
+    const int worst = GhostMesh_FaceCount(meshId);
+    return SceneDrawSlots() + (unsigned int)(worst > 0 ? worst : 1) <= MAX_SCENE_OBJECTS;
+}
+
+
+
 // local-space bounds of each mesh (picking only)
+/*
 static const GhostVec3 kMeshMin[GHOST_MESH_COUNT] = { { -0.5f, -0.5f, -0.5f },{ -0.5f, 0.0f, -0.05f },{ -3.2f, -1.0f, -3.0f },{ -0.5f, -0.5f, -0.5f },{ -0.5f, -0.5f, -0.25f } };
 static const GhostVec3 kMeshMax[GHOST_MESH_COUNT] = { { 0.5f,  0.5f,  0.5f },{ 0.5f, 1.0f,  0.05f },{ 3.2f,  3.0f, 11.0f },{ 0.5f,  0.5f,  0.5f },{ 0.5f,  0.5f,  0.25f } };
+*/
+
+
+
 static GhostColor g_clearColor = { 0.0f, 0.0f, 0.0f, 1.0f };
 
 // may be incorrect
@@ -203,19 +230,19 @@ int GhostEngine_Init(HWND hwnd, unsigned int width, unsigned int height)
     g_vp[0].alive = true;
     g_vp[0].visible = true;
     /*
-    // ---- TEMP seed (removed in section C) so the checkpoint has something to see ----
+    
     {
         GhostObject* o = GhostScene_AddObject(g_scene, GHOST_MESH_CUBE);
-        o->useVertexColor = true;                       // old rainbow cube
+        o->useVertexColor = true;                       
 
         o = GhostScene_AddObject(g_scene, GHOST_MESH_CUBE);
-        o->position = { 1.1f, 0.0f, 0.0f };             // grey cube
+        o->position = { 1.1f, 0.0f, 0.0f };             
 
         o = GhostScene_AddObject(g_scene, GHOST_MESH_SHIP);
         o->position = { -1.5f, 0.0f, 2.0f };
         o->useVertexColor = true;
     }
-    // ---- TEMP test lights (removed in section C) ----
+  
     {
         const int testMode = 0;   // 0 = all, 1 = directional, 2 = point, 3 = rect, 4 = ambient only
 
@@ -434,7 +461,7 @@ static int PickAt(int sx, int sy)
         float byw; GhostMat4 inv = ObjectInverse(ob, BillYaw(ob, g_mainEye, byw));
         float t;
         if (RayAABB(XformPoint(inv, o, 1.0f), XformPoint(inv, d, 0.0f),
-            kMeshMin[ob.meshId], kMeshMax[ob.meshId], t) && t < bestT)
+            GhostMesh_Min(ob.meshId), GhostMesh_Max(ob.meshId), t) && t < bestT)
         {
             bestT = t; bestId = ob.id;
         }
@@ -471,18 +498,16 @@ static int PickFace(const GhostObject& ob, int sx, int sy)
     GhostVec3 lo = XformPoint(inv, o, 1.0f);
     GhostVec3 ld = XformPoint(inv, d, 0.0f);
 
-    const GhostVertex* v = nullptr;
-    const unsigned short* idx = nullptr;
-    unsigned int count = 0;
-    if (!GhostGetMeshCPU(ob.meshId, &v, &idx, &count)) return -1;
+    GhostMeshCPU cpu;
+    if (!GhostGetMeshCPU(g_pipeline, ob.meshId, &cpu)) return -1;
 
     float bestT = 1e30f;
     int   bestTri = -1;
-    for (unsigned int i = 0; i + 2 < count; i += 3)
+    for (unsigned int i = 0; i + 2 < cpu.indexCount; i += 3)
     {
-        const GhostVertex& a = v[idx[i]];
-        const GhostVertex& b = v[idx[i + 1]];
-        const GhostVertex& c = v[idx[i + 2]];
+        const GhostVertex& a = cpu.verts[cpu.Index(i)];
+        const GhostVertex& b = cpu.verts[cpu.Index(i + 1)];
+        const GhostVertex& c = cpu.verts[cpu.Index(i + 2)];
         float t;
         if (RayTriangle(lo, ld, GhostVec3(a.x, a.y, a.z), GhostVec3(b.x, b.y, b.z),
             GhostVec3(c.x, c.y, c.z), t) && t < bestT)
@@ -633,12 +658,13 @@ void GhostEngine_MouseLeave() { g_hoverId = 0; UiMouseEvent(3, 0, 0); }
 int GhostEngine_AddObject(int meshId, int sx, int sy)
 {
     if (g_playState != GhostPlayState::Editing) return 0;
-    if (g_scene.objects.size() >= MAX_SCENE_OBJECT_COUNT) return 0;
+    if (!CanAddObject(meshId)) return 0;
     GhostObject* o = GhostScene_AddObject(g_scene, meshId);
     if (!o) return 0;
+
     SpawnCoords(sx, sy);
     GhostVec3 p = SpawnPoint(sx, sy);
-    p.y += -kMeshMin[meshId].y * o->scale.y;       // rest the mesh on the ground
+    p.y += -GhostMesh_Min(meshId).y * o->scale.y;       // rest the mesh on the ground
     o->position = p;
     g_scene.selectedId = o->id;
     return o->id;
@@ -885,7 +911,7 @@ static void RenderShadowPass(GhostSceneCB& cb, const GhostVec3& eye, unsigned in
     {
         if (!o.visible && playing) continue;
 
-        const GhostVec3 mn = kMeshMin[o.meshId], mx = kMeshMax[o.meshId];       // scene bounds from every visible object
+        const GhostVec3 mn = GhostMesh_Min(o.meshId), mx = GhostMesh_Max(o.meshId);      // scene bounds from every visible object
         const float ex = fmaxf(fabsf(mn.x), fabsf(mx.x)) * fabsf(o.scale.x);
         const float ey = fmaxf(fabsf(mn.y), fabsf(mx.y)) * fabsf(o.scale.y);
         const float ez = fmaxf(fabsf(mn.z), fabsf(mx.z)) * fabsf(o.scale.z);
@@ -1433,7 +1459,7 @@ int GhostEngine_GetFaceName(int objectId, int face, char* buf, int bufSize)
 {
     GhostObject* o = FindObject(objectId);
     if (!o || !buf || bufSize <= 0 || face < 0 || face >= GhostMesh_FaceCount(o->meshId)) return 0;
-    strncpy_s(buf, bufSize, GhostMesh_Face(o->meshId, face).name, _TRUNCATE);
+    strncpy_s(buf, bufSize, GhostMesh_Face(o->meshId, face).name.c_str(), _TRUNCATE);
     return 1;
 }
 
@@ -1523,7 +1549,7 @@ static int PickObjectAt(int sx, int sy)
         float byw; GhostMat4 inv = ObjectInverse(ob, BillYaw(ob, g_mainEye, byw));
         float t;
         if (RayAABB(XformPoint(inv, o, 1.0f), XformPoint(inv, d, 0.0f),
-            kMeshMin[ob.meshId], kMeshMax[ob.meshId], t) && t < bestT)
+            GhostMesh_Min(ob.meshId), GhostMesh_Max(ob.meshId), t) && t < bestT)
         {
             bestT = t; bestId = ob.id;
         }
@@ -1956,7 +1982,7 @@ static int Api_QueryBox(const float* bmin, const float* bmax, int* out, int maxC
 
 static int Api_Spawn(int meshId, const float* pos)
 {
-    if (g_scene.objects.size() >= MAX_SCENE_OBJECT_COUNT) return 0;
+    if (!CanAddObject(meshId)) return 0;
     GhostObject* o = GhostScene_AddObject(g_scene, meshId);
     if (!o) return 0;
     if (pos) o->position = { pos[0], pos[1], pos[2] };
@@ -2425,7 +2451,7 @@ int GhostEngine_DuplicateEntity(int id)
 {
     if (g_playState != GhostPlayState::Editing) return 0;
     GhostObject* src = FindObject(id);
-    if (!src || g_scene.objects.size() >= MAX_SCENE_OBJECT_COUNT) return 0;
+    if (!src || !CanAddObject(src->meshId)) return 0;
 
     GhostObject copy = *src;                         // copy first: push_back can move the vector
     copy.id = g_scene.nextId++;
@@ -2725,4 +2751,56 @@ void GhostEngine_SetShadowSettings(int enabled, float strength)
 {
     g_scene.shadowsEnabled = (enabled != 0);
     g_scene.shadowStrength = strength < 0.0f ? 0.0f : (strength > 1.0f ? 1.0f : strength);
+}
+
+
+// ============================================================
+//  Exported: model import
+// ============================================================
+int GhostEngine_ImportModel(const char* path, float scale, float fitSize, int upAxis, int flipWinding,
+    char* msg, int msgSize)
+{
+    static_assert(GHOST_MODEL_MAX_SLOTS == GHOST_MAX_FACES, "importer slot limit must match GHOST_MAX_FACES");
+    static_assert(sizeof(GhostMeshVertex) == sizeof(GhostVertex), "GhostMeshVertex must match GhostVertex");
+
+    if (!g_rhi || !g_pipeline || !path) { CopyMsg("The engine is not ready.", msg, msgSize); return -1; }
+    if (g_playState != GhostPlayState::Editing) { CopyMsg("Stop playing before importing a model.", msg, msgSize); return -1; }
+    if (GhostMesh_Count() >= GHOST_MAX_MESHES) { CopyMsg("The mesh limit (64) has been reached.", msg, msgSize); return -1; }
+
+    GhostModelOptions opt;
+    opt.scale = (scale > 0.0001f && scale <= 10000.0f) ? scale : 1.0f;
+    opt.fitSize = fitSize > 0.0f ? (fitSize > 10000.0f ? 10000.0f : fitSize) : 0.0f;
+    opt.upAxis = upAxis < 0 ? 0 : (upAxis > 2 ? 2 : upAxis);
+    opt.flipWinding = (flipWinding != 0);
+
+    GhostModelResult r;
+    std::string err;
+    if (!GhostModel_Load(path, opt, r, err)) { CopyMsg(err, msg, msgSize); return -1; }
+
+    const int id = GhostMesh_Count();
+    if (GhostUploadMeshData(g_rhi, g_pipeline, id, r.vertices.data(), (unsigned int)r.vertices.size(),
+        r.indices.data(), (unsigned int)r.indices.size()) != GHOST_OK)
+    {
+        CopyMsg("The GPU upload failed (out of memory?).", msg, msgSize);
+        return -1;
+    }
+
+    GhostMeshInfo mi;
+    mi.name = r.name;
+    for (int n = 2; GhostMesh_FindByName(mi.name) >= 0; n++) mi.name = r.name + " (" + std::to_string(n) + ")";
+    mi.source = GhostPath_Normalize(path);
+    mi.builtin = false;
+    mi.index32 = true;
+    mi.bmin = { r.bmin[0], r.bmin[1], r.bmin[2] };
+    mi.bmax = { r.bmax[0], r.bmax[1], r.bmax[2] };
+    mi.defaultScale = { 1, 1, 1 };
+    mi.vertexCount = (unsigned int)r.vertices.size();
+    mi.triangleCount = r.triangleCount;
+    for (const GhostModelSub& s : r.subs) mi.faces.push_back(GhostFaceDef{ s.name, s.firstIndex, s.indexCount });
+    if (GhostMesh_Register(mi) != id) { CopyMsg("The mesh registry is out of sync.", msg, msgSize); return -1; }
+
+    std::string text = "Imported \"" + mi.name + "\":\n" + r.info;
+    if (!r.warn.empty()) text += "\n\n" + r.warn;
+    CopyMsg(text, msg, msgSize);
+    return id;
 }

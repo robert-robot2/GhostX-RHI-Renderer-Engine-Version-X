@@ -148,6 +148,8 @@ bool GhostScene_Save(const GhostScene& s, const std::string& root, const std::st
             json jo;
             jo["id"] = o.id;
             jo["mesh"] = o.meshId;
+            if (const GhostMeshInfo* mi = GhostMesh_Info(o.meshId))
+                if (!mi->builtin) { jo["meshName"] = mi->name; jo["meshSource"] = mi->source; }
             jo["name"] = o.name;
             jo["position"] = V3(o.position);
             jo["rotation"] = V3(o.rotationDeg);
@@ -371,7 +373,16 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
             for (const json& jo : j["objects"])
             {
                 int mesh = jo.value("mesh", -1);
-                if (mesh < 0 || mesh >= GHOST_MESH_COUNT) { warn += "Skipped an object with an unknown mesh.\n"; continue; }
+                const std::string meshName = jo.value("meshName", std::string());
+                if (!meshName.empty()) mesh = GhostMesh_FindByName(meshName);      // imported models are matched by name, never by id
+                if (!GhostMesh_Valid(mesh))
+                {
+                    if (meshName.empty()) warn += "Skipped an object with an unknown mesh.\n";
+                    else warn += "Skipped \"" + jo.value("name", std::string("object")) + "\": the model \"" + meshName +
+                        "\" isn't imported in this session.\n";
+                    continue;
+                }
+
                 if (s.objects.size() >= maxObjects) { warn += "Too many objects: the rest were skipped.\n"; break; }
 
                 GhostObject o;

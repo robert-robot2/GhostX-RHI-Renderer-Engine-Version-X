@@ -92,26 +92,97 @@ static GhostVertex QuadVertices[] =
 };
 static unsigned short QuadIndices[] = { 0, 1, 2,  0, 2, 3 };
 
-bool GhostGetMeshCPU(int meshId, const GhostVertex** verts,
-    const unsigned short** indices, unsigned int* indexCount)
+bool GhostGetMeshCPU(GhostPipeline* p, int meshId, GhostMeshCPU* out)
 {
+    *out = GhostMeshCPU();
     switch (meshId)
     {
     case GHOST_MESH_CUBE:
     case GHOST_MESH_SQUARE:
-        *verts = CubeVertices; *indices = CubeIndices;
-        *indexCount = sizeof(CubeIndices) / sizeof(CubeIndices[0]); return true;
+        out->verts = CubeVertices;  out->vertexCount = sizeof(CubeVertices) / sizeof(CubeVertices[0]);
+        out->idx16 = CubeIndices;   out->indexCount = sizeof(CubeIndices) / sizeof(CubeIndices[0]);
+        return true;
     case GHOST_MESH_TRIANGLE:
-        *verts = TriangleVertices; *indices = TriangleIndices;
-        *indexCount = sizeof(TriangleIndices) / sizeof(TriangleIndices[0]); return true;
+        out->verts = TriangleVertices;  out->vertexCount = sizeof(TriangleVertices) / sizeof(TriangleVertices[0]);
+        out->idx16 = TriangleIndices;   out->indexCount = sizeof(TriangleIndices) / sizeof(TriangleIndices[0]);
+        return true;
     case GHOST_MESH_SHIP:
-        *verts = ShipVertices; *indices = ShipIndices;
-        *indexCount = sizeof(ShipIndices) / sizeof(ShipIndices[0]); return true;
+        out->verts = ShipVertices;  out->vertexCount = sizeof(ShipVertices) / sizeof(ShipVertices[0]);
+        out->idx16 = ShipIndices;   out->indexCount = sizeof(ShipIndices) / sizeof(ShipIndices[0]);
+        return true;
     case GHOST_MESH_QUAD:
-        *verts = QuadVertices; *indices = QuadIndices;
-        *indexCount = sizeof(QuadIndices) / sizeof(QuadIndices[0]); return true;
+        out->verts = QuadVertices;  out->vertexCount = sizeof(QuadVertices) / sizeof(QuadVertices[0]);
+        out->idx16 = QuadIndices;   out->indexCount = sizeof(QuadIndices) / sizeof(QuadIndices[0]);
+        return true;
+    }
+    if (p && meshId >= GHOST_MESH_COUNT && meshId < GHOST_MAX_MESHES)
+    {
+        const GhostMesh& m = p->meshes[meshId];
+        if (m.cpuVerts.empty() || m.cpuIdx.empty()) return false;
+        out->verts = m.cpuVerts.data();  out->vertexCount = (unsigned int)m.cpuVerts.size();
+        out->idx32 = m.cpuIdx.data();    out->indexCount = (unsigned int)m.cpuIdx.size();
+        return true;
     }
     return false;
+}
+
+static GhostResult CreateUploadBuffer(ID3D12Device* device,
+    unsigned long long size,
+    ID3D12Resource** out)
+{
+    D3D12_HEAP_PROPERTIES hp = {};
+    hp.Type = D3D12_HEAP_TYPE_UPLOAD;
+
+    D3D12_RESOURCE_DESC rd = {};
+    rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    rd.Width = size;
+    rd.Height = 1;
+    rd.DepthOrArraySize = 1;
+    rd.MipLevels = 1;
+    rd.Format = DXGI_FORMAT_UNKNOWN;
+    rd.SampleDesc.Count = 1;
+    rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+    HRESULT hr = device->CreateCommittedResource(
+        &hp, D3D12_HEAP_FLAG_NONE, &rd,
+        D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(out));
+    return FAILED(hr) ? GHOST_FAIL : GHOST_OK;
+}
+
+GhostResult GhostUploadMeshData(IGhostRHI* rhi, GhostPipeline* p, int meshId,
+    const void* verts, unsigned int vertexCount, const unsigned int* indices, unsigned int indexCount)
+{
+    if (meshId < GHOST_MESH_COUNT || meshId >= GHOST_MAX_MESHES || !verts || !indices ||
+        vertexCount == 0 || indexCount < 3) return GHOST_FAIL;
+
+    const unsigned long long vbSize = (unsigned long long)vertexCount * sizeof(GhostVertex);
+    const unsigned long long ibSize = (unsigned long long)indexCount * sizeof(unsigned int);
+    if (vbSize > 0xFFFFFFFFull || ibSize > 0xFFFFFFFFull) return GHOST_FAIL;     // buffer views use 32-bit sizes
+
+    ID3D12Device* d = rhi->GetDevice();
+    GhostMesh m;
+    D3D12_RANGE rr = { 0, 0 };
+    void* ptr = nullptr;
+
+    if (CreateUploadBuffer(d, vbSize, &m.vb) != GHOST_OK) return GHOST_FAIL;
+    m.vb->Map(0, &rr, &ptr);
+    memcpy(ptr, verts, (size_t)vbSize);
+    m.vb->Unmap(0, nullptr);
+    m.vbView = { m.vb->GetGPUVirtualAddress(), (UINT)vbSize, sizeof(GhostVertex) };
+
+    if (CreateUploadBuffer(d, ibSize, &m.ib) != GHOST_OK) return GHOST_FAIL;
+    m.ib->Map(0, &rr, &ptr);
+    memcpy(ptr, indices, (size_t)ibSize);
+    m.ib->Unmap(0, nullptr);
+    m.ibView = { m.ib->GetGPUVirtualAddress(), (UINT)ibSize, DXGI_FORMAT_R32_UINT };
+    m.indexCount = indexCount;
+
+    m.cpuVerts.resize(vertexCount);
+    memcpy(m.cpuVerts.data(), verts, (size_t)vbSize);
+    m.cpuIdx.assign(indices, indices + indexCount);
+
+    p->meshes[meshId] = std::move(m);
+    return GHOST_OK;
 }
 
 // ============================================================
@@ -179,28 +250,7 @@ static GhostResult CompileShaderFromFile(const wchar_t* path,
     return GHOST_OK;
 }
 
-static GhostResult CreateUploadBuffer(ID3D12Device* device,
-    unsigned long long size,
-    ID3D12Resource** out)
-{
-    D3D12_HEAP_PROPERTIES hp = {};
-    hp.Type = D3D12_HEAP_TYPE_UPLOAD;
 
-    D3D12_RESOURCE_DESC rd = {};
-    rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-    rd.Width = size;
-    rd.Height = 1;
-    rd.DepthOrArraySize = 1;
-    rd.MipLevels = 1;
-    rd.Format = DXGI_FORMAT_UNKNOWN;
-    rd.SampleDesc.Count = 1;
-    rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-
-    HRESULT hr = device->CreateCommittedResource(
-        &hp, D3D12_HEAP_FLAG_NONE, &rd,
-        D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(out));
-    return FAILED(hr) ? GHOST_FAIL : GHOST_OK;
-}
 // Folder that GhostX.dll lives in (with the trailing backslash)
 static std::wstring ModuleDir()
 {
@@ -882,15 +932,27 @@ void GhostDrawIcon(IGhostRHI* rhi, GhostPipeline* p, unsigned int slot)
 void GhostDrawMesh(IGhostRHI* rhi, GhostPipeline* p, int meshId, unsigned int slot,
     unsigned int textureIndex, unsigned int firstIndex, unsigned int indexCount)
 {
-    if (meshId < 0 || meshId >= GHOST_MESH_COUNT || slot >= GHOST_MAX_OBJECTS) return;
+
+    // double check this for 11.a
+
+    if (meshId < 0 || meshId >= GHOST_MAX_MESHES || slot >= GHOST_MAX_OBJECTS) return;
     const GhostMesh& m = p->meshes[meshId];
+    if (!m.vb) return;
+
+
+
+
     auto* cmd = rhi->GetCmdList();
 
     ID3D12DescriptorHeap* heaps[] = { p->cbvHeap.Get() };
+
+
     cmd->SetDescriptorHeaps(1, heaps);
+    cmd->SetPipelineState(p->pso.Get());
     cmd->SetGraphicsRootSignature(p->rootSignature.Get());
     BindShadowTable(cmd, p);
-    cmd->SetGraphicsRootSignature(p->rootSignature.Get());
+
+
     cmd->SetGraphicsRootConstantBufferView(
         0, p->constantBuffer->GetGPUVirtualAddress() + slot * GHOST_OBJECT_CB_STRIDE);
     cmd->SetGraphicsRootConstantBufferView(1, p->sceneBuffer->GetGPUVirtualAddress());
@@ -1155,10 +1217,12 @@ void GhostDrawSky(IGhostRHI* rhi, GhostPipeline* p, unsigned int slot, unsigned 
     auto* cmd = rhi->GetCmdList();
 
     ID3D12DescriptorHeap* heaps[] = { p->cbvHeap.Get() };
+
     cmd->SetDescriptorHeaps(1, heaps);
+    cmd->SetPipelineState(p->skyPso.Get());
     cmd->SetGraphicsRootSignature(p->rootSignature.Get());
     BindShadowTable(cmd, p);
-    cmd->SetGraphicsRootSignature(p->rootSignature.Get());
+
     cmd->SetGraphicsRootConstantBufferView(
         0, p->constantBuffer->GetGPUVirtualAddress() + slot * GHOST_OBJECT_CB_STRIDE);
     cmd->SetGraphicsRootConstantBufferView(1, p->sceneBuffer->GetGPUVirtualAddress());
@@ -1227,8 +1291,10 @@ void GhostShadowSlice(IGhostRHI* rhi, GhostPipeline* p, int slice, const float* 
 
 void GhostShadowDraw(IGhostRHI* rhi, GhostPipeline* p, int meshId, unsigned int slot, unsigned int texIndex)
 {
-    if (meshId < 0 || meshId >= GHOST_MESH_COUNT || slot >= GHOST_MAX_SHADOW_CASTERS) return;
+    if (meshId < 0 || meshId >= GHOST_MAX_MESHES || slot >= GHOST_MAX_SHADOW_CASTERS) return;
     const GhostMesh& m = p->meshes[meshId];
+    if (!m.vb) return;
+
     auto* cmd = rhi->GetCmdList();
 
     cmd->SetGraphicsRootConstantBufferView(0, p->shadowCB->GetGPUVirtualAddress() + slot * GHOST_OBJECT_CB_STRIDE);
