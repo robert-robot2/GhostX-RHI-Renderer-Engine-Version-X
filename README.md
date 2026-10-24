@@ -55,8 +55,10 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [x] Phase 8: PBR Materials Layout
 - [x] Phase 9: Object Shadows
 - [x] Phase 10: AnyCPU/X64 Debug/Release Builds/Docking Suite XML Delete to Clear
-- [x] Phase 11.A: FBX Imports as Default Color Import. Imports but does not render correctly.
+- [x] Phase 11.A: FBX Imports as Default Color Import. Imports but does not render Shape correctly but default color is showing.
 - **Pending**
+- [ ] Phase 11.B: Saving models, the Models palette and Content Browser tiles.
+- [ ] Phase 11.C: Materials, collider fit, re-import.
 - [ ] Phase : Publish Release as Standalone Game
 - [ ] Phase : Mesh import fbx, gltf, textures, normal/specular maps, shadows, PBR materials
 - [ ] Phase : Spot Light / Ray Casting / Global Illumination / Bloom / Subsurface Scattering
