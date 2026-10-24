@@ -25,7 +25,7 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 ## Notes:
 - **X64/release/Debug Working---AnyCPU Release Working ---Not working anyCPU Debug cant find DLL**
 - **If you use this app and the Dock Suite Doesn't show correctly Please delete the XML file in %LocalAppData%\GhostX and your app will run correctly.**
-- ** When importing FBX meshes please set Largest Side fit to 2 for default normal scaled import.
+- **When importing FBX meshes please set Largest Side fit to 2 for default normal scaled import.**
 ## Development:
 - **Does not generate exe yet for Game Builds only outputs DLL to GhostShell.Exe For Play Mode. Phase ?? Is Test Build Publish Exe**
 ---
