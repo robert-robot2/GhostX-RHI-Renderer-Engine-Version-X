@@ -113,6 +113,10 @@ extern "C" {
         int (*SpriteSetFrame)(int id, int frame);                  // manual frame, used when no animation is assigned
         int (*SpriteSetAnim)(int id, const char* projectRelativePath);   // "" clears it
         int (*SpriteSetSpeed)(int id, float speed);                // 1 = normal, 0 = frozen
+        // ---- levels and quitting ----
+        int  (*LoadScene)(const char* projectRelativePath);   // switches scene after the current step. 1 = queued, 0 = file not found
+        int  (*GetSceneName)(char* buf, int bufSize);         // file name of the running scene, e.g. "Level1.ghostscene" (0 = untitled)
+        void (*Quit)(void);                                   // packaged game: closes it. In the editor: stops Play
     } GhostGameAPI;
 
     // A game module must export:

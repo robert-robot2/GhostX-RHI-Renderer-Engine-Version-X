@@ -229,4 +229,5 @@ extern "C"
     GHOST_API int  GhostEngine_GetMeshInfo(int meshId, GhostMeshStats* out);
     GHOST_API int  GhostEngine_GetMeshText(int meshId, int which, char* buf, int bufSize);   // 0 name, 1 mesh file, 2 source file
     GHOST_API int  GhostEngine_GetObjectMissingMesh(int objectId, char* buf, int bufSize);   // 1 if the object is a placeholder
+    GHOST_API int GhostEngine_TakeQuitRequest();     // 1 once after the game called Quit()
 }

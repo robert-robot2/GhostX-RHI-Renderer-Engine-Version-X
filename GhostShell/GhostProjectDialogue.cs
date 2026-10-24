@@ -237,7 +237,7 @@ namespace GhostShell
         }
 
         // Walks up from the exe (bin\Debug\...) to find the engine solution
-        private static string? FindSolution()
+        internal static string? FindSolution()
         {
             try
             {

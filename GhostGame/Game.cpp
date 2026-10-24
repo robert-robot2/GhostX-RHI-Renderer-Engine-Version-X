@@ -2,6 +2,18 @@
 
 const GhostGameAPI* G = nullptr;
 GameState S;
+
+static const char* kLevels[] = { "Level1.ghostscene", "Level2.ghostscene" };   // add more file names here for more levels
+static const int   kLevelCount = (int)(sizeof(kLevels) / sizeof(kLevels[0]));
+
+static int FindLevelIndex()
+{
+    char name[160];
+    if (!G->GetSceneName(name, sizeof name)) return -1;
+    for (int i = 0; i < kLevelCount; i++) if (_stricmp(name, kLevels[i]) == 0) return i;
+    return -1;
+}
+
 int Sprite_Play(int id, const char* clip, const char* fallback)
 {
     if (G->SpriteSetClip(id, clip)) return 1;
@@ -19,7 +31,7 @@ void Game_Restart(bool died)
 {
     if (died) S.deaths++;
     S.coins = 0; S.enemiesDown = 0;
-    S.big = false; S.invuln = 0.0f; S.hurt = 0.0f; S.complete = false;
+    S.big = false; S.advance = 0.0f; S.invuln = 0.0f; S.hurt = 0.0f; S.complete = false;
     Level_Reset();
     Player_Reset();
     S.camSnap = true;
@@ -115,6 +127,10 @@ static void Hud()
         snprintf(t, sizeof t, "Coins %d / %d      Enemies %d / %d      Deaths %d",
             S.coins, S.totalCoins, S.enemiesDown, S.totalEnemies, S.deaths);
         G->UISetText(g_ui, "CompleteStats", t);
+        // Order of this could be off
+        G->UISetText(g_ui, "CompleteTitle", S.lastLevel ? "YOU WIN!" : "LEVEL COMPLETE!");
+        G->UISetVisible(g_ui, "AgainButton", S.lastLevel ? 1 : 0);
+        G->UISetVisible(g_ui, "QuitButton", S.lastLevel ? 1 : 0);
     }
 }
 
@@ -123,6 +139,8 @@ GHOST_GAME_EXPORT int GhostGame_Init(const GhostGameAPI* api)
     if (!api || api->version != GHOST_GAME_API_VERSION || api->size < (int)sizeof(GhostGameAPI)) return 0;
     G = api;
     S = GameState();
+    S.level = FindLevelIndex();
+    S.lastLevel = (S.level < 0 || S.level >= kLevelCount - 1);
     g_ui = G->UILoad("Content/UI/HUD.ghostui");
     S.player = G->FindByTag("Player");
     if (!S.player) { G->Log("Adventures of Cube: no object with Role = Player"); return 1; }
@@ -145,9 +163,29 @@ GHOST_GAME_EXPORT void GhostGame_Update(float dt)
     if (!S.player) { S.error = "No object with Role = Player in this scene"; Hud(); return; }
 
     if (G->KeyPressed('R')) Game_Restart(false);
-    if (g_ui && S.complete && G->UIButtonClicked(g_ui, "AgainButton")) Game_Restart(false);
+    if (g_ui && S.complete)
+    {
+        if (G->UIButtonClicked(g_ui, "AgainButton"))
+        {
+            char p[200];
+            snprintf(p, sizeof p, "Scenes/%s", kLevels[0]);
+            if (S.level <= 0 || !G->LoadScene(p)) Game_Restart(false);       // the last level starts over from Level 1
+        }
+        if (G->UIButtonClicked(g_ui, "QuitButton")) G->Quit();
+    }
     if (!S.complete) Player_Update(dt);
     else Sprite_Play(S.player, "Idle", nullptr);
+    if (S.complete && !S.lastLevel)                      // go to the next level after 2.5 seconds
+    {
+        S.advance += dt;
+        if (S.advance >= 2.5f)
+        {
+            char p[200];
+            snprintf(p, sizeof p, "Scenes/%s", kLevels[S.level + 1]);
+            G->LoadScene(p);
+            S.advance = -1000.0f;
+        }
+    }
     Entities_Update(dt);
     Camera_Update(dt);
     Hud();

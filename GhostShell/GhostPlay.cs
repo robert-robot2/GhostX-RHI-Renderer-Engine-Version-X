@@ -4,6 +4,9 @@ using System.Diagnostics;
 using System.IO;
 using System.Windows.Forms;
 using System.Text;
+using System.Linq;
+
+
 namespace GhostShell
 {
     internal static class GhostPlay
@@ -11,6 +14,8 @@ namespace GhostShell
         public static int State => GhostEngine.GhostEngine_GetPlayState();     // 0 editing, 1 playing, 2 paused
 
         public static bool HasModule { get; set; }
+
+        public static bool TakeQuit() => GhostEngine.GhostEngine_TakeQuitRequest() != 0;
 
         public static void Play()
         {
@@ -98,6 +103,15 @@ namespace GhostShell
                     ProjectPath = Path.GetFullPath(args[i + 1]);
                     return;
                 }
+
+            // A packaged game: no arguments, and Data\<name>.ghostproject sits next to the exe
+            try
+            {
+                string data = Path.Combine(AppContext.BaseDirectory, "Data");
+                string? proj = Directory.Exists(data) ? Directory.EnumerateFiles(data, "*.ghostproject").FirstOrDefault() : null;
+                if (proj != null) { IsPlayer = true; ProjectPath = Path.GetFullPath(proj); }
+            }
+            catch { }
         }
 
         // Opens the project, loads its start scene and starts playing. false = failed (the window is closing).

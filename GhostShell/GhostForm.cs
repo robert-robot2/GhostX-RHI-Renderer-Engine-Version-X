@@ -101,6 +101,7 @@ namespace GhostShell
                 hudTimer.Tick += (s, e) =>
                 {
                     if (!_engineReady) return;
+                    if (GhostPlay.TakeQuit()) { Close(); return; }
                     string hud = GhostPlay.HudText();
                     string t = GhostProject.DisplayName + (hud.Length > 0 ? "  |  " + hud : "");
                     if (Text != t) Text = t;
@@ -179,6 +180,7 @@ namespace GhostShell
             _menuBuilder.OnOpenProject += (s, e) => GhostProjectFlow.OpenProject(this);
             _menuBuilder.OnOpenRecent += p => GhostProjectFlow.OpenProjectPath(this, p);
             _menuBuilder.OnOpenInVS += (s, e) => GhostProjectFlow.OpenInVisualStudio(this);
+            _menuBuilder.OnPackageProject += (s, e) => GhostPackager.Show(this);
             _menuBuilder.OnSetSolution += (s, e) => GhostProjectFlow.PickSolution(this);
             _menuBuilder.OnPlay += (s, e) => { GhostPlay.Play(); _renderPanel.Select(); };
             _menuBuilder.OnPause += (s, e) => GhostPlay.TogglePause();
@@ -195,6 +197,7 @@ namespace GhostShell
             {
                 if (_engineReady)
                 {
+                    if (GhostPlay.State != 0 && GhostPlay.TakeQuit()) GhostPlay.Stop();
                     string star = GhostSceneFile.IsDirty ? "*" : "";
                     string state = GhostPlay.State switch
                     {

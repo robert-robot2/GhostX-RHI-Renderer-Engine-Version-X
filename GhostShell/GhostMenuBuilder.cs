@@ -43,6 +43,7 @@ namespace GhostShell
         public event EventHandler? OnImportModel;
         public event EventHandler? OnReimportModel;
         public event EventHandler? OnReimportModelSettings;
+        public event EventHandler? OnPackageProject;
 
         private ToolStripMenuItem _recentMenu = null!;
 
@@ -96,6 +97,7 @@ namespace GhostShell
             fileMenu.DropDownItems.Add(MakeItem("Import Model...", (s, e) => OnImportModel?.Invoke(s, e)));
             fileMenu.DropDownItems.Add(MakeItem("Re-import Selected Model", (s, e) => OnReimportModel?.Invoke(s, e)));
             fileMenu.DropDownItems.Add(MakeItem("Re-import Selected Model with Settings...", (s, e) => OnReimportModelSettings?.Invoke(s, e)));
+            fileMenu.DropDownItems.Add(MakeItem("Package Project...", (s, e) => OnPackageProject?.Invoke(s, e)));
             fileMenu.DropDownItems.Add(MakeItem("Open in Visual Studio", (s, e) => OnOpenInVS?.Invoke(s, e)));
             fileMenu.DropDownItems.Add(new ToolStripSeparator());
             fileMenu.DropDownItems.Add(MakeItem("Exit", (s, e) => OnExit?.Invoke(s, e)));

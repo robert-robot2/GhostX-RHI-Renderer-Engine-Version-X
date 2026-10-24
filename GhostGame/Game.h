@@ -37,6 +37,9 @@ struct GameState
     float invuln = 0.0f;
     bool  complete = false;
     const char* error = nullptr;
+    int   level = -1;                  // index in kLevels, -1 = not one of them
+    bool  lastLevel = true;
+    float advance = 0.0f;              // seconds since the Goal, for auto-advancing
 };
 extern GameState S;
 

@@ -331,6 +331,8 @@ namespace GhostShell
     int flags, [Out] byte[] msg, int msgSize);
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern void GhostEngine_ApplyMeshDefaults(int objectId, int what);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_TakeQuitRequest();
 
     }
 }

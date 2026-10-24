@@ -77,6 +77,11 @@ static float                    g_uiRefW = 1920.0f;       // reference width of 
 static std::string g_projectRoot;
 static float g_skyScroll[2] = { 0.0f, 0.0f };      // day / night layer scroll in degrees (play only)
 static std::vector<GhostAnimAsset> g_anims;                    // id = index, never removed
+static std::string g_pendingScene;       // set by LoadScene(): the switch happens after the current step
+static std::string g_scenePath;          // the scene file that is open (or being played)
+static std::string g_playBackupPath;
+static bool        g_quitRequested = false;
+
 // Main view render size and where it sits inside the window (for mapping the mouse)
 static int   g_mainRW = 1280, g_mainRH = 720;
 static float g_fitX = 0.0f, g_fitY = 0.0f, g_fitW = 1280.0f, g_fitH = 720.0f;
@@ -85,7 +90,7 @@ static float g_fitX = 0.0f, g_fitY = 0.0f, g_fitW = 1280.0f, g_fitH = 720.0f;
 // Forward Declarations? are interaction state
 static int LoadModelFile(const std::string& absFile, std::string& err);
 static std::string g_modelWarn;                     // warnings from model files loaded during a scene load
-
+static void PerformSceneSwitch();
 
 
 // Window pixel -> render pixel. clampOut = keep dragging when the cursor is over the bars.
@@ -1329,8 +1334,10 @@ void GhostEngine_Tick()
             g_playTime += GHOST_FIXED_DT;
             g_input.EndStep();
             g_apiMouseDX = g_apiMouseDY = 0.0f; g_apiWheel = 0.0f;    // only the first step of a frame sees the movement
+            if (!g_pendingScene.empty()) break;              // switch scenes before running more steps
         }
         if (faulted) GhostEngine_Stop();
+        else if (!g_pendingScene.empty()) PerformSceneSwitch();
     }
 
     if (g_playState == GhostPlayState::Playing)       // time of day and layer drift animate only while playing
@@ -1775,6 +1782,7 @@ int GhostEngine_SaveScene(const char* path, char* msg, int msgSize)
         CopyMsg(err.empty() ? "Save failed." : err, msg, msgSize);
         return 0;
     }
+    g_scenePath = GhostPath_Normalize(path);
     return 1;
 }
 
@@ -1798,6 +1806,7 @@ int GhostEngine_LoadScene(const char* path, char* msg, int msgSize)
     }
     warn += g_modelWarn;
     g_hoverId = 0; g_dragging = false; g_dragId = 0; g_inputCameraId = 0;
+    g_scenePath = GhostPath_Normalize(path);
     g_scene.version++;
     CopyMsg(warn, msg, msgSize);
     return warn.empty() ? 1 : 2;
@@ -1806,7 +1815,7 @@ int GhostEngine_LoadScene(const char* path, char* msg, int msgSize)
 void GhostEngine_ClearScene()
 {
     GhostEngine_Stop();
-    g_scene.objects.clear();
+    g_scene.objects.clear(); g_scenePath.clear();
     g_scene.lights.clear();
     g_scene.cameras.clear(); g_scene.mods.clear();
     g_scene.ambientColor[0] = g_scene.ambientColor[1] = g_scene.ambientColor[2] = 1.0f;
@@ -2304,6 +2313,28 @@ static int Api_SpriteSetFrame(int id, int f) { GhostObject* o = FindSprite(id); 
 static int Api_SpriteSetAnim(int id, const char* p) { GhostObject* o = FindSprite(id); return o ? SetSpriteAnimImpl(o->sprite, p ? p : "") : 0; }
 static int Api_SpriteSetSpeed(int id, float v) { GhostObject* o = FindSprite(id); if (!o) return 0; o->sprite.animSpeed = v < 0.0f ? 0.0f : (v > 10.0f ? 10.0f : v); return 1; }
 
+static int Api_LoadScene(const char* rel)
+{
+    if (!rel || !*rel || g_playState == GhostPlayState::Editing) return 0;
+    const std::string abs = StoredToAbs(rel);
+    if (!std::filesystem::exists(std::filesystem::path(GhostUtf8ToWide(abs)))) return 0;
+    g_pendingScene = rel;
+    return 1;
+}
+
+static int Api_GetSceneName(char* buf, int size)
+{
+    if (!buf || size <= 0) return 0;
+    buf[0] = 0;
+    if (g_scenePath.empty()) return 0;
+    const size_t s = g_scenePath.find_last_of("\\/");
+    CopyMsg(s == std::string::npos ? g_scenePath : g_scenePath.substr(s + 1), buf, size);
+    return 1;
+}
+
+static void Api_Quit() { g_quitRequested = true; }
+
+
 static void BuildGameApi()
 {
     GhostGameAPI& a = g_gameApi;
@@ -2332,7 +2363,56 @@ static void BuildGameApi()
     a.SkyGetTime = Api_SkyGetTime;  a.SkySetTime = Api_SkySetTime;
     a.SpriteSetClip = Api_SpriteSetClip;  a.SpriteSetFlip = Api_SpriteSetFlip;  a.SpriteSetFrame = Api_SpriteSetFrame;
     a.SpriteSetAnim = Api_SpriteSetAnim;  a.SpriteSetSpeed = Api_SpriteSetSpeed;
+    a.LoadScene = Api_LoadScene;  a.GetSceneName = Api_GetSceneName;  a.Quit = Api_Quit;
 }
+
+// Runs between steps (never inside game code). The editor's own scene stays safe in g_playBackup.
+static void PerformSceneSwitch()
+{
+    const std::string rel = g_pendingScene;
+    g_pendingScene.clear();
+    if (g_playState == GhostPlayState::Editing || rel.empty()) return;
+
+    const std::string abs = StoredToAbs(rel);
+    GhostGameModule_Unload();                           // Shutdown: the old level's code lets go of its object ids
+
+    GhostScene backup = g_scene;
+    std::string err, warn;
+    g_modelWarn.clear();
+    if (!GhostScene_Load(g_scene, g_projectRoot, abs, LoadSceneTexture, MAX_SCENE_OBJECT_COUNT, err, warn, LoadModelFile))
+    {
+        std::vector<GhostTextureInfo> tex = g_scene.textures;
+        g_scene = backup;
+        g_scene.textures = tex;
+        g_playFault = "Could not load the scene \"" + rel + "\":\n" + err;
+        GhostEngine_Stop();
+        return;
+    }
+    if (!warn.empty() || !g_modelWarn.empty())
+        OutputDebugStringA(("[GhostX] Scene \"" + rel + "\":\n" + warn + g_modelWarn).c_str());
+
+    g_scenePath = abs;
+    g_scene.version++;
+    if (g_scene.gameStartCameraId && FindCamera(g_scene.gameStartCameraId))
+        g_scene.activeCameraId = g_scene.gameStartCameraId;
+    g_hoverId = 0; g_dragging = false; g_dragId = 0; g_inputCameraId = 0;
+    g_uiAssets.clear(); g_uiQuads.clear();
+    g_uiMouseX = g_uiMouseY = -1.0f; g_uiMouseInside = false;
+    g_skyScroll[0] = g_skyScroll[1] = 0.0f;
+    g_mouseAccumX = g_mouseAccumY = g_apiMouseDX = g_apiMouseDY = 0.0f;
+    g_wheelAccum = g_apiWheel = 0.0f;
+    g_hudText.clear();
+    g_stepper.Reset();
+
+    BuildGameApi();
+    if (GhostGameModule_Load(g_gameModulePath, &g_gameApi, g_playMessage) == GhostModuleResult::Error)
+    {
+        g_playFault = "The game module failed to start in the new scene:\n" + g_playMessage;
+        GhostEngine_Stop();
+    }
+}
+
+
 // ============================================================
 //  Exported: play mode
 // ============================================================
@@ -2341,7 +2421,10 @@ int GhostEngine_Play()
     if (!g_rhi || !g_pipeline) { g_playMessage = "The engine is not ready."; return 0; }
     if (g_playState != GhostPlayState::Editing) return 1;
 
-    g_playBackup = g_scene;                        
+    g_playBackup = g_scene;
+    g_playBackupPath = g_scenePath;
+    g_pendingScene.clear();
+    g_quitRequested = false;
     ReloadAnims();
     if (g_scene.gameStartCameraId && FindCamera(g_scene.gameStartCameraId))
         g_scene.activeCameraId = g_scene.gameStartCameraId;      // Stop restores the backup, so your editor camera comes back
@@ -2373,6 +2456,8 @@ int GhostEngine_Play()
 void GhostEngine_Stop()
 {
     if (g_playState == GhostPlayState::Editing) return;
+    g_scenePath = g_playBackupPath;                  // the editor goes back to the scene you were editing
+    g_pendingScene.clear();
     GhostGameModule_Unload();                        // Shutdown, then free the temp copy
     g_hudText.clear(); g_uiQuads.clear();
     g_uiAssets.clear();
@@ -3207,4 +3292,12 @@ int GhostEngine_GetObjectMissingMesh(int objectId, char* buf, int size)
     if (!o || (o->missingMesh.empty() && o->missingMeshFile.empty())) return 0;
     if (buf && size > 0) CopyMsg(o->missingMesh.empty() ? o->missingMeshFile : o->missingMesh, buf, size);
     return 1;
+}
+
+
+int GhostEngine_TakeQuitRequest()
+{
+    const bool q = g_quitRequested;
+    g_quitRequested = false;
+    return q ? 1 : 0;
 }
