@@ -203,8 +203,55 @@ This guide covers building and testing Level 1 and Level 2, verifying gameplay t
 - Open **File → New Project...**
 - Set the project name to `TestGame`.
 - Select the **Blank** template.
+- HUD.ghostui
 ```json
-"startScene": "Scenes/Level1.ghostscene",
+{
+  "format": "ghostui",
+  "version": 1,
+  "name": "HUD",
+  "widgets": [
+    {
+      "type": "Canvas", "name": "Root", "anchor": "Fill",
+      "children": [
+        {
+          "type": "Canvas", "name": "StatsPanel", "anchor": "TopLeft",
+          "offset": [20, 20], "size": [440, 190], "color": [0, 0, 0, 0.45],
+          "children": [
+            { "type": "Text", "name": "CoinText", "anchor": "TopLeft", "offset": [24, 10], "size": [400, 56],
+              "text": "Coins 0 / 0", "fontSize": 48, "color": [1.0, 0.85, 0.2, 1] },
+            { "type": "Text", "name": "EnemyText", "anchor": "TopLeft", "offset": [24, 68], "size": [400, 44],
+              "text": "Enemies 0 / 0", "fontSize": 38, "color": [1, 1, 1, 1] },
+            { "type": "Text", "name": "DeathText", "anchor": "TopLeft", "offset": [24, 114], "size": [400, 36],
+              "text": "Deaths 0", "fontSize": 32, "color": [0.8, 0.8, 0.8, 1] },
+            { "type": "ProgressBar", "name": "CoinBar", "anchor": "TopLeft", "offset": [24, 160], "size": [392, 16],
+              "value": 0.0, "color": [1.0, 0.85, 0.2, 1], "bgColor": [0, 0, 0, 0.6] }
+          ]
+        },
+        {
+          "type": "Text", "name": "SizeText", "anchor": "TopRight", "offset": [-40, 30], "size": [300, 56],
+          "text": "small", "fontSize": 48, "align": 2, "color": [0.8, 0.8, 0.8, 1]
+        },
+        {
+          "type": "Text", "name": "HintText", "anchor": "BottomCenter", "offset": [0, -56], "size": [1500, 36],
+          "text": "", "fontSize": 28, "align": 1, "color": [0.8, 0.8, 0.8, 1]
+        },
+        {
+          "type": "Canvas", "name": "CompletePanel", "anchor": "Fill", "visible": false, "color": [0, 0, 0, 0.55],
+          "children": [
+            { "type": "Text", "name": "CompleteTitle", "anchor": "Center", "offset": [0, -140], "size": [1400, 110],
+              "text": "LEVEL COMPLETE!", "fontSize": 96, "align": 1, "color": [1.0, 0.85, 0.2, 1] },
+            { "type": "Text", "name": "CompleteStats", "anchor": "Center", "offset": [0, 0], "size": [1400, 50],
+              "text": "", "fontSize": 44, "align": 1, "color": [1, 1, 1, 1] },
+            { "type": "Button", "name": "AgainButton", "anchor": "Center", "offset": [0, 110], "size": [360, 80],
+              "text": "Play Again", "fontSize": 40, "color": [0.2, 0.6, 0.3, 1] }
+            { "type": "Button", "name": "QuitButton", "anchor": "Center", "offset": [0, 210], "size": [360, 80],
+              "text": "Quit", "fontSize": 40, "color": [0.6, 0.2, 0.2, 1] }
+          ]
+        }
+      ]
+    }
+  ]
+}
 ```
 
 ### 2. Build Level 1
