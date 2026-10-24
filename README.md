@@ -62,7 +62,7 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [ ] Phase 11.C: Materials, collider fit, re-import.
 - **Publish/Release**
 - [ ] Phase : Install Shield Wizard/ Packaged Install for Download
-- [ ] Phase : Publish Release as Standalone Game
+- [ ] Phase : Publish Release as Standalone Game/ Install Wizard Setup
 - [ ] Phase : RHI Vulkan Backend
 - **Pending**
 - [ ] Phase : UI Features: Origins, XYZ Axis, Selection, Toggle Grids, Toggle Dimensions, Object Selection Rotation/Scale/Transform/Dimension/Translation
