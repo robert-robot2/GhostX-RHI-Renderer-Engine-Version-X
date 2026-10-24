@@ -54,6 +54,7 @@ struct GhostMeshInfo
 {
     std::string  name;
     std::string  source;                           // file an imported model came from ("" for built-ins)
+    std::string  file;                             // the converted .ghostmesh (absolute, normalized); "" = this session only
     bool         builtin = true;
     bool         index32 = false;                  // imported meshes use 32-bit indices
     GhostVec3    bmin = { -0.5f, -0.5f, -0.5f };   // local-space bounds: picking, shadows, drop-to-ground
@@ -187,6 +188,8 @@ struct GhostObject
     int  shadowMode = 1;                      // 0 = off, 1 = casts from every light, 2 = casts only from shadowLightId
     int  shadowLightId = 0;
     bool receiveShadows = true;
+    // A model that couldn't be loaded keeps its reference here, so saving the scene doesn't lose it
+    std::string missingMesh, missingMeshFile, missingFaces;
     bool      useVertexColor = false;
 };
 // The tag the game module searches by: the role's name, or the custom text

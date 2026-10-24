@@ -82,7 +82,13 @@ namespace GhostShell
         public float animSpeed;
         public int effTexture, effCols, effRows, curFrame;
     }
-
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GhostMeshStats
+    {
+        public int builtin, faceCount;
+        public uint vertexCount, triangleCount;
+        public float minX, minY, minZ, maxX, maxY, maxZ;
+    }
     internal static class GhostEngine
     {
         private const string DllName = "GhostX.dll";
@@ -305,6 +311,17 @@ namespace GhostShell
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern int GhostEngine_ImportModel([MarshalAs(UnmanagedType.LPUTF8Str)] string path,
             float scale, float fitSize, int upAxis, int flipWinding, [Out] byte[] msg, int msgSize);
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_LoadModelFile([MarshalAs(UnmanagedType.LPUTF8Str)] string path, [Out] byte[] msg, int msgSize);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetMeshCount();
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetMeshInfo(int meshId, out GhostMeshStats info);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetMeshText(int meshId, int which, [Out] byte[] buf, int bufSize);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetObjectMissingMesh(int objectId, [Out] byte[] buf, int bufSize);
 
     }
 }

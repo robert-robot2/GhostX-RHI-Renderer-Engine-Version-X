@@ -32,3 +32,6 @@ struct GhostModelResult
 // Result is in the engine's space: left-handed, Y up, +Z forward, clockwise front faces, V down.
 bool GhostModel_Load(const std::string& utf8Path, const GhostModelOptions& opt,
     GhostModelResult& out, std::string& err);
+// .ghostmesh: the converted model (already in engine space), a compact binary file. One file per import.
+bool GhostMeshFile_Save(const std::string& utf8Path, const GhostModelResult& r, const std::string& source, std::string& err);
+bool GhostMeshFile_Load(const std::string& utf8Path, GhostModelResult& out, std::string& source, std::string& err);

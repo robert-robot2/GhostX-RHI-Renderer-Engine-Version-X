@@ -787,6 +787,57 @@ namespace GhostShell
             get => GhostShadowUI.GetReceive(_id);
             set => GhostShadowUI.SetReceive(_id, value);
         }
+
+        // ---- Mesh (read-only) ----
+        private int MeshId() => Get().meshId;
+
+        private GhostMeshStats MeshStats()
+        {
+            GhostEngine.GhostEngine_GetMeshInfo(MeshId(), out GhostMeshStats s);
+            return s;
+        }
+
+        [Category("Mesh")]
+        public string Model
+        {
+            get
+            {
+                string missing = GhostModels.MissingMesh(_id);
+                return missing.Length > 0 ? $"MISSING: {missing} (placeholder)" : GhostModels.MeshName(MeshId());
+            }
+        }
+
+        [Category("Mesh")] public string Triangles => MeshStats().triangleCount.ToString("N0");
+        [Category("Mesh")] public string Vertices => MeshStats().vertexCount.ToString("N0");
+
+        [Category("Mesh"), DisplayName("Material Slots")]
+        public string MaterialSlots
+        {
+            get
+            {
+                var names = FaceChoices();
+                names.RemoveAt(0);                                          // "All Faces"
+                return $"{names.Count}: " + string.Join(", ", names);
+            }
+        }
+
+        [Category("Mesh"), DisplayName("Model Size (units, before Scale)")]
+        public string ModelSize
+        {
+            get
+            {
+                var s = MeshStats();
+                return $"{s.maxX - s.minX:0.##} x {s.maxY - s.minY:0.##} x {s.maxZ - s.minZ:0.##}";
+            }
+        }
+
+        [Category("Mesh"), DisplayName("Mesh File")]
+        public string MeshFile { get { string t = GhostModels.MeshText(MeshId(), 1); return t.Length == 0 ? "(built-in or this session only)" : t; } }
+
+        [Category("Mesh"), DisplayName("Source File")]
+        public string SourceFile { get { string t = GhostModels.MeshText(MeshId(), 2); return t.Length == 0 ? "(built-in)" : t; } }
+
+
         // ---- Gameplay ----
         private GhostGameplayInfo GetG() { var g = new GhostGameplayInfo(); GhostEngine.GhostEngine_GetGameplay(_id, ref g); return g; }
         private void SetG(GhostGameplayInfo g) => GhostEngine.GhostEngine_SetGameplay(ref g);
@@ -1033,6 +1084,14 @@ namespace GhostShell
             _bottom = browser;
             browser.OpenUIRequested += path => OpenDesigner(path);
             browser.OpenAnimRequested += path => OpenAnimEditor(path);
+            browser.AddModelRequested += id =>
+            {
+                if (GhostEngine.GhostEngine_AddObject(id, -1, -1) == 0) System.Media.SystemSounds.Beep.Play();
+                Sync();
+            };
+            browser.ModelFilesDropped += files => GhostModels.ImportFiles(_form, files, false);
+            GhostModels.Changed += RefreshPalette;
+            GhostProject.Changed += RefreshPalette;
             // ---- Left: palette ----
             _left = new Panel { Dock = DockStyle.Fill, BackColor = Bg };
             _palette = new ListBox
@@ -1060,7 +1119,7 @@ namespace GhostShell
                 BackColor = Bg2,
                 ForeColor = Fg,
             };
-            _category.Items.AddRange(new object[] { "Lighting", "Primitives", "Sprites", "Cameras", "Mods" });
+            _category.Items.AddRange(new object[] { "Lighting", "Primitives", "Sprites", "Cameras", "Mods", "Models" });
             _category.SelectedIndexChanged += (s, e) => FillPalette();
             // add order matters for docking: Fill first, then Bottom, then Top
             _left.Controls.Add(_palette);
@@ -1072,7 +1131,7 @@ namespace GhostShell
             _palette.MouseMove += OnPaletteMouseMove;
             _palette.DoubleClick += (s, e) =>
             {
-                if (_palette.SelectedItem is PaletteItem it) Spawn(it.Kind, it.Type, -1, -1);
+                if (_palette.SelectedItem is PaletteItem it && it.Kind != "none") Spawn(it.Kind, it.Type, -1, -1);
             };
 
            
@@ -1416,6 +1475,7 @@ namespace GhostShell
         // -------------------------------------------------------
         //  Palette
         // -------------------------------------------------------
+        public void RefreshPalette() { if (_category.SelectedIndex == 5) FillPalette(); }
         private void FillPalette()
         {
             _palette.Items.Clear();
@@ -1439,6 +1499,18 @@ namespace GhostShell
                     Add("Free Camera", "cam", 0);
                     Add("Orbit Camera", "cam", 1);
                     break;
+                case 5:
+                    {
+                        GhostModels.ScanProject();                              // loads every .ghostmesh in Content/Models
+                        int n = GhostEngine.GhostEngine_GetMeshCount();
+                        for (int i = 0; i < n; i++)
+                        {
+                            if (GhostModels.IsBuiltin(i) || !GhostModels.BelongsToProject(i)) continue;
+                            Add(GhostModels.MeshName(i), "obj", i);             // a model is dropped like a primitive, by mesh id
+                        }
+                        if (_palette.Items.Count == 0) Add("(none yet - File > Import Model...)", "none", 0);
+                        break;
+                    }
                 default:
                     {
                         int n = GhostEngine.GhostEngine_GetModTypeCount();
@@ -1462,7 +1534,7 @@ namespace GhostShell
 
             var item = _palette.Items[_dragIndex] as PaletteItem;
             _dragIndex = -1;
-            if (item != null)
+            if (item != null && item.Kind != "none")
                 _palette.DoDragDrop($"ghost:{item.Kind}:{item.Type}", DragDropEffects.Copy);
         }
 

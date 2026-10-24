@@ -14,6 +14,9 @@
 #include "../include/GhostAnim.h"
 #include "../include/GhostModelImport.h"
 #include <string.h>
+#include <filesystem>
+
+
 // ---- Engine state ----
 static IGhostRHI* g_rhi = nullptr;
 static GhostPipeline* g_pipeline = nullptr;
@@ -75,6 +78,13 @@ static std::vector<GhostAnimAsset> g_anims;                    // id = index, ne
 // Main view render size and where it sits inside the window (for mapping the mouse)
 static int   g_mainRW = 1280, g_mainRH = 720;
 static float g_fitX = 0.0f, g_fitY = 0.0f, g_fitW = 1280.0f, g_fitH = 720.0f;
+
+
+// Forward Declarations? are interaction state
+static int LoadModelFile(const std::string& absFile, std::string& err);
+
+
+
 
 // Window pixel -> render pixel. clampOut = keep dragging when the cursor is over the bars.
 static bool PanelToRender(int px, int py, int& rx, int& ry, bool clampOut)
@@ -1773,7 +1783,7 @@ int GhostEngine_LoadScene(const char* path, char* msg, int msgSize)
     GhostScene backup = g_scene;
     std::string err, warn;
     bool ok = GhostScene_Load(g_scene, g_projectRoot, path, LoadSceneTexture,
-        MAX_SCENE_OBJECT_COUNT, err, warn);
+        MAX_SCENE_OBJECT_COUNT, err, warn, LoadModelFile);
     if (!ok)
     {
         // Restore everything except the texture registry: textures loaded during the attempt stay on the GPU
@@ -2753,16 +2763,94 @@ void GhostEngine_SetShadowSettings(int enabled, float strength)
     g_scene.shadowStrength = strength < 0.0f ? 0.0f : (strength > 1.0f ? 1.0f : strength);
 }
 
+// ============================================================
+//  Exported: model import and .ghostmesh loading
+// ============================================================
+static std::string StemOf(const std::string& path)
+{
+    return GhostWideToUtf8(std::filesystem::path(GhostUtf8ToWide(path)).stem().wstring());
+}
 
-// ============================================================
-//  Exported: model import
-// ============================================================
-int GhostEngine_ImportModel(const char* path, float scale, float fitSize, int upAxis, int flipWinding,
-    char* msg, int msgSize)
+static std::string ModelFilePath(const std::string& name)
+{
+    return GhostPath_Normalize(g_projectRoot + "\\Content\\Models\\" + name + ".ghostmesh");
+}
+
+// A name nothing else is using: not in the registry, and (when saving to the project) no existing file
+static std::string UniqueModelName(std::string base, bool checkFile)
+{
+    for (char& c : base) if (strchr("<>:\"/\\|?*", c)) c = '_';
+    if (base.empty()) base = "Model";
+    std::string n = base;
+    for (int k = 2; ; k++)
+    {
+        bool taken = GhostMesh_FindByName(n) >= 0;
+        if (!taken && checkFile && !g_projectRoot.empty())
+            taken = std::filesystem::exists(std::filesystem::path(GhostUtf8ToWide(ModelFilePath(n))));
+        if (!taken) return n;
+        n = base + " (" + std::to_string(k) + ")";
+    }
+}
+
+// Uploads a converted model and adds it to the registry
+static int RegisterModel(const GhostModelResult& r, const std::string& name, const std::string& source,
+    const std::string& file, std::string& err)
 {
     static_assert(GHOST_MODEL_MAX_SLOTS == GHOST_MAX_FACES, "importer slot limit must match GHOST_MAX_FACES");
     static_assert(sizeof(GhostMeshVertex) == sizeof(GhostVertex), "GhostMeshVertex must match GhostVertex");
 
+    if (GhostMesh_Count() >= GHOST_MAX_MESHES)
+    {
+        err = "The mesh limit (64) has been reached. Restart the editor to clear models you no longer use."; return -1;
+    }
+
+    const int id = GhostMesh_Count();
+    if (GhostUploadMeshData(g_rhi, g_pipeline, id, r.vertices.data(), (unsigned int)r.vertices.size(),
+        r.indices.data(), (unsigned int)r.indices.size()) != GHOST_OK)
+    {
+        err = "The GPU upload failed (out of memory?)."; return -1;
+    }
+
+    GhostMeshInfo mi;
+    mi.name = name;
+    mi.source = source;
+    mi.file = file;
+    mi.builtin = false;
+    mi.index32 = true;
+    mi.bmin = { r.bmin[0], r.bmin[1], r.bmin[2] };
+    mi.bmax = { r.bmax[0], r.bmax[1], r.bmax[2] };
+    mi.defaultScale = { 1, 1, 1 };
+    mi.vertexCount = (unsigned int)r.vertices.size();
+    mi.triangleCount = r.triangleCount;
+    for (const GhostModelSub& s : r.subs) mi.faces.push_back(GhostFaceDef{ s.name, s.firstIndex, s.indexCount });
+    if (GhostMesh_Register(mi) != id) { err = "The mesh registry is out of sync."; return -1; }
+    return id;
+}
+
+
+// Finds a loaded mesh by its .ghostmesh path, or loads the file
+static int LoadModelFile(const std::string& absFile, std::string& err)
+{
+    const std::string abs = GhostPath_Normalize(absFile);
+    for (int i = GHOST_MESH_COUNT; i < GhostMesh_Count(); i++)
+    {
+        const GhostMeshInfo* m = GhostMesh_Info(i);
+        if (m && !m->file.empty() && _stricmp(m->file.c_str(), abs.c_str()) == 0) return i;
+    }
+    if (!g_rhi || !g_pipeline) { err = "The engine is not ready."; return -1; }
+
+    GhostModelResult r;
+    std::string source;
+    if (!GhostMeshFile_Load(abs, r, source, err)) return -1;
+
+    const std::string name = UniqueModelName(StemOf(abs), false);
+    r.name = name;
+    return RegisterModel(r, name, source, abs, err);
+}
+
+int GhostEngine_ImportModel(const char* path, float scale, float fitSize, int upAxis, int flipWinding,
+    char* msg, int msgSize)
+{
     if (!g_rhi || !g_pipeline || !path) { CopyMsg("The engine is not ready.", msg, msgSize); return -1; }
     if (g_playState != GhostPlayState::Editing) { CopyMsg("Stop playing before importing a model.", msg, msgSize); return -1; }
     if (GhostMesh_Count() >= GHOST_MAX_MESHES) { CopyMsg("The mesh limit (64) has been reached.", msg, msgSize); return -1; }
@@ -2777,30 +2865,76 @@ int GhostEngine_ImportModel(const char* path, float scale, float fitSize, int up
     std::string err;
     if (!GhostModel_Load(path, opt, r, err)) { CopyMsg(err, msg, msgSize); return -1; }
 
-    const int id = GhostMesh_Count();
-    if (GhostUploadMeshData(g_rhi, g_pipeline, id, r.vertices.data(), (unsigned int)r.vertices.size(),
-        r.indices.data(), (unsigned int)r.indices.size()) != GHOST_OK)
+    const std::string src = GhostPath_Normalize(path);
+    const bool toProject = !g_projectRoot.empty();
+    const std::string name = UniqueModelName(r.name, toProject);
+    r.name = name;
+
+    std::string file, saveWarn;
+    if (toProject)                                       // convert once; scenes load the .ghostmesh from now on
     {
-        CopyMsg("The GPU upload failed (out of memory?).", msg, msgSize);
+        const std::string target = ModelFilePath(name);
+        std::string serr;
+        if (GhostMeshFile_Save(target, r, src, serr)) file = target;
+        else saveWarn = "Could not save the converted mesh: " + serr + "\nThe model works in this session only.";
+    }
+
+    const int id = RegisterModel(r, name, src, file, err);
+    if (id < 0)
+    {
+        if (!file.empty())
+        {
+            std::error_code ec;
+            std::filesystem::remove(std::filesystem::path(GhostUtf8ToWide(file)), ec);
+        }
+        CopyMsg(err, msg, msgSize);
         return -1;
     }
 
-    GhostMeshInfo mi;
-    mi.name = r.name;
-    for (int n = 2; GhostMesh_FindByName(mi.name) >= 0; n++) mi.name = r.name + " (" + std::to_string(n) + ")";
-    mi.source = GhostPath_Normalize(path);
-    mi.builtin = false;
-    mi.index32 = true;
-    mi.bmin = { r.bmin[0], r.bmin[1], r.bmin[2] };
-    mi.bmax = { r.bmax[0], r.bmax[1], r.bmax[2] };
-    mi.defaultScale = { 1, 1, 1 };
-    mi.vertexCount = (unsigned int)r.vertices.size();
-    mi.triangleCount = r.triangleCount;
-    for (const GhostModelSub& s : r.subs) mi.faces.push_back(GhostFaceDef{ s.name, s.firstIndex, s.indexCount });
-    if (GhostMesh_Register(mi) != id) { CopyMsg("The mesh registry is out of sync.", msg, msgSize); return -1; }
-
-    std::string text = "Imported \"" + mi.name + "\":\n" + r.info;
+    std::string text = "Imported \"" + name + "\":\n" + r.info;
+    if (!file.empty()) text += "\nSaved as Content/Models/" + name + ".ghostmesh";
     if (!r.warn.empty()) text += "\n\n" + r.warn;
+    if (!saveWarn.empty()) text += "\n\n" + saveWarn;
+    if (!toProject) text += "\n\nNo project is open, so this model lives only in this session. Open or create a project to keep it.";
     CopyMsg(text, msg, msgSize);
     return id;
+}
+
+int GhostEngine_LoadModelFile(const char* path, char* msg, int msgSize)
+{
+    if (!path) { CopyMsg("No file given.", msg, msgSize); return -1; }
+    std::string err;
+    const int id = LoadModelFile(path, err);
+    CopyMsg(id < 0 ? err : std::string(), msg, msgSize);
+    return id;
+}
+
+int GhostEngine_GetMeshCount() { return GhostMesh_Count(); }
+
+int GhostEngine_GetMeshInfo(int id, GhostMeshStats* out)
+{
+    const GhostMeshInfo* m = GhostMesh_Info(id);
+    if (!m || !out) return 0;
+    *out = { m->builtin ? 1 : 0, GhostMesh_FaceCount(id), m->vertexCount, m->triangleCount,
+             m->bmin.x, m->bmin.y, m->bmin.z, m->bmax.x, m->bmax.y, m->bmax.z };
+    return 1;
+}
+
+int GhostEngine_GetMeshText(int id, int which, char* buf, int size)
+{
+    if (!buf || size <= 0) return 0;
+    buf[0] = 0;
+    const GhostMeshInfo* m = GhostMesh_Info(id);
+    if (!m) return 0;
+    CopyMsg(which == 0 ? m->name : (which == 1 ? m->file : m->source), buf, size);
+    return 1;
+}
+
+int GhostEngine_GetObjectMissingMesh(int objectId, char* buf, int size)
+{
+    if (buf && size > 0) buf[0] = 0;
+    GhostObject* o = FindObject(objectId);
+    if (!o || (o->missingMesh.empty() && o->missingMeshFile.empty())) return 0;
+    if (buf && size > 0) CopyMsg(o->missingMesh.empty() ? o->missingMeshFile : o->missingMesh, buf, size);
+    return 1;
 }

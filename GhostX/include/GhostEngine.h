@@ -76,7 +76,12 @@ struct GhostSpriteInfo
     float animSpeed;
     int   effTexture, effCols, effRows, curFrame;      // read-only: what is actually drawn
 };
-
+struct GhostMeshStats
+{
+    int          builtin, faceCount;
+    unsigned int vertexCount, triangleCount;
+    float        minX, minY, minZ, maxX, maxY, maxZ;       // local-space bounds
+};
 
 
 extern "C"
@@ -210,4 +215,10 @@ extern "C"
 // upAxis: 0 auto, 1 Y up, 2 Z up. fitSize 0 = off.
     GHOST_API int GhostEngine_ImportModel(const char* utf8Path, float scale, float fitSize, int upAxis,
         int flipWinding, char* msg, int msgSize);
+    // Loads a converted .ghostmesh (or finds it if it is already loaded). Returns the mesh id, or -1 (msg = reason).
+    GHOST_API int  GhostEngine_LoadModelFile(const char* utf8Path, char* msg, int msgSize);
+    GHOST_API int  GhostEngine_GetMeshCount();
+    GHOST_API int  GhostEngine_GetMeshInfo(int meshId, GhostMeshStats* out);
+    GHOST_API int  GhostEngine_GetMeshText(int meshId, int which, char* buf, int bufSize);   // 0 name, 1 mesh file, 2 source file
+    GHOST_API int  GhostEngine_GetObjectMissingMesh(int objectId, char* buf, int bufSize);   // 1 if the object is a placeholder
 }

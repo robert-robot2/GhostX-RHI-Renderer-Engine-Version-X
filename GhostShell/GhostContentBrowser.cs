@@ -26,7 +26,7 @@ namespace GhostShell
         private FileSystemWatcher? _watch;
         private bool _rebuildQueued, _inDrag, _pending;
         private static readonly Dictionary<string, Bitmap> ThumbCache = new(StringComparer.OrdinalIgnoreCase);
-        private static Bitmap? _folderIcon, _sceneIcon, _blankIcon, _uiIcon, _animIcon;
+        private static Bitmap? _folderIcon, _sceneIcon, _blankIcon, _uiIcon, _animIcon, _modelIcon;
         private Point _pressPoint;
 
        
@@ -34,8 +34,8 @@ namespace GhostShell
         public event Action<string>? OpenSceneRequested;
         public event Action<string>? OpenUIRequested;
         public event Action<string>? OpenAnimRequested;
-
-
+        public event Action<int>? AddModelRequested;           // double-click on a model tile
+        public event Action<string[]>? ModelFilesDropped;      // model files dragged in from Explorer
 
 
         public GhostContentBrowser()
@@ -111,7 +111,7 @@ namespace GhostShell
             using var dlg = new OpenFileDialog
             {
                 Title = "Import Textures",
-                Filter = "Images (*.png;*.jpg;*.jpeg;*.bmp)|*.png;*.jpg;*.jpeg;*.bmp|All files (*.*)|*.*",
+                Filter = "Images and models|*.png;*.jpg;*.jpeg;*.bmp;*.fbx;*.obj;*.gltf;*.glb;*.dae;*.3ds;*.stl;*.ply|All files (*.*)|*.*",
                 Multiselect = true,
             };
             if (dlg.ShowDialog(FindForm()) == DialogResult.OK) ImportFiles(dlg.FileNames);
@@ -119,8 +119,9 @@ namespace GhostShell
 
         public void ImportFiles(IEnumerable<string> files)
         {
+            var all = files.ToList();
             var failed = new List<string>();
-            foreach (string f in files)
+            foreach (string f in all)
             {
                 if (!GhostAssets.IsImage(f)) continue;
                 try
@@ -133,6 +134,10 @@ namespace GhostShell
             }
             if (failed.Count > 0)
                 MessageBox.Show(string.Join("\n", failed), "Import failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+
+            string[] models = all.Where(GhostModels.IsModelFile).ToArray();
+            if (models.Length > 0)                                             // after the drop finishes, so Explorer isn't held up by the dialog
+                BeginInvoke(new Action(() => ModelFilesDropped?.Invoke(models)));
         }
 
         // -------------------------------------------------------
@@ -147,7 +152,8 @@ namespace GhostShell
         }
 
         private static bool HasImageFiles(DragEventArgs e)
-            => e.Data?.GetData(DataFormats.FileDrop) is string[] f && f.Any(GhostAssets.IsImage);
+       => e.Data?.GetData(DataFormats.FileDrop) is string[] f &&
+          f.Any(x => GhostAssets.IsImage(x) || GhostModels.IsModelFile(x));
 
         private void OnFileDrag(object? sender, DragEventArgs e)
             => e.Effect = HasImageFiles(e) ? DragDropEffects.Copy : DragDropEffects.None;
@@ -171,7 +177,7 @@ namespace GhostShell
             public Bitmap Thumb = null!;
             public int TexId = -1;          // built-in or already-loaded texture
             public string? Path;            // file or folder on disk
-            public bool IsFolder, IsScene, IsUI, IsAnim;
+            public bool IsFolder, IsScene, IsUI, IsAnim, IsModel;
         }
 
         // Rebuilding while a tile is being clicked or dragged would dispose that tile, so it's deferred
@@ -312,13 +318,23 @@ namespace GhostShell
                                 Path = f,
                                 IsAnim = true
                             });
+                        else if (f.EndsWith(GhostModels.MeshExt, StringComparison.OrdinalIgnoreCase))
+                            entries.Add(new Entry
+                            {
+                                Key = "f:" + f,
+                                Label = Path.GetFileNameWithoutExtension(f),
+                                Tip = f,
+                                Thumb = ModelIcon(),
+                                Path = f,
+                                IsModel = true
+                            });
                     }
                 }
                 catch { /* folder vanished or is unreadable: show what we have */ }
 
                 string rel = Path.GetRelativePath(root ?? _folder, _folder);
                 rel = rel == "." ? "" : "/" + rel.Replace('\\', '/');
-                _hint.Text = "Content" + rel + "   -   drop images here to import   -   double-click a scene to open it   -   drag a tile onto an object (Shift = one face)";
+                _hint.Text = "Content" + rel + "   -   drop images or 3D models here to import   -   double-click a scene to open it   -   drag a tile onto an object (Shift = one face)";
             }
             _up.Visible = _folder != null && !atRoot;
 
@@ -407,15 +423,28 @@ namespace GhostShell
                     if (Math.Abs(p.X - _pressPoint.X) < d.Width && Math.Abs(p.Y - _pressPoint.Y) < d.Height) return;
                     _pressKey = "";
 
-                    int id = ResolveTexture(e);
-                    if (id < 0) return;
+                    string payload;
+                    if (e.IsModel)
+                    {
+                        int mid = GhostModels.LoadFile(e.Path!);
+                        if (mid < 0) return;
+                        payload = $"ghost:obj:{mid}";                      // a model drops like a primitive
+                    }
+                    else
+                    {
+                        int id = ResolveTexture(e);
+                        if (id < 0) return;
+                        payload = $"ghost:tex:{id}";
+                    }
+
                     _inDrag = true;
-                    try { DoDragDrop($"ghost:tex:{id}", DragDropEffects.Copy); }
+                    try { DoDragDrop(payload, DragDropEffects.Copy); }
                     finally
                     {
                         _inDrag = false;
                         if (_pending) { _pending = false; QueueRebuild(); }
                     }
+
                 };
                 c.DoubleClick += (s, ev) =>
                 {
@@ -427,6 +456,11 @@ namespace GhostShell
                         BeginInvoke(new Action(() => OpenUIRequested?.Invoke(e.Path!)));
                     else if (e.IsAnim)
                         BeginInvoke(new Action(() => OpenAnimRequested?.Invoke(e.Path!)));
+                    else if (e.IsModel)
+                    {
+                        int mid = GhostModels.LoadFile(e.Path!);
+                        if (mid >= 0) BeginInvoke(new Action(() => AddModelRequested?.Invoke(mid)));
+                    }
                     else
                     {
                         int id = ResolveTexture(e);
@@ -449,9 +483,11 @@ namespace GhostShell
 
         private static Bitmap FolderIcon() => _folderIcon ??= DrawIcon(0);
         private static Bitmap SceneIcon() => _sceneIcon ??= DrawIcon(1);
+        private static Bitmap BlankIcon() => _blankIcon ??= DrawIcon(2);
         private static Bitmap UiIcon() => _uiIcon ??= DrawIcon(3);
         private static Bitmap AnimIcon() => _animIcon ??= DrawIcon(4);
-        private static Bitmap BlankIcon() => _blankIcon ??= DrawIcon(2);
+        private static Bitmap ModelIcon() => _modelIcon ??= DrawIcon(5);
+  
 
         private static Bitmap DrawIcon(int kind)
         {
@@ -485,6 +521,13 @@ namespace GhostShell
                 g.FillRectangle(br, 18, 22, 60, 52);
                 using var f = new Font("Segoe UI", 10f, FontStyle.Bold);
                 g.DrawString("ANIM", f, Brushes.White, 22, 40);
+            }
+            else if (kind == 5)                               // model
+            {
+                using var br = new SolidBrush(Color.FromArgb(0xD8, 0x8A, 0x3C));
+                g.FillPolygon(br, new[] { new Point(48, 14), new Point(80, 32), new Point(80, 64), new Point(48, 82), new Point(16, 64), new Point(16, 32) });
+                using var f = new Font("Segoe UI", 10f, FontStyle.Bold);
+                g.DrawString("MESH", f, Brushes.White, 26, 38);
             }
             else                                              // unreadable image
             {

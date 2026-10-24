@@ -92,7 +92,7 @@ namespace GhostShell
             fileMenu.DropDownItems.Add(saveScene);
             fileMenu.DropDownItems.Add(saveSceneAs);
             fileMenu.DropDownItems.Add(new ToolStripSeparator());
-            fileMenu.DropDownItems.Add(MakeItem("Import Model (temporary)...", (s, e) => OnImportModel?.Invoke(s, e)));
+            fileMenu.DropDownItems.Add(MakeItem("Import Model...", (s, e) => OnImportModel?.Invoke(s, e)));
             fileMenu.DropDownItems.Add(MakeItem("Open in Visual Studio", (s, e) => OnOpenInVS?.Invoke(s, e)));
             fileMenu.DropDownItems.Add(new ToolStripSeparator());
             fileMenu.DropDownItems.Add(MakeItem("Exit", (s, e) => OnExit?.Invoke(s, e)));

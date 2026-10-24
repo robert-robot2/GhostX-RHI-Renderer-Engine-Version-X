@@ -148,8 +148,23 @@ bool GhostScene_Save(const GhostScene& s, const std::string& root, const std::st
             json jo;
             jo["id"] = o.id;
             jo["mesh"] = o.meshId;
+            /*
             if (const GhostMeshInfo* mi = GhostMesh_Info(o.meshId))
                 if (!mi->builtin) { jo["meshName"] = mi->name; jo["meshSource"] = mi->source; }
+            */
+            if (!o.missingMesh.empty() || !o.missingMeshFile.empty())     // placeholder: write the original reference back
+            {
+                jo["meshName"] = o.missingMesh;
+                if (!o.missingMeshFile.empty()) jo["meshFile"] = o.missingMeshFile;
+            }
+            else if (const GhostMeshInfo* mi = GhostMesh_Info(o.meshId))
+                if (!mi->builtin)
+                {
+                    jo["meshName"] = mi->name;
+                    jo["meshSource"] = mi->source;
+                    if (!mi->file.empty()) jo["meshFile"] = MakeStoredPath(mi->file, root);
+                }
+
             jo["name"] = o.name;
             jo["position"] = V3(o.position);
             jo["rotation"] = V3(o.rotationDeg);
@@ -187,6 +202,11 @@ bool GhostScene_Save(const GhostScene& s, const std::string& root, const std::st
             const int n = GhostMesh_FaceCount(o.meshId);
             for (int f = 0; f < n; f++) faces.push_back(MatToJson(o.faces[f], saved));
             jo["faces"] = faces;
+            if (!o.missingFaces.empty())                                   // a placeholder keeps the original slots
+            {
+                json mf = json::parse(o.missingFaces, nullptr, false);
+                if (!mf.is_discarded()) jo["faces"] = mf;
+            }
             objs.push_back(jo);
         }
         j["objects"] = objs;
@@ -291,7 +311,8 @@ bool GhostScene_Save(const GhostScene& s, const std::string& root, const std::st
 //  Load
 // ============================================================
 bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& file,
-    const GhostLoadTexFn& loadTex, size_t maxObjects, std::string& err, std::string& warn)
+    const GhostLoadTexFn& loadTex, size_t maxObjects, std::string& err, std::string& warn,
+    const GhostLoadMeshFn& loadMesh)
 {
     json j;
     try
@@ -374,13 +395,26 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
             {
                 int mesh = jo.value("mesh", -1);
                 const std::string meshName = jo.value("meshName", std::string());
-                if (!meshName.empty()) mesh = GhostMesh_FindByName(meshName);      // imported models are matched by name, never by id
+                const std::string meshFile = jo.value("meshFile", std::string());
+                std::string whyMissing;
+                if (!meshFile.empty())                                     // 11.B scenes: the converted .ghostmesh
+                {
+                    mesh = loadMesh ? loadMesh(ResolveStoredPath(meshFile, root), whyMissing) : -1;
+                    if (whyMissing.empty() && !GhostMesh_Valid(mesh)) whyMissing = "the file could not be loaded";
+                }
+                else if (!meshName.empty())                                // 11.A scenes: only if imported this session
+                    mesh = GhostMesh_FindByName(meshName);
+
+                bool placeholder = false;
                 if (!GhostMesh_Valid(mesh))
                 {
-                    if (meshName.empty()) warn += "Skipped an object with an unknown mesh.\n";
-                    else warn += "Skipped \"" + jo.value("name", std::string("object")) + "\": the model \"" + meshName +
-                        "\" isn't imported in this session.\n";
-                    continue;
+                    if (meshName.empty() && meshFile.empty()) { warn += "Skipped an object with an unknown mesh.\n"; continue; }
+                    placeholder = true;
+                    mesh = GHOST_MESH_CUBE;
+                    warn += "\"" + jo.value("name", std::string("object")) + "\": the model \"" +
+                        (meshName.empty() ? meshFile : meshName) + "\" is missing" +
+                        (whyMissing.empty() ? std::string() : " (" + whyMissing + ")") +
+                        ". A red placeholder cube stands in for it, and the scene keeps the reference.\n";
                 }
 
                 if (s.objects.size() >= maxObjects) { warn += "Too many objects: the rest were skipped.\n"; break; }
@@ -432,6 +466,22 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
                     for (int f = 0; f < n && f < GHOST_MAX_FACES && f < (int)jo["faces"].size(); f++)
                         o.faces[f] = MatFromJson(jo["faces"][f], mapTex);
                 }
+                if (placeholder)
+                {
+                    o.missingMesh = meshName;
+                    o.missingMeshFile = meshFile;
+                    if (jo.contains("faces") && jo["faces"].is_array())
+                    {
+                        json mf = jo["faces"];                             // texture ids are remapped to this session's
+                        for (json& fj : mf) if (fj.is_object()) fj["texture"] = mapTex(fj.value("texture", 0));
+                        o.missingFaces = mf.dump();
+                    }
+                    for (int f = 0; f < GHOST_MAX_FACES; f++)
+                    {
+                        o.faces[f].tint[0] = 0.9f; o.faces[f].tint[1] = 0.15f; o.faces[f].tint[2] = 0.35f;
+                    }
+                }
+
                 s.objects.push_back(o);
             }
 

@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
+#include <fstream>
 
 static bool MetaInt(const aiMetadata* md, const char* key, int& out)
 {
@@ -199,4 +200,126 @@ bool GhostModel_Load(const std::string& path, const GhostModelOptions& opt, Ghos
         ext[0] * s, ext[1] * s, ext[2] * s, s, upText);
     out.info = buf;
     return true;
+}
+
+// ============================================================
+//  .ghostmesh  (all values little-endian)
+//  "GMSH", version, vertexCount, indexCount, subCount, bmin[3], bmax[3],
+//  name, source, per sub: name, firstIndex, indexCount, then the vertices and the 32-bit indices
+// ============================================================
+static const char         kMeshMagic[4] = { 'G', 'M', 'S', 'H' };
+static const unsigned int kMeshFileVersion = 1;
+
+bool GhostMeshFile_Save(const std::string& path, const GhostModelResult& r, const std::string& source, std::string& err)
+{
+    try
+    {
+        namespace fs = std::filesystem;
+        fs::path out(GhostUtf8ToWide(path));
+        if (out.has_parent_path()) fs::create_directories(out.parent_path());
+        fs::path tmp = out;
+        tmp += L".tmp";                                            // a failed save never leaves a half-written .ghostmesh
+        {
+            std::ofstream f(tmp, std::ios::binary);
+            if (!f) { err = "Could not write to " + path; return false; }
+            auto U = [&](unsigned int v) { f.write((const char*)&v, 4); };
+            auto F = [&](float v) { f.write((const char*)&v, 4); };
+            auto S = [&](const std::string& s) { U((unsigned int)s.size()); f.write(s.data(), (std::streamsize)s.size()); };
+
+            f.write(kMeshMagic, 4);
+            U(kMeshFileVersion);
+            U((unsigned int)r.vertices.size());
+            U((unsigned int)r.indices.size());
+            U((unsigned int)r.subs.size());
+            for (int k = 0; k < 3; k++) F(r.bmin[k]);
+            for (int k = 0; k < 3; k++) F(r.bmax[k]);
+            S(r.name);
+            S(source);
+            for (const GhostModelSub& s : r.subs) { S(s.name); U(s.firstIndex); U(s.indexCount); }
+            f.write((const char*)r.vertices.data(), (std::streamsize)(r.vertices.size() * sizeof(GhostMeshVertex)));
+            f.write((const char*)r.indices.data(), (std::streamsize)(r.indices.size() * sizeof(unsigned int)));
+            if (!f) { err = "Writing the mesh file failed (disk full?)."; return false; }
+        }
+        fs::rename(tmp, out);
+        return true;
+    }
+    catch (const std::exception& e)
+    {
+        err = std::string("Saving the mesh failed: ") + e.what();
+        return false;
+    }
+}
+
+bool GhostMeshFile_Load(const std::string& path, GhostModelResult& out, std::string& source, std::string& err)
+{
+    out = GhostModelResult();
+    source.clear();
+    try
+    {
+        std::ifstream f(std::filesystem::path(GhostUtf8ToWide(path)), std::ios::binary | std::ios::ate);
+        if (!f) { err = "Could not open " + path; return false; }
+        const long long size = (long long)f.tellg();
+        f.seekg(0);
+
+        auto left = [&]() -> long long { return size - (long long)f.tellg(); };
+        auto U = [&](unsigned int& v) -> bool { f.read((char*)&v, 4); return (bool)f; };
+        auto F = [&](float& v) -> bool { f.read((char*)&v, 4); return (bool)f; };
+        auto S = [&](std::string& s) -> bool
+            {
+                unsigned int n = 0;
+                if (!U(n) || n > 4096 || (long long)n > left()) return false;
+                s.resize(n);
+                if (n) f.read(&s[0], (std::streamsize)n);
+                return (bool)f;
+            };
+        const std::string bad = "The mesh file is damaged: ";
+
+        char magic[4] = {};
+        f.read(magic, 4);
+        if (!f || memcmp(magic, kMeshMagic, 4) != 0) { err = "This is not a GhostX mesh file."; return false; }
+
+        unsigned int ver = 0, vc = 0, ic = 0, sc = 0;
+        if (!U(ver) || !U(vc) || !U(ic) || !U(sc)) { err = bad + "it is cut short."; return false; }
+        if (ver > kMeshFileVersion) { err = "This mesh was saved by a newer version of GhostX."; return false; }
+        if (vc == 0 || vc > 3000000u || ic < 3 || ic > 3000000u || ic % 3 != 0 || sc == 0 || sc > (unsigned)GHOST_MODEL_MAX_SLOTS)
+        {
+            err = bad + "the counts are out of range."; return false;
+        }
+
+        for (int k = 0; k < 3; k++) if (!F(out.bmin[k])) { err = bad + "it is cut short."; return false; }
+        for (int k = 0; k < 3; k++) if (!F(out.bmax[k])) { err = bad + "it is cut short."; return false; }
+        if (!S(out.name) || !S(source)) { err = bad + "a name is unreadable."; return false; }
+
+        out.subs.resize(sc);
+        for (unsigned int i = 0; i < sc; i++)
+        {
+            GhostModelSub& s = out.subs[i];
+            if (!S(s.name) || !U(s.firstIndex) || !U(s.indexCount)) { err = bad + "the material slots are unreadable."; return false; }
+            if (s.indexCount == 0 || s.firstIndex % 3 != 0 || s.indexCount % 3 != 0 ||
+                (unsigned long long)s.firstIndex + s.indexCount > ic)
+            {
+                err = bad + "a material slot is out of range."; return false;
+            }
+        }
+
+        const long long need = (long long)vc * (long long)sizeof(GhostMeshVertex) + (long long)ic * 4;
+        if (left() != need) { err = bad + "its size doesn't match its contents."; return false; }
+
+        out.vertices.resize(vc);
+        out.indices.resize(ic);
+        f.read((char*)out.vertices.data(), (std::streamsize)(vc * sizeof(GhostMeshVertex)));
+        f.read((char*)out.indices.data(), (std::streamsize)(ic * sizeof(unsigned int)));
+        if (!f) { err = bad + "it is cut short."; return false; }
+
+        for (unsigned int i = 0; i < ic; i++)                      // a bad index would crash the GPU, so check them all
+            if (out.indices[i] >= vc) { err = bad + "a triangle points past the vertices."; return false; }
+
+        out.triangleCount = ic / 3;
+        return true;
+    }
+    catch (const std::exception& e)
+    {
+        err = std::string("Reading the mesh failed: ") + e.what();
+        return false;
+    }
 }
