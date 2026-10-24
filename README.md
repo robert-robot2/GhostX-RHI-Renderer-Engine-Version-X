@@ -84,6 +84,8 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [ ] Phase : Animation Editor/ Bone Hierarchy Editor
 - [ ] Phase : Particle Manager
 - [ ] Phase : Full Mesh Editor/ Sculpting/Animation/Texture Painting
+- [ ] Phase : Packaged Updater
+- [ ] Phase : To be added, Experimental
 
 ## Rendering Hardware Interface (RHI) Backends
 - **Featured**
