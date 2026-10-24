@@ -171,7 +171,7 @@ Exports for objects, lights, cameras, materials, textures, viewports, mouse inpu
 ## Credits
 
 - [DockPanelSuite](https://github.com/dockpanelsuite/dockpanelsuite) (MIT) for the docking UI
-- to Be added , Assimp
+- Assimp
 ---
 
 ## Prerequisites
@@ -183,7 +183,7 @@ Exports for objects, lights, cameras, materials, textures, viewports, mouse inpu
   - Desktop development with C++ workload
 - [WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/)
 - DirectX 12 compatible GPU
-- **NuGet packages (GhostShell):** `DockPanelSuite`, `DockPanelSuite.ThemeVS2015`, `Microsoft.Web.WebView2`
+- **NuGet packages (GhostShell):** `DockPanelSuite`, `DockPanelSuite.ThemeVS2015`, `Microsoft.Web.WebView2`, `Assimp`
 ---
 ## License
 
