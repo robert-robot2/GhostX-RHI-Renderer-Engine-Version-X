@@ -63,9 +63,9 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [x] Phase 11.A: FBX Imports as Default Color Import. Must Be Set to 2 For Sit Largest Side TO Default for Default Import(2 should be the auto default not 0?)
 - [x] Phase 11.B: Saving models, the Models palette and Content Browser tiles.
 - [x] Phase 11.C: Materials, collider fit, re-import.
+- [x] Phase 12 A: Pre-Building Prep, Scene switching 
+- [x] Phase 12 B: Pre-Building Prep, The standalone exe
 - **Active Core**
-- [ ] Phase 12 A: Pre-Building Prep, Scene switching 
-- [ ] Phase 12 B: Pre-Building Prep, The standalone exe
 - [ ] Phase 12 C: Level 1 Build and Test Play / Instructions
 - [ ] Phase 12 D: Level 2 Build And Test Play Packaged Exe / Instructions
 - **Active SubCore**
@@ -189,6 +189,272 @@ Exports for objects, lights, cameras, materials, textures, viewports, mouse inpu
 - DirectX 12 compatible GPU
 - **NuGet packages (GhostShell):** `DockPanelSuite`, `DockPanelSuite.ThemeVS2015`, `Microsoft.Web.WebView2`, `Assimp`
 ---
+
+# 🎮 Level Build, Playtest & Packaging Guide
+
+This guide covers building and testing Level 1 and Level 2, verifying gameplay transitions, and packaging a standalone Windows executable using the GhostX editor.
+
+---
+
+## Part A — Build and Test Level 1
+
+### 1. Create the Project
+
+- Open **File → New Project...**
+- Set the project name to `TestGame`.
+- Select the **Blank** template.
+
+### 2. Build Level 1
+
+Recreate the level using the **4C-3 table**. Add the following objects:
+
+- Ground
+- Player
+- Step
+- High Platform
+- 2 × Question Blocks (`? Blocks`)
+- 8 × Coins
+- 3 × Enemies
+- Goal
+- 1 × Directional Light
+- 1 × Point Light
+
+### 3. Configure Objects and Camera
+
+- Use `Ctrl + D` to duplicate objects.
+- Set the appropriate **Role** for each object.
+- Set `Collider = True` on the Player and every solid object.
+- Add an **Orbit Camera** to the Player.
+- Open **Scene Settings** and set **Game Start Camera** to the Orbit Camera.
+
+### 4. Save the Scene
+
+Save the scene as:
+
+`Scenes/Level1.ghostscene`
+
+### 5. Configure the Startup Scene
+
+Open `TestGame.ghostproject` in Notepad or another text editor.
+
+Update the `startScene` property:
+
+```json
+"startScene": "Scenes/Level1.ghostscene",
+```
+
+> **Important:** Scene filenames matter. The game code expects `Level1.ghostscene` and `Level2.ghostscene`.
+
+### 6. Create the HUD
+
+Create the following UI asset:
+
+`Content/UI/HUD.ghostui`
+
+You can either:
+
+- Create the UI using the **Phase 5B JSON**.
+- Build the HUD directly in the **UI Designer**.
+
+### 7. Test Level 1
+
+- Press `Ctrl + P` to enter Play mode.
+- Test the HUD and gameplay.
+- Check player movement, collisions, coins, enemies, lighting, and the Goal.
+- Note anything that does not work as expected.
+- Commit your changes to Git.
+
+---
+
+## Part B — Build and Test Level 2
+
+### 1. Build the Solution
+
+Build all three required projects.
+
+- **Debug | x64** is fine for editor testing.
+- Run with `Ctrl + F5`.
+
+### 2. Test the Level Transition
+
+1. Open `Level1.ghostscene`.
+2. Press `Ctrl + P` to enter Play mode.
+3. Touch the Goal.
+4. Wait approximately **2.5 seconds** for Level 2 to load.
+5. Verify that Level 2 loads with its own camera and layout.
+
+### 3. Test the Win Screen
+
+Touch Level 2's Goal.
+
+Verify that the **YOU WIN!** screen appears with the following options:
+
+- **Play Again** — loads Level 1.
+- **Quit** — stops Play mode.
+
+### 4. Verify Editor State Restoration
+
+Stop Play mode using `Shift + F5`.
+
+Confirm that:
+
+- The editor returns to the scene you started from.
+- The Hierarchy is restored correctly.
+- The scene title is clean, with no unsaved-change `*` marker.
+
+### 5. Test Standalone Play
+
+Test the **Play Standalone** workflow.
+
+- Verify that gameplay behaves as expected.
+- Confirm that the win screen appears after completing Level 2.
+- Verify that **Quit** closes the standalone game window.
+
+### ⚠️ Troubleshooting: Level 2 Does Not Load
+
+If `Level2.ghostscene` is missing, touching the Goal may display **Level Complete** without loading another scene.
+
+This happens because `LoadScene` returns `0`, and the current level-transition logic is not yet aware of the final level. The countdown finishes, but nothing loads.
+
+Verify that `Level2.ghostscene` exists at the expected path. If this behavior occurs, a fallback can be added to handle the missing scene.
+
+---
+
+## Part C — Package the Standalone Game
+
+### 1. Configure the Startup Scene
+
+- Set `startScene` in the project manifest to the intended starting scene.
+- Save all scenes before packaging.
+
+### 2. Package the Project
+
+1. Open **File → Package Project...**
+2. Leave the default settings unchanged.
+3. Click **Package**.
+4. Monitor the build log.
+
+The log should show three MSBuild runs, followed by a packaging summary containing:
+
+- File count
+- Package size
+- Output folder
+- Executable filename
+
+### 3. Verify the Output Files
+
+The packaged output folder should contain files and directories similar to these:
+
+```text
+TestGame/
+├── TestGame.exe
+├── GhostX.dll
+├── GhostGame.dll
+├── vcruntime140.dll
+├── vcruntime140_1.dll
+├── shaders/
+└── Data/
+```
+
+The exact contents may vary depending on the build configuration and runtime dependencies.
+
+**Expected result:** No `.pdb` debug-symbol files should be included.
+
+### 4. Run the Packaged Game
+
+Launch the game using either:
+
+- The editor's **Run Game** option.
+- A double-click on `TestGame.exe`.
+
+Verify that:
+
+- The window title displays the project name.
+- Level 1 starts with the HUD visible.
+- Touching the Goal loads Level 2.
+- Completing Level 2 displays the win screen.
+- Pressing `Esc` quits the game.
+
+### 5. Test Portability
+
+- Copy the packaged output folder to a different location.
+- Run `TestGame.exe` from the copied folder.
+- If possible, copy the folder to another Windows PC and test it there.
+
+This verifies that the packaged game does not depend on files or paths available only on your development machine.
+
+### 6. Create a ZIP Package
+
+Enable the **Zip** checkbox in the packaging dialog.
+
+The packager should create:
+
+`TestGame.zip`
+
+The ZIP file is created alongside the packaged output folder.
+
+### 7. Package an Existing Release Build
+
+To package an existing Release build:
+
+1. Open the solution in Visual Studio.
+2. Build the required projects using **Release | x64**.
+3. Open **File → Package Project...**
+4. Select **Use an existing Release x64 folder**.
+5. Choose the Release output folder.
+6. Continue with packaging.
+
+> **Note:** If you select a Debug output folder, the packager should identify it as a Debug build and report the mismatch.
+
+---
+
+## ✅ Final Verification Checklist
+
+### Level 1
+
+- [ ] Project created from the Blank template.
+- [ ] All required objects added.
+- [ ] Object Roles and colliders configured.
+- [ ] Orbit Camera assigned as the Game Start Camera.
+- [ ] Scene saved as `Scenes/Level1.ghostscene`.
+- [ ] Startup scene configured in `TestGame.ghostproject`.
+- [ ] HUD created and tested.
+- [ ] Changes committed to Git.
+
+### Level 2 and Gameplay
+
+- [ ] Level 2 loads after touching the Level 1 Goal.
+- [ ] Level 2 uses its own camera and layout.
+- [ ] Win screen appears after completing Level 2.
+- [ ] Play Again loads Level 1.
+- [ ] Quit stops gameplay.
+- [ ] Stopping Play mode restores the editor state.
+- [ ] Standalone Play works as expected.
+
+### Packaging
+
+- [ ] All three required projects build successfully.
+- [ ] Packaging completes without errors.
+- [ ] Required DLLs, shaders, and data files are present.
+- [ ] No `.pdb` files are included.
+- [ ] Packaged executable launches correctly.
+- [ ] Level transitions and HUD work in the packaged game.
+- [ ] Portability tested from another folder.
+- [ ] ZIP packaging verified.
+- [ ] Existing Release x64 folder workflow tested.
+
+---
+
+**Expected outcome:** A playable two-level GhostX game with a working HUD, level transitions, a win screen, and a packaged Windows executable.
+
+
+
+
+
+
+---
+
+
 ## License
 
 This project is licensed under the **MIT License**.
