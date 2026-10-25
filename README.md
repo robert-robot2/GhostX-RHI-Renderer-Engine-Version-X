@@ -75,9 +75,10 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [ ] Phase 13.D: a CAD-style set of annotation tools on top of the blueprint grid.
 - **Active SubCore**
 - [ ] Phase : Add All Editors Windows Popups to Be able to Reshow if Closed or malfunctioning to docking Suite and Dropdown Windows Selection
-- **Testing/Game/Debug/Errors
+- **Testing/Game/Debug/Errors**
 - [ ] Phase 12 C: Level 1 Build and Test Play / Instructions
 - [ ] Phase 12 D: Level 2 Build And Test Play Packaged Exe / Instructions
+- [ ] Phase Errors: Docking Suite Debug Needs reset/ delete xml layout but why?
 - **Publish/Release**
 - [ ] Phase : Install Shield Wizard/ Packaged Install for Download
 - [ ] Phase : Install Wizard Setup for Standalone Game
