@@ -3,7 +3,7 @@
 #include <math.h>
 #include <string.h>
 #include <stdio.h>
-#include "GhostGameAPI.h"
+#include "../GhostX/include/GhostGameAPI.h"
 
 extern const GhostGameAPI* G;
 

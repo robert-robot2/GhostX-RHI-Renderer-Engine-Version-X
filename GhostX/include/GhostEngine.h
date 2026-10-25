@@ -85,7 +85,15 @@ struct GhostMeshStats
     float        importScale, importFit;
     int          importUp, importFlags;                    // flags: 1 flip winding, 2 no materials
 };
-
+struct GhostViewSettings
+{
+    int   showSelection, showFps, showGrid, showWorldAxes;
+    int   showDims, dimAxes, edgeLabels;       // dimAxes: bit 0 = X, bit 1 = Y, bit 2 = Z
+    int   gridPlane, gridStyle;                // plane: 0 XZ (floor), 1 XY, 2 YZ.  style: 0 standard, 1 blueprint
+    float gridSize;                            // spacing between lines, in units (1 unit = 1 metre)
+    int   gridExtent;                          // lines on each side of the camera
+    int   tool, space, unit, decimals;         // tool: 0 select, 1 translate, 2 rotate, 3 scale, 4 dimension.  space: 0 world, 1 local.  unit: 0 mm, 1 cm, 2 m, 3 in, 4 ft
+};
 
 extern "C"
 {
@@ -230,4 +238,8 @@ extern "C"
     GHOST_API int  GhostEngine_GetMeshText(int meshId, int which, char* buf, int bufSize);   // 0 name, 1 mesh file, 2 source file
     GHOST_API int  GhostEngine_GetObjectMissingMesh(int objectId, char* buf, int bufSize);   // 1 if the object is a placeholder
     GHOST_API int GhostEngine_TakeQuitRequest();     // 1 once after the game called Quit()
+
+    // ---- Viewport overlay settings ----
+    GHOST_API void GhostEngine_GetViewSettings(GhostViewSettings* out);
+    GHOST_API void GhostEngine_SetViewSettings(const GhostViewSettings* in);
 }

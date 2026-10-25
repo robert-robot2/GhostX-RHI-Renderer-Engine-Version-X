@@ -196,3 +196,20 @@ ShadowPSInput ShadowVS(VSInput input)
     o.worldPos = wp.xyz;
     return o;
 }
+
+// ---------------- Overlay: viewport lines, gizmos and text (position is already in clip space) ----------------
+struct OverlayVSInput
+{
+    float3 pos : POSITION;
+    float2 uv : TEXCOORD0;
+    float4 color : COLOR;
+};
+
+UIPSInput OverlayVS(OverlayVSInput i)
+{
+    UIPSInput o;
+    o.pos = float4(i.pos, 1.0f);
+    o.uv = i.uv;
+    o.color = i.color;
+    return o;
+}

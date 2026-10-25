@@ -2,7 +2,7 @@
 #pragma once
 #include <Windows.h>
 #include <d3d12.h>
-#include "../include/Ghost3D1.h"   // GhostResult, GhostColor
+#include "Ghost3D1.h"   // GhostResult, GhostColor
 #include <functional>
 // ---- Backend selector ----
 enum class RHIType

@@ -92,6 +92,18 @@ namespace GhostShell
         public float importScale, importFit;
         public int importUp, importFlags;
     }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GhostViewSettings
+    {
+        public int showSelection, showFps, showGrid, showWorldAxes;
+        public int showDims, dimAxes, edgeLabels;
+        public int gridPlane, gridStyle;
+        public float gridSize;
+        public int gridExtent;
+        public int tool, space, unit, decimals;
+    }
+
     internal static class GhostEngine
     {
         private const string DllName = "GhostX.dll";
@@ -333,6 +345,12 @@ namespace GhostShell
         public static extern void GhostEngine_ApplyMeshDefaults(int objectId, int what);
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern int GhostEngine_TakeQuitRequest();
+
+        // ---- Viewport overlay ----
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_GetViewSettings(out GhostViewSettings s);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetViewSettings(ref GhostViewSettings s);
 
     }
 }

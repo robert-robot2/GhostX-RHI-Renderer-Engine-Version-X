@@ -1,6 +1,6 @@
 // GhostRHI_DX12.h
 #pragma once
-#include "../include/IGhostRHI.h"
+#include "IGhostRHI.h"
 #include <d3d12.h>
 #include <dxgi1_6.h>
 #include <wrl/client.h>

@@ -24,6 +24,8 @@ namespace GhostShell
         private GhostEditorUI _editor = null!;
         private EditorKeyFilter _keyFilter = null!;
         private bool _engineReady;
+        private GhostViewportBar? _viewBar;
+
         public GhostForm()
         {
             InitializeForm();
@@ -168,6 +170,7 @@ namespace GhostShell
             // ---- Engine editor panels (must come after the menu strip exists) ----
             _editor = new GhostEditorUI(this, _renderPanel);
             _editor.Build();
+            _viewBar = new GhostViewportBar(_renderPanel);       // the two dropdowns over the viewport
             _menuBuilder.OnToggleEditorUI += (s, e) => _editor.ToggleVisible();
             _menuBuilder.OnImportModel += (s, e) => GhostModels.ImportInteractive(this);
             _menuBuilder.OnReimportModel += (s, e) => GhostModels.ReimportSelected(this, false);
@@ -270,6 +273,7 @@ namespace GhostShell
                 }
                 _engineReady = true;
                 GhostFontAtlas.BakeDefault();     // the on-screen text font (the player needs it too)
+                _viewBar?.ApplyStartup();                        // the overlay text needs the font, and the settings need the engine
                 GhostSceneFile.MarkClean();       // the starting scene counts as saved
                 if (GhostPlayer.IsPlayer && !GhostPlayer.Launch(this)) return;
                 // Drive the render loop from the message pump idle time

@@ -1,10 +1,11 @@
 // GhostPipeline.h
 #pragma once
-#include "../include/GhostMath.h"
-#include "../include/Ghost3D1.h"
-#include "../include/IGhostRHI.h"
-#include "../include/GhostScene.h"
-#include "../include/GhostText.h"
+#include "GhostMath.h"
+#include "Ghost3D1.h"
+#include "IGhostRHI.h"
+#include "GhostScene.h"
+#include "GhostText.h"
+#include "GhostOverlay.h"
 #include <vector>
 #include <d3d12.h>
 #include <d3dcompiler.h>
@@ -89,6 +90,8 @@ struct GhostMeshCPU
     unsigned int Index(unsigned int i) const { return idx32 ? idx32[i] : idx16[i]; }
 };
 
+constexpr unsigned int GHOST_OVERLAY_MAX_VERTS = 120000;
+
 struct GhostPipeline
 {
     ComPtr<ID3D12RootSignature>  rootSignature;
@@ -119,6 +122,12 @@ struct GhostPipeline
     unsigned int                 rtvIncrement = 0;
     ComPtr<ID3D12PipelineState>  blitPso;
     ComPtr<ID3D12PipelineState>  uiPso;
+
+    ComPtr<ID3D12PipelineState>  overlayDepthPso, overlayTopPso;
+    ComPtr<ID3D12Resource>       ovVB;
+    void* ovMapped = nullptr;
+    unsigned int                 ovCursor = 0;
+
     ComPtr<ID3D12PipelineState>  skyPso;
     // ---- Shadows ----
     ComPtr<ID3D12RootSignature>  shadowRootSig;
@@ -201,3 +210,9 @@ void GhostShadowSlice(IGhostRHI* rhi, GhostPipeline* pipeline, int slice,
     const float* vp16, const float* posFar4, float mode);       // mode 0 = directional, 1 = point
 void GhostShadowDraw(IGhostRHI* rhi, GhostPipeline* pipeline, int meshId, unsigned int slot, unsigned int textureIndex);
 void GhostShadowEnd(IGhostRHI* rhi, GhostPipeline* pipeline, unsigned int w, unsigned int h);
+
+// ---- Viewport overlay (grid, gizmos, dimensions, text) ----
+void GhostOverlayBegin(GhostPipeline* pipeline);               // once per viewport frame
+// mode 0 = depth tested, 1 = always on top. textureId 0 = plain colour, or the font atlas for text.
+void GhostDrawOverlay(IGhostRHI* rhi, GhostPipeline* pipeline, const std::vector<GhostOverlayVertex>& verts,
+    int mode, int textureId);

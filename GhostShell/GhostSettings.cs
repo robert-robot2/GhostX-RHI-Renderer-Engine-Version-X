@@ -12,6 +12,7 @@ namespace GhostShell
         public List<string> RecentProjects { get; set; } = new();
         public string SolutionPath { get; set; } = "";
         public string LastProjectFolder { get; set; } = "";
+        public string ViewSettings { get; set; } = "";
     }
 
     internal static class GhostSettings

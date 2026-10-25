@@ -13,6 +13,7 @@
 #include "../include/GhostMods.h"
 #include "../include/GhostAnim.h"
 #include "../include/GhostModelImport.h"
+#include "../include/GhostOverlay.h"
 #include <string.h>
 #include <filesystem>
 #include <map>
@@ -1041,7 +1042,286 @@ static void RenderShadowPass(GhostSceneCB& cb, const GhostVec3& eye, unsigned in
 
 
 
+// ============================================================
+//  Viewport overlay: grid, selection gizmo, dimensions, FPS.
+//  Main view only. Everything except the FPS counter is editor-only.
+// ============================================================
+static GhostViewSettings g_viewCfg = { 1, 0, 1, 1,   0, 7, 1,   0, 0,   1.0f,   20,   0, 0, 2, 2 };
+static GhostOverlay      g_ov;
+static float             g_fps = 0.0f;
 
+static const float kAxisCol[3][4] = { { 0.92f, 0.30f, 0.30f, 1.0f },{ 0.50f, 0.85f, 0.30f, 1.0f },{ 0.30f, 0.55f, 0.95f, 1.0f } };
+static const float kUnitMul[5] = { 1000.0f, 100.0f, 1.0f, 39.3701f, 3.28084f };      // 1 engine unit = 1 metre
+static const char* kUnitTxt[5] = { "mm", "cm", "m", "in", "ft" };
+
+static void FormatLength(float worldUnits, char* out, int size)
+{
+    const int u = g_viewCfg.unit < 0 ? 0 : (g_viewCfg.unit > 4 ? 4 : g_viewCfg.unit);
+    const int d = g_viewCfg.decimals < 0 ? 0 : (g_viewCfg.decimals > 3 ? 3 : g_viewCfg.decimals);
+    snprintf(out, (size_t)size, "%.*f%s", d, worldUnits * kUnitMul[u], kUnitTxt[u]);
+}
+
+static void OverlayGrid(const GhostVec3& eye)
+{
+    const GhostViewSettings& s = g_viewCfg;
+    const int   N = s.gridExtent;
+    const float step = s.gridSize;
+    const float ext = (float)N * step;
+
+    static const GhostVec3 PA[3] = { { 1, 0, 0 },{ 1, 0, 0 },{ 0, 1, 0 } };      // the two axes that span the plane
+    static const GhostVec3 PB[3] = { { 0, 0, 1 },{ 0, 1, 0 },{ 0, 0, 1 } };
+    static const GhostVec3 PN[3] = { { 0, 1, 0 },{ 0, 0, 1 },{ 1, 0, 0 } };      // plane normal
+    static const int AXA[3] = { 0, 0, 1 }, AXB[3] = { 2, 1, 2 };                   // which world axis A and B are
+    const int pl = s.gridPlane < 0 ? 0 : (s.gridPlane > 2 ? 2 : s.gridPlane);
+    const GhostVec3 A = PA[pl], B = PB[pl];
+    const GhostVec3 lift = PN[pl] * 0.004f;                                        // keeps the grid off a floor at the same height
+
+    const float ca = floorf(eye.Dot(A) / step + 0.5f), cb = floorf(eye.Dot(B) / step + 0.5f);   // centered under the camera
+    const bool bp = (s.gridStyle == 1);
+    const int SEG = 12;                                                            // each line is split so it can fade with distance
+
+    for (int pass = 0; pass < 2; pass++)
+    {
+        const GhostVec3 along = pass == 0 ? B : A;
+        const GhostVec3 across = pass == 0 ? A : B;
+        const float cAlong = pass == 0 ? cb : ca;
+        const float cAcross = pass == 0 ? ca : cb;
+
+        for (int i = -N; i <= N; i++)
+        {
+            const long idx = (long)cAcross + i;
+            const bool axis = (idx == 0) && s.showWorldAxes;
+            const bool major = (idx % 10) == 0;
+
+            float col[4]; float width;
+            if (axis) { const float* a = kAxisCol[pass == 0 ? AXB[pl] : AXA[pl]]; col[0] = a[0]; col[1] = a[1]; col[2] = a[2]; col[3] = 0.9f; width = 2.2f; }
+            else if (major) { if (bp) { col[0] = 0.60f; col[1] = 0.82f; col[2] = 1.00f; col[3] = 0.60f; } else { col[0] = 0.75f; col[1] = 0.75f; col[2] = 0.80f; col[3] = 0.42f; } width = 1.4f; }
+            else { if (bp) { col[0] = 0.35f; col[1] = 0.60f; col[2] = 0.95f; col[3] = 0.30f; } else { col[0] = 0.65f; col[1] = 0.65f; col[2] = 0.70f; col[3] = 0.22f; } width = 1.0f; }
+
+            const GhostVec3 origin = across * ((float)idx * step) + lift;
+            for (int g = 0; g < SEG; g++)
+            {
+                const float t0 = ((cAlong - (float)N) + (2.0f * (float)N) * (float)g / (float)SEG) * step;
+                const float t1 = ((cAlong - (float)N) + (2.0f * (float)N) * (float)(g + 1) / (float)SEG) * step;
+                const GhostVec3 p0 = origin + along * t0, p1 = origin + along * t1;
+                float fade = 1.0f - ((p0 + p1) * 0.5f - eye).Length() / (ext * 1.15f + 1.0f);
+                fade = fade < 0.0f ? 0.0f : (fade > 1.0f ? 1.0f : fade);
+                const float c[4] = { col[0], col[1], col[2], col[3] * fade };
+                if (c[3] < 0.01f) continue;
+                g_ov.Line(p0, p1, c, width, true);
+            }
+        }
+    }
+}
+
+static void OverlayBounds(const GhostObject& o, const GhostVec3& eye)
+{
+    float byw;
+    const GhostMat4 M = GhostObjectModel(o, BillYaw(o, eye, byw));
+    const GhostVec3 mn = GhostMesh_Min(o.meshId), mx = GhostMesh_Max(o.meshId);
+    GhostVec3 c[8];
+    for (int i = 0; i < 8; i++)
+        c[i] = XformPoint(M, GhostVec3((i & 1) ? mx.x : mn.x, (i & 2) ? mx.y : mn.y, (i & 4) ? mx.z : mn.z), 1.0f);
+    static const int E[12][2] = { { 0,1 },{ 2,3 },{ 4,5 },{ 6,7 },{ 0,2 },{ 1,3 },{ 4,6 },{ 5,7 },{ 0,4 },{ 1,5 },{ 2,6 },{ 3,7 } };
+    const float col[4] = { 1.0f, 0.62f, 0.12f, 0.85f };
+    for (int e = 0; e < 12; e++) g_ov.Line(c[E[e][0]], c[E[e][1]], col, 1.5f, false);
+}
+
+// Origin dot and XYZ axes, in the shape of the current tool. The size is constant on screen.
+static void OverlayGizmo(int selId, const GhostMat4& proj)
+{
+    GhostVec3* pp = EntityPosition(selId);
+    if (!pp) return;
+    const GhostVec3 pos = *pp;
+
+    GhostVec3 ax[3] = { { 1, 0, 0 },{ 0, 1, 0 },{ 0, 0, 1 } };
+    if (g_viewCfg.space == 1)
+        if (GhostObject* o = FindObject(selId))
+        {
+            const GhostMat4 M = GhostObjectModel(*o);
+            for (int k = 0; k < 3; k++) ax[k] = GhostVec3(M.m[0][k], M.m[1][k], M.m[2][k]).Normalize();
+        }
+
+    const GhostOverlay::Clip c = g_ov.ToClip(pos);
+    if (c.z < 0.0f || c.w < 0.1f) return;
+    const float pxPerUnit = proj.m[1][1] * (float)g_ov.h * 0.5f / c.w;
+    const float L = 90.0f / pxPerUnit;
+    static const char* names[3] = { "X", "Y", "Z" };
+    const int tool = g_viewCfg.tool;
+
+    if (tool == 2)                                              // rotate: one ring per axis
+    {
+        for (int k = 0; k < 3; k++)
+        {
+            const GhostVec3 u = ax[(k + 1) % 3], v = ax[(k + 2) % 3];
+            const float R = L * 0.8f;
+            for (int s = 0; s < 48; s++)
+            {
+                const float a0 = (float)s / 48.0f * 2.0f * GHOST_PI, a1 = (float)(s + 1) / 48.0f * 2.0f * GHOST_PI;
+                g_ov.Line(pos + (u * cosf(a0) + v * sinf(a0)) * R, pos + (u * cosf(a1) + v * sinf(a1)) * R, kAxisCol[k], 2.2f, false);
+            }
+        }
+    }
+    else
+    {
+        for (int k = 0; k < 3; k++)
+        {
+            const GhostVec3 end = pos + ax[k] * L;
+            if (tool == 1) g_ov.Arrow(pos, end, kAxisCol[k], 2.5f, 14.0f, false);
+            else
+            {
+                g_ov.Line(pos, end, kAxisCol[k], 2.5f, false);
+                if (tool == 3) g_ov.Point(end, 10.0f, kAxisCol[k]);
+            }
+            g_ov.Label(pos + ax[k] * (L * 1.16f), names[k], kAxisCol[k], 16.0f, 0.0f, 0.0f);
+        }
+    }
+
+    const float black[4] = { 0, 0, 0, 0.9f }, dot[4] = { 1.0f, 0.82f, 0.30f, 1.0f };
+    g_ov.Point(pos, 10.0f, black);
+    g_ov.Point(pos, 6.0f, dot);                                 // the origin
+}
+
+// Arrows between the box edges, one per axis, with the length as a label
+static void OverlayDims(const GhostObject& o, const GhostVec3& eye)
+{
+    float byw;
+    const GhostMat4 M = GhostObjectModel(o, BillYaw(o, eye, byw));
+    const GhostVec3 mn = GhostMesh_Min(o.meshId), mx = GhostMesh_Max(o.meshId);
+    GhostVec3 ax[3];
+    for (int k = 0; k < 3; k++) ax[k] = GhostVec3(M.m[0][k], M.m[1][k], M.m[2][k]).Normalize();
+
+    const float ext[3] = { fabsf((mx.x - mn.x) * o.scale.x), fabsf((mx.y - mn.y) * o.scale.y), fabsf((mx.z - mn.z) * o.scale.z) };
+    const float big = fmaxf(ext[0], fmaxf(ext[1], ext[2]));
+    const float off = fmaxf(big * 0.12f, 0.08f);
+
+    const GhostVec3 ends[3] = { GhostVec3(mx.x, mn.y, mn.z), GhostVec3(mn.x, mx.y, mn.z), GhostVec3(mn.x, mn.y, mx.z) };
+    const GhostVec3 offDir[3] = { (ax[1] + ax[2]) * -1.0f, (ax[0] + ax[2]) * -1.0f, (ax[0] + ax[1]) * -1.0f };
+    const bool flat = (o.meshId == GHOST_MESH_QUAD);            // a sprite has no meaningful depth
+    const float grey[4] = { 0.75f, 0.75f, 0.78f, 0.55f };
+
+    for (int k = 0; k < 3; k++)
+    {
+        if (!((g_viewCfg.dimAxes >> k) & 1)) continue;
+        if (flat && k == 2) continue;
+
+        const GhostVec3 w0 = XformPoint(M, mn, 1.0f), w1 = XformPoint(M, ends[k], 1.0f);
+        const GhostVec3 d = offDir[k].Normalize() * off;
+        const GhostVec3 d0 = w0 + d, d1 = w1 + d;
+
+        g_ov.Line(w0, d0 + d * 0.25f, grey, 1.0f, false);       // extension lines
+        g_ov.Line(w1, d1 + d * 0.25f, grey, 1.0f, false);
+        g_ov.Dimension(d0, d1, kAxisCol[k], 1.6f, 10.0f);
+
+        char t[40];
+        FormatLength(ext[k], t, (int)sizeof t);
+        g_ov.Label((d0 + d1) * 0.5f, t, kAxisCol[k], 17.0f, 0.0f, -13.0f);
+    }
+}
+
+static bool NearP(const GhostVec3& a, const GhostVec3& b) { return (a - b).Length() < 1e-4f; }
+
+// A single polygon (the triangle, or a face of up to 64 triangles): label every boundary edge A, B, C...
+static void OverlayFaceEdges(const GhostObject& o, const GhostVec3& eye)
+{
+    int face = CurrentFace();
+    if (face < 0 && GhostMesh_FaceCount(o.meshId) == 1) face = 0;
+    if (face < 0 || face >= GhostMesh_FaceCount(o.meshId)) return;
+
+    GhostMeshCPU cpu;
+    if (!GhostGetMeshCPU(g_pipeline, o.meshId, &cpu)) return;
+    const GhostFaceDef& fd = GhostMesh_Face(o.meshId, face);
+    const unsigned int tris = fd.indexCount / 3;
+    if (tris == 0 || tris > 64 || fd.firstIndex + fd.indexCount > cpu.indexCount) return;
+
+    struct Edge { GhostVec3 a, b; bool dead; };
+    Edge e[192];
+    int n = 0, cn = 0;
+    GhostVec3 centroid(0.0f, 0.0f, 0.0f);
+    for (unsigned int t = 0; t < tris; t++)
+    {
+        GhostVec3 p[3];
+        for (int k = 0; k < 3; k++)
+        {
+            const unsigned int vi = cpu.Index(fd.firstIndex + t * 3 + k);
+            if (vi >= cpu.vertexCount) return;
+            const GhostVertex& v = cpu.verts[vi];
+            p[k] = GhostVec3(v.x, v.y, v.z);
+            centroid = centroid + p[k];
+            cn++;
+        }
+        for (int k = 0; k < 3; k++) { e[n].a = p[k]; e[n].b = p[(k + 1) % 3]; e[n].dead = false; n++; }
+    }
+    for (int i = 0; i < n; i++)                                 // an edge used twice is inside the polygon
+        for (int j = i + 1; j < n; j++)
+            if ((NearP(e[i].a, e[j].a) && NearP(e[i].b, e[j].b)) || (NearP(e[i].a, e[j].b) && NearP(e[i].b, e[j].a)))
+                e[i].dead = e[j].dead = true;
+    centroid = centroid * (1.0f / (float)cn);
+
+    float byw;
+    const GhostMat4 M = GhostObjectModel(o, BillYaw(o, eye, byw));
+    const GhostVec3 wc = XformPoint(M, centroid, 1.0f);
+    const float cy[4] = { 0.25f, 0.95f, 0.95f, 1.0f };
+    int letter = 0;
+    for (int i = 0; i < n && letter < 26; i++)
+    {
+        if (e[i].dead) continue;
+        const GhostVec3 a = XformPoint(M, e[i].a, 1.0f), b = XformPoint(M, e[i].b, 1.0f);
+        g_ov.Line(a, b, cy, 2.5f, false);
+
+        const float len = (b - a).Length();
+        const GhostVec3 mid = (a + b) * 0.5f;
+        const GhostVec3 away = (mid - wc).Normalize() * fmaxf(len * 0.12f, 0.03f);
+        char ls[32], label[56];
+        FormatLength(len, ls, (int)sizeof ls);
+        snprintf(label, sizeof label, "%c  %s", 'A' + letter, ls);
+        g_ov.Label(mid + away, label, cy, 16.0f, 0.0f, 0.0f);
+        letter++;
+    }
+}
+
+static void DrawViewportOverlay(const GhostMat4& view, const GhostMat4& proj, const GhostVec3& eye,
+    unsigned int rw, unsigned int rh, bool editing)
+{
+    if (!g_pipeline) return;
+    g_ov.Begin(view, proj, rw, rh, &g_font);
+    const GhostViewSettings& s = g_viewCfg;
+
+    if (editing)
+    {
+        if (s.showGrid) OverlayGrid(eye);
+
+        const int sel = g_scene.selectedId;
+        if (sel != 0)
+        {
+            GhostObject* o = FindObject(sel);
+            if (s.showSelection)
+            {
+                if (o) OverlayBounds(*o, eye);
+                OverlayGizmo(sel, proj);
+            }
+            if (o && (s.showDims || s.tool == 4))
+            {
+                OverlayDims(*o, eye);
+                if (s.edgeLabels) OverlayFaceEdges(*o, eye);
+            }
+        }
+    }
+
+    if (s.showFps)
+    {
+        char t[48];
+        snprintf(t, sizeof t, "%.0f FPS   %.1f ms", g_fps, g_fps > 0.0f ? 1000.0f / g_fps : 0.0f);
+        const float col[4] = { g_fps >= 55.0f ? 0.45f : 1.0f, g_fps >= 30.0f ? 0.95f : 0.35f, 0.35f, 1.0f };
+        const float tw = GhostText_Measure(g_font, 18.0f, t);
+        g_ov.TextPx((float)rw - tw - 14.0f, 46.0f, 18.0f, t, col);
+    }
+
+    GhostOverlayBegin(g_pipeline);
+    GhostDrawOverlay(g_rhi, g_pipeline, g_ov.depth, 0, 0);
+    GhostDrawOverlay(g_rhi, g_pipeline, g_ov.top, 1, 0);
+    GhostDrawOverlay(g_rhi, g_pipeline, g_ov.text, 1, g_font.textureId);
+}
 
 
 // ============================================================
@@ -1240,6 +1520,8 @@ static void RenderViewport(int vp)
             DrawIcon(slot, 5, m.position, GhostVec3(0, 0, 1), kModColor, state, view, proj);   // cloud glyph
         }
     }
+
+    if (mainView && (overlays || g_viewCfg.showFps)) DrawViewportOverlay(view, proj, eye, rw, rh, overlays);
     // ---- 2D game UI: main view, while a game is running. Retained widgets first, then the game's immediate quads ----
     if (mainView && g_playState != GhostPlayState::Editing)
     {
@@ -1310,6 +1592,11 @@ void GhostEngine_Tick()
     QueryPerformanceCounter(&curr);
     float dt = (float)(curr.QuadPart - g_prev.QuadPart) / (float)g_freq.QuadPart;
     g_prev = curr;
+    if (dt > 1e-5f)
+    {
+        const float inst = 1.0f / dt;
+        g_fps = (g_fps <= 0.0f) ? inst : g_fps + (inst - g_fps) * 0.05f;
+    }
     // ---- Play mode: sample input, then run the fixed-timestep simulation ----
     g_input.Sample(g_inputEnabled && g_playState == GhostPlayState::Playing);
     if (g_playState == GhostPlayState::Playing)
@@ -3300,4 +3587,25 @@ int GhostEngine_TakeQuitRequest()
     const bool q = g_quitRequested;
     g_quitRequested = false;
     return q ? 1 : 0;
+}
+
+void GhostEngine_GetViewSettings(GhostViewSettings* out) { if (out) *out = g_viewCfg; }
+
+void GhostEngine_SetViewSettings(const GhostViewSettings* in)
+{
+    if (!in) return;
+    auto b = [](int v) { return v ? 1 : 0; };
+    auto ci = [](int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); };
+
+    GhostViewSettings s = *in;
+    s.showSelection = b(s.showSelection); s.showFps = b(s.showFps);
+    s.showGrid = b(s.showGrid);           s.showWorldAxes = b(s.showWorldAxes);
+    s.showDims = b(s.showDims);           s.edgeLabels = b(s.edgeLabels);
+    s.dimAxes = ci(s.dimAxes, 0, 7);
+    s.gridPlane = ci(s.gridPlane, 0, 2);  s.gridStyle = ci(s.gridStyle, 0, 1);
+    s.gridSize = (s.gridSize != s.gridSize) ? 1.0f : (s.gridSize < 0.01f ? 0.01f : (s.gridSize > 100.0f ? 100.0f : s.gridSize));
+    s.gridExtent = ci(s.gridExtent, 4, 100);
+    s.tool = ci(s.tool, 0, 4);            s.space = ci(s.space, 0, 1);
+    s.unit = ci(s.unit, 0, 4);            s.decimals = ci(s.decimals, 0, 3);
+    g_viewCfg = s;
 }

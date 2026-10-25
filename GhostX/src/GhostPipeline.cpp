@@ -604,6 +604,45 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
     }
     D3D12_RANGE uiRange = { 0, 0 };
     p->uiVB->Map(0, &uiRange, &p->uiMapped);
+
+    // ---- Overlay PSOs: float3 position, so grid lines can be depth tested ----
+    ComPtr<ID3DBlob> ovs;
+    if (CompileShaderFromFile(ShaderPath(L"GhostVS.hlsl").c_str(), "OverlayVS", "vs_5_0", &ovs) != GHOST_OK)
+    {
+        delete p; return GHOST_FAIL;
+    }
+    D3D12_INPUT_ELEMENT_DESC ovLayout[] =
+    {
+        { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT,    0,  0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,       0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "COLOR",    0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 20, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+    };
+
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC ovTop = uiDesc;               // alpha blended, no depth, pixel shader UIPS
+    ovTop.VS = { ovs->GetBufferPointer(), ovs->GetBufferSize() };
+    ovTop.InputLayout = { ovLayout, 3 };
+    if (FAILED(device->CreateGraphicsPipelineState(&ovTop, IID_PPV_ARGS(&p->overlayTopPso))))
+    {
+        delete p; return GHOST_FAIL;
+    }
+
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC ovDepth = ovTop;
+    ovDepth.DepthStencilState.DepthEnable = TRUE;
+    ovDepth.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+    ovDepth.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+    if (FAILED(device->CreateGraphicsPipelineState(&ovDepth, IID_PPV_ARGS(&p->overlayDepthPso))))
+    {
+        delete p; return GHOST_FAIL;
+    }
+
+    if (CreateUploadBuffer(device, sizeof(GhostOverlayVertex) * GHOST_OVERLAY_MAX_VERTS, &p->ovVB) != GHOST_OK)
+    {
+        delete p; return GHOST_FAIL;
+    }
+    D3D12_RANGE ovRange = { 0, 0 };
+    p->ovVB->Map(0, &ovRange, &p->ovMapped);
+
+
     // ---- Sky PSO: full-screen triangle, alpha blended, no depth ----
     ComPtr<ID3DBlob> svs, sps;
     if (CompileShaderFromFile(ShaderPath(L"GhostVS.hlsl").c_str(), "SkyVS", "vs_5_0", &svs) != GHOST_OK ||
@@ -1008,6 +1047,8 @@ void GhostPipelineDestroy(GhostPipeline* pipeline)
         pipeline->uiVB->Unmap(0, nullptr);
     if (pipeline->shadowCBMapped)
         pipeline->shadowCB->Unmap(0, nullptr);
+    if (pipeline->ovMapped)
+        pipeline->ovVB->Unmap(0, nullptr);
     delete pipeline;
 }
 
@@ -1326,4 +1367,47 @@ void GhostShadowEnd(IGhostRHI* rhi, GhostPipeline* p, unsigned int w, unsigned i
     D3D12_RECT sc = { 0, 0, (LONG)w, (LONG)h };
     cmd->RSSetViewports(1, &vp);
     cmd->RSSetScissorRects(1, &sc);
+}
+
+
+void GhostOverlayBegin(GhostPipeline* p) { p->ovCursor = 0; }
+
+void GhostDrawOverlay(IGhostRHI* rhi, GhostPipeline* p, const std::vector<GhostOverlayVertex>& v, int mode, int textureId)
+{
+    if (v.empty() || !p->ovMapped || !p->overlayTopPso) return;
+    size_t n = v.size() - v.size() % 3;
+    if ((size_t)p->ovCursor + n > GHOST_OVERLAY_MAX_VERTS)
+    {
+        n = GHOST_OVERLAY_MAX_VERTS - p->ovCursor;
+        n -= n % 3;
+    }
+    if (n == 0) return;
+
+    GhostOverlayVertex* dst = (GhostOverlayVertex*)p->ovMapped + p->ovCursor;
+    memcpy(dst, v.data(), n * sizeof(GhostOverlayVertex));
+
+    auto* cmd = rhi->GetCmdList();
+    ID3D12DescriptorHeap* heaps[] = { p->cbvHeap.Get() };
+    cmd->SetDescriptorHeaps(1, heaps);
+    cmd->SetPipelineState(mode == 0 ? p->overlayDepthPso.Get() : p->overlayTopPso.Get());
+    cmd->SetGraphicsRootSignature(p->rootSignature.Get());
+    BindShadowTable(cmd, p);
+    cmd->SetGraphicsRootConstantBufferView(0, p->constantBuffer->GetGPUVirtualAddress());
+    cmd->SetGraphicsRootConstantBufferView(1, p->sceneBuffer->GetGPUVirtualAddress());
+
+    unsigned int ti = (textureId >= 0 && (unsigned int)textureId < p->textureCount) ? (unsigned int)textureId : 0;
+    D3D12_GPU_DESCRIPTOR_HANDLE srv = p->cbvHeap->GetGPUDescriptorHandleForHeapStart();
+    srv.ptr += (UINT64)ti * p->srvIncrement;
+    cmd->SetGraphicsRootDescriptorTable(2, srv);
+
+    D3D12_CPU_DESCRIPTOR_HANDLE rtv = p->rtvOverrideActive ? p->rtvOverride : rhi->GetRTV();
+    D3D12_CPU_DESCRIPTOR_HANDLE dsv = GhostGetDSV(p, rhi->GetCurrentSurface());
+    cmd->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
+
+    D3D12_VERTEX_BUFFER_VIEW vbv = { p->ovVB->GetGPUVirtualAddress() + (UINT64)p->ovCursor * sizeof(GhostOverlayVertex),
+                                     (UINT)(n * sizeof(GhostOverlayVertex)), sizeof(GhostOverlayVertex) };
+    cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    cmd->IASetVertexBuffers(0, 1, &vbv);
+    cmd->DrawInstanced((UINT)n, 1, 0, 0);
+    p->ovCursor += (unsigned int)n;
 }
