@@ -18,6 +18,7 @@
 ![HTML5](https://img.shields.io/badge/HTML5-E34F26?logo=html5&logoColor=white)
 ![CSS3](https://img.shields.io/badge/CSS3-1572B6?logo=css3&logoColor=white)
 ![HLSL](https://img.shields.io/badge/HLSL-5C2D91?logoColor=white)
+![MS-DOS](https://img.shields.io/badge/Platform-MS--DOS-black)
 <img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/cec25a8f-66a0-46a4-8217-a65bb15e44a8" />
 
 
