@@ -20,6 +20,9 @@
 ![CSS3](https://img.shields.io/badge/CSS3-1572B6?logo=css3&logoColor=white)
 ![HLSL](https://img.shields.io/badge/HLSL-5C2D91?logoColor=white)
 ![MS-DOS](https://img.shields.io/badge/Platform-MS--DOS-black)
+![Visual Studio](https://img.shields.io/badge/IDE-Visual%20Studio-5C2D91?style=flat-square&logo=visualstudio&logoColor=white)
+![Blender](https://img.shields.io/badge/3D-Blender-F5792A?style=flat-square&logo=blender&logoColor=white)
+![GIMP](https://img.shields.io/badge/Graphics-GIMP-5C5543?style=flat-square&logo=gimp&logoColor=white)
 <img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/cec25a8f-66a0-46a4-8217-a65bb15e44a8" />
 
 
