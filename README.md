@@ -31,7 +31,8 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - **If you use this app and the Dock Suite Doesn't show correctly Please delete the XML file in %LocalAppData%\GhostX and your app will run correctly.**
 - **When importing FBX meshes please set Largest Side fit to 2 for default normal scaled import.**
 ## Development:
-- (In Testing)**Does generate Pacakged Folder with exe**
+- (Test Phase 12.C.)**Works in Play Mode For two Level Game**
+- (Test Phase 12.D.)**Does generate Packaged Folder with exe**
 - **Does Not Have Standalone Install Shield Wizard Setup Package Yet**
 - **Does Not Have Standalone Install Wizard for Built Games only Generate Files.**
 ---
