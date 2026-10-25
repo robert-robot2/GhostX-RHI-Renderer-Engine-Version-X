@@ -48,8 +48,12 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - 🖱️ **Click, drag and drop:** select, move and spawn everything in the viewport
 - 🔗 **Native/managed bridge:** a C++ engine DLL driven from C# through P/Invoke
 - 🌐 **Blazor WASM UI (experimental):** an optional web UI hosted in WebView2
+
+## Capacity
 - **One million vertices Scene Limit**
 - **64 Mesh Max Cap per Scene Limit**
+## Requirements
+-
 ---
 ## Roadmap
 - **Featured/Assimilated**
