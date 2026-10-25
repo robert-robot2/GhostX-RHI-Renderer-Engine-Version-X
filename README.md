@@ -18,8 +18,8 @@
 ![HTML5](https://img.shields.io/badge/HTML5-E34F26?logo=html5&logoColor=white)
 ![CSS3](https://img.shields.io/badge/CSS3-1572B6?logo=css3&logoColor=white)
 ![HLSL](https://img.shields.io/badge/HLSL-5C2D91?logoColor=white)
-<img width="1920" height="1080" alt="Screenshot 2026-10-13 022109" src="https://github.com/user-attachments/assets/5eae52c7-5924-4e51-b141-df4295c34245" />
-<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/541c4975-bb92-4538-9c3c-0df61e4e67e1" />
+<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/89f610d6-669c-4d84-baec-a7edad35313e" />
+
 
 
 </div>
