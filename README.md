@@ -85,11 +85,12 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - **Pending**
 - [ ] Phase : Multi Ext Mesh import gltf, obj etc.. textures, normal/specular maps, shadows, PBR materials
 - [ ] Phase : Spot Light / Ray Casting / Global Illumination / Bloom / Subsurface Scattering
-- [ ] Phase : Per Instance Shadows
+- [ ] Phase : Shadows/ Directional Light
 - [ ] Phase : All camera types and features
 - [ ] Phase : Antialiasing and options menu
 - [ ] Phase : MetaHuman 
-- [ ] Phase : Tile Map 
+- [ ] Phase : Tile Map
+- [ ] Phase : Shadows/ Tile Map
 - [ ] Phase : Audio
 - [ ] Phase : AutoCad Mesh Integration .step import
 - [ ] Phase : Animation Editor/ Bone Hierarchy Editor
