@@ -96,15 +96,16 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [x] Phase 15.B: Max Caps Per scene Increased
 - [X] Phase 12.C: Level 1 Build and Test Play / Instructions/ ASSIMILIATION SUCCESSFUL....
 - **Active Core**
-- [ ] Phase 13.D: A CAD-style set of annotation tools on top of the blueprint grid.
 - [ ] Phase 12.E: Add UI For PlayTest On Level 1, HUD, enemies, roles, Collision, Camera, Animation States???
+- [ ] Phase 12.D: Test: Level 2 Build And Test Play Packaged Exe / Instructions/ Scene Switching
+- **Active SubCore**
+- [ ] Phase 13.D: A CAD-style set of annotation tools on top of the blueprint grid.
+- [ ] Phase 16: Advanced Pre-Built Primitives List
 - [ ] Phase 15.C: Advanced Object Roles
 - [ ] Phase 15.D: Skysphere add full Display without horizon cutoff toggle 
 - [ ] Phase 15.E: Idle move left move right, since its billboard well reuse move right and up and down dont trigger animation only left and right with up and down key press, and space for jump
-- **Active SubCore**
-- [ ] Phase 16: Advanced Pre-Built Primitives List
 - **Testing/Game**
-- [ ] Phase 12.D: Test: Level 2 Build And Test Play Packaged Exe / Instructions/ Scene Switching
+- [ ] Phase : Pending Tests
 - **DEBUG/ERRORS**
 - [ ] Phase Errors: Docking Suite Debug Needs reset/ delete xml layout but why?
 - [ ] Phase Errors: AnyCPU cannot find DLL in Debug
