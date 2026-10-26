@@ -80,11 +80,11 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [x] Phase 12.B: Pre-Building Prep, The standalone exe
 - [x] Phase 13.A: Viewport tools, grid, gizmos and dimensions
 - [x] Phase 13.B: Drag gizmos (translate, rotate, scale), axis constraints, grid snapping.
+- [x] Phase 14: Viewport Added to Window DropDown In Case Docking Suite Fails
 - **Active Core**
 - [ ] Phase 13.C: click a dimension to type a new size, edge selection, units in Details.
 - [ ] Phase 13.D: a CAD-style set of annotation tools on top of the blueprint grid.
 - **Active SubCore**
-- [ ] Phase : Add All Editors Windows Popups to Be able to Reshow if Closed or malfunctioning to docking Suite and Dropdown Windows Selection/ Check Viewport
 - **Testing/Game**
 - [ ] Phase 12.C: Level 1 Build and Test Play / Instructions
 - [ ] Phase 12.D: Level 2 Build And Test Play Packaged Exe / Instructions
@@ -99,6 +99,7 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [ ] Phase : Live Updates
 - [ ] Phase : RHI Vulkan Backend
 - **Pending**
+- [ ] Phase : Check All Editor Windows/ Move To window Palette/ Add DropDowns
 - [ ] Phase : Full Primitives List
 - [ ] Phase : Multi Ext Mesh import gltf, obj etc.. textures, normal/specular maps, shadows
 - [ ] Phase : Spot Light / Ray Casting / Global Illumination / Bloom / Subsurface Scattering
