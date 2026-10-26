@@ -47,10 +47,8 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - **Does Not Have Standalone Install Shield Wizard Setup Package Yet**
 - **Does Not Have Standalone Install Wizard for Built Games only Generate Files.**
 ---
-## Long Awaited Test Phase Results:
--Projects Not saving
--Drop and Drag Crashing
--I need a Plane!
+## Erros:
+-**Projects Are throwing object not found, Cannot load create new project correctly yet. drop and drag may thrown object not found**
 
 
 ## Features
@@ -93,12 +91,19 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [x] Phase 13.B: Drag gizmos (translate, rotate, scale), axis constraints, grid snapping.
 - [x] Phase 13.C: Click a dimension to type a new size, edge selection, units in Details.
 - [x] Phase 14: Viewport Added to Window Dropdown if Docking Suite Fails/ Added Post Build Event GhostGame.dll copy to X64 Release Folder
+- [x] Phase 15: Test/ Fix/ Add/ Quality Control 
+- [x] Phase 15.A: Trace Stack Error For New Project open Project/ Requires Furrther Debugging
+- [x] Phase 15.B: Max Caps Per scene Increased
+- [x] Phase 15.C: Advanced Object Roles
+- [X] Phase 12.C: Level 1 Build and Test Play / Instructions/ ASSIMILIATION SUCCESSFUL....
 - **Active Core**
 - [ ] Phase 13.D: A CAD-style set of annotation tools on top of the blueprint grid.
+- [ ] Phase 12.E: Add UI For PlayTest On Level 1
+- [ ] Phase 15.D: Skysphere add full Display without horizon cutoff toggle 
+- [ ] Phase 15.E: Idle move left move right, since its billboard well reuse move right and up and down dont trigger animation only left and right with up and down key press, and space for jump
 - **Active SubCore**
-- [ ] Phase 15: Advanced Pre-Built Primitives List
+- [ ] Phase 16: Advanced Pre-Built Primitives List
 - **Testing/Game**
-- [ ] Phase 12.C: Level 1 Build and Test Play / Instructions
 - [ ] Phase 12.D: Level 2 Build And Test Play Packaged Exe / Instructions
 - **DEBUG/ERRORS**
 - [ ] Phase Errors: Docking Suite Debug Needs reset/ delete xml layout but why?
@@ -111,6 +116,7 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [ ] Phase : Live Updates
 - [ ] Phase : RHI Vulkan Backend
 - **Pending**
+- [ ] Phase : Fix Projects from 15.A
 - [ ] Phase : Check All Editor Windows/ Move To window Palette/ Add DropDowns
 - [ ] Phase : Player Controls Editor
 - [ ] Phase : Advanced Object Roles/ Chaos
