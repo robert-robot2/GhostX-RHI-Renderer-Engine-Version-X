@@ -12,8 +12,8 @@ static float g_spin = 0.0f;
 
 static void Snapshot(const char* tag, std::vector<int>* idsOut)
 {
-    int ids[256];
-    int n = G->FindAllByTag(tag, ids, 256);
+    int ids[512];
+    int n = G->FindAllByTag(tag, ids, 512);
     for (int i = 0; i < n; i++)
     {
         Saved s = {};

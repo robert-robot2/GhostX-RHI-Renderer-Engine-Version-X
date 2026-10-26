@@ -44,6 +44,9 @@ namespace GhostShell
         public event EventHandler? OnReimportModel;
         public event EventHandler? OnReimportModelSettings;
         public event EventHandler? OnPackageProject;
+        public event EventHandler? OnSaveProject;
+        public event EventHandler? OnSaveProjectAs;
+        public event EventHandler? OnSetStartScene;
 
         private ToolStripMenuItem _recentMenu = null!;
 
@@ -75,6 +78,12 @@ namespace GhostShell
             saveScene.ShortcutKeys = Keys.Control | Keys.S;
             var saveSceneAs = MakeItem("Save Scene As...", (s, e) => OnSaveSceneAs?.Invoke(s, e));
             saveSceneAs.ShortcutKeys = Keys.Control | Keys.Shift | Keys.S;
+            fileMenu.DropDownItems.Add(new ToolStripSeparator());
+            var saveProject = MakeItem("Save Project", (s, e) => OnSaveProject?.Invoke(s, e));
+            saveProject.ShortcutKeys = Keys.Control | Keys.Alt | Keys.S;
+            fileMenu.DropDownItems.Add(saveProject);
+            fileMenu.DropDownItems.Add(MakeItem("Save Project As...", (s, e) => OnSaveProjectAs?.Invoke(s, e)));
+            fileMenu.DropDownItems.Add(MakeItem("Set Current Scene as Start Scene", (s, e) => OnSetStartScene?.Invoke(s, e)));
             var newProject = MakeItem("New Project...", (s, e) => OnNewProject?.Invoke(s, e));
             newProject.ShortcutKeys = Keys.Control | Keys.Shift | Keys.N;
             var openProject = MakeItem("Open Project...", (s, e) => OnOpenProject?.Invoke(s, e));

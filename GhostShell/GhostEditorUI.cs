@@ -228,7 +228,7 @@ namespace GhostShell
         public static List<(int id, string name)> Of(int kind)
         {
             var list = new List<(int, string)>();
-            var buf = new GhostEntityInfo[512];
+            var buf = new GhostEntityInfo[1024];
             int n = GhostEngine.GhostEngine_GetEntities(buf, buf.Length);
             for (int i = 0; i < n; i++)
                 if (buf[i].kind == kind) list.Add((buf[i].id, GhostNames.Of(buf[i].id)));
@@ -1703,7 +1703,7 @@ namespace GhostShell
             _settingsNode = new TreeNode("Scene Settings") { Tag = 0, ForeColor = Fg };
             _tree.Nodes.Add(_settingsNode);
 
-            var buf = new GhostEntityInfo[512];
+            var buf = new GhostEntityInfo[1024];
             int n = GhostEngine.GhostEngine_GetEntities(buf, buf.Length);
             int activeCam = GhostEngine.GhostEngine_GetActiveCamera();
             for (int i = 0; i < n; i++)

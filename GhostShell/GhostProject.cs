@@ -108,5 +108,22 @@ namespace GhostShell
             File.Copy(full, dest);
             return dest;
         }
+
+        public static void SaveManifest()
+        {
+            if (Current == null || ManifestPath == null) return;
+            string tmp = ManifestPath + ".tmp";
+            File.WriteAllText(tmp, JsonSerializer.Serialize(Current, Pretty));
+            File.Move(tmp, ManifestPath, true);
+        }
+
+        // "Scenes/Level1.ghostscene" for a file inside the project, null for a file outside it
+        public static string? RelativeToRoot(string path)
+        {
+            if (Root == null) return null;
+            string rel = Path.GetRelativePath(Root, Path.GetFullPath(path));
+            return (rel.StartsWith("..") || Path.IsPathRooted(rel)) ? null : rel.Replace('\\', '/');
+        }
+
     }
 }

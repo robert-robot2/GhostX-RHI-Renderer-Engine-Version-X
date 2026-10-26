@@ -192,7 +192,9 @@ namespace GhostShell
             _menuBuilder.OnGameModuleInfo += (s, e) => GhostPlay.ShowModuleInfo(this);
             _menuBuilder.OnReloadAnimations += (s, e) => GhostEngine.GhostEngine_ReloadAnimations();
             _menuBuilder.OnCreateTestSprite += (s, e) => GhostTestSprite.Create(this);
-
+            _menuBuilder.OnSaveProject += (s, e) => GhostProjectFlow.SaveProject(this);
+            _menuBuilder.OnSaveProjectAs += (s, e) => GhostProjectFlow.SaveProjectAs(this);
+            _menuBuilder.OnSetStartScene += (s, e) => GhostProjectFlow.SetStartScene(this);
             // Title bar: scene name, with * when there are unsaved changes
 
             var titleTimer = new System.Windows.Forms.Timer { Interval = 200 };

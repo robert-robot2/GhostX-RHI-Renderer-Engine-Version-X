@@ -61,12 +61,12 @@ struct GhostSceneCB                 // matches cbuffer SceneBuffer (b1)
 constexpr unsigned long long GHOST_SCENE_CB_SIZE = (sizeof(GhostSceneCB) + 255) & ~255ULL;
 
 
-constexpr unsigned int       GHOST_MAX_OBJECTS = 1024;
+constexpr unsigned int       GHOST_MAX_OBJECTS = 2048;          // was 1024: draw slots
 constexpr unsigned long long GHOST_OBJECT_CB_STRIDE = 768;     // room for the Section B material block
 static_assert(sizeof(GhostObjectCB) <= GHOST_OBJECT_CB_STRIDE, "GhostObjectCB too large");
 
 constexpr unsigned int       GHOST_MAX_TEXTURES = 256;
-constexpr unsigned int GHOST_MAX_SHADOW_CASTERS = 256;
+constexpr unsigned int GHOST_MAX_SHADOW_CASTERS = 512;          // was 256: this is also the object limit
 constexpr unsigned int GHOST_SHADOW_SRV_INDEX = GHOST_MAX_TEXTURES + GHOST_MAX_SURFACES;   // last slot of the SRV heap
 
 struct GhostMesh

@@ -108,10 +108,16 @@ namespace GhostShell
                 { MessageBox.Show(this, err, "New Project", MessageBoxButtons.OK, MessageBoxIcon.Information); return; }
                 DialogResult = DialogResult.OK;
             };
+
             Controls.Add(ok); Controls.Add(cancel);
             AcceptButton = ok; CancelButton = cancel;
         }
-
+        public void SaveAsMode()
+        {
+            Text = "Save Project As";
+            _templates.Visible = false; _info.Visible = false;
+            foreach (Control c in Controls) if (c is Label l && l.Text == "Template") l.Visible = false;
+        }
         private Label Lbl(string text, int x, int y) =>
             new Label { Text = text, Location = new Point(x, y), AutoSize = true, ForeColor = Fg };
 
@@ -152,7 +158,7 @@ namespace GhostShell
             }
             catch (Exception ex)
             {
-                MessageBox.Show(owner, ex.Message, "New Project failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show(owner, ex.ToString(), "New Project failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
         }
 
@@ -251,6 +257,125 @@ namespace GhostShell
             }
             catch { }
             return null;
+        }
+
+
+        // Saves the open scene and the project file. With no project open it becomes Save Project As.
+        public static bool SaveProject(IWin32Window owner)
+        {
+            if (!GhostProject.IsOpen) return SaveProjectAs(owner);
+            try
+            {
+                if (GhostSceneFile.CurrentPath == null) { if (!GhostSceneFile.SaveAs(owner)) return false; }
+                else if (!GhostSceneFile.Save(GhostSceneFile.CurrentPath)) return false;
+
+                // a project with no valid start scene takes the one you just saved
+                string? rel = GhostSceneFile.CurrentPath == null ? null : GhostProject.RelativeToRoot(GhostSceneFile.CurrentPath);
+                string start = GhostProject.Current!.StartScene ?? "";
+                if (rel != null && (start.Length == 0 || !File.Exists(Path.Combine(GhostProject.Root!, start))))
+                    GhostProject.Current.StartScene = rel;
+                GhostProject.SaveManifest();
+                return true;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(owner, ex.ToString(), "Save Project failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return false;
+            }
+        }
+
+        private static void CopyFolder(string src, string dst)
+        {
+            Directory.CreateDirectory(dst);
+            foreach (string f in Directory.GetFiles(src))
+                if (!f.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase))
+                    File.Copy(f, Path.Combine(dst, Path.GetFileName(f)), true);
+            foreach (string d in Directory.GetDirectories(src))
+            {
+                string n = Path.GetFileName(d);
+                if (n.Equals("Build", StringComparison.OrdinalIgnoreCase) || n.Equals(".vs", StringComparison.OrdinalIgnoreCase) ||
+                    n.Equals(".git", StringComparison.OrdinalIgnoreCase)) continue;
+                CopyFolder(d, Path.Combine(dst, n));
+            }
+        }
+
+        // No project open: the open scene becomes the first scene of a new project.
+        // A project open: the whole project folder is copied, and the copy is opened.
+        public static bool SaveProjectAs(IWin32Window owner)
+        {
+            if (GhostPlay.State != 0)
+            {
+                MessageBox.Show(owner, "Stop playing first.", "Save Project As", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return false;
+            }
+            using var dlg = new NewProjectDialog();
+            dlg.SaveAsMode();
+            if (dlg.ShowDialog(owner) != DialogResult.OK) return false;
+            string name = dlg.ProjectName, parent = dlg.ParentFolder;
+
+            try
+            {
+                if (!GhostProject.IsOpen)
+                {
+                    string manifest = GhostProject.Create(name, parent);
+                    GhostSettings.Data.LastProjectFolder = parent;
+                    GhostSettings.Save();
+                    if (!GhostProject.Open(manifest, out string err))
+                    { MessageBox.Show(owner, err, "Save Project As failed", MessageBoxButtons.OK, MessageBoxIcon.Warning); return false; }
+                    if (!GhostSceneFile.Save(Path.Combine(GhostProject.ScenesDir!, "Main.ghostscene"))) return false;
+                    GhostProject.Current!.StartScene = "Scenes/Main.ghostscene";
+                    GhostProject.SaveManifest();
+                    return true;
+                }
+
+                if (!SaveProject(owner)) return false;                       // the copy is made from the saved files
+                string srcRoot = GhostProject.Root!.TrimEnd('\\');
+                string dest = Path.Combine(parent, name);
+                if ((dest + "\\").StartsWith(srcRoot + "\\", StringComparison.OrdinalIgnoreCase))
+                {
+                    MessageBox.Show(owner, "A project can't be saved inside itself. Choose another location.", "Save Project As",
+                        MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return false;
+                }
+                string? curRel = GhostSceneFile.CurrentPath == null ? null : GhostProject.RelativeToRoot(GhostSceneFile.CurrentPath);
+                string oldName = Path.GetFileName(GhostProject.ManifestPath!);
+
+                CopyFolder(srcRoot, dest);
+                string newManifest = Path.Combine(dest, name + GhostProject.Extension);
+                File.Move(Path.Combine(dest, oldName), newManifest, true);
+
+                if (!GhostProject.Open(newManifest, out string err2))
+                { MessageBox.Show(owner, err2, "Save Project As failed", MessageBoxButtons.OK, MessageBoxIcon.Warning); return false; }
+                GhostProject.Current!.Name = name;
+                GhostProject.SaveManifest();
+                GhostSettings.Data.LastProjectFolder = parent;
+                GhostSettings.Save();
+
+                string scene = curRel == null ? "" : Path.Combine(dest, curRel);
+                if (scene.Length > 0 && File.Exists(scene)) GhostSceneFile.Open(scene);   // reloaded from the copy, so textures point into it
+                else GhostSceneFile.New();
+                return true;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(owner, ex.ToString(), "Save Project As failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return false;
+            }
+        }
+
+        public static void SetStartScene(IWin32Window owner)
+        {
+            string? rel = (GhostProject.IsOpen && GhostSceneFile.CurrentPath != null)
+                ? GhostProject.RelativeToRoot(GhostSceneFile.CurrentPath) : null;
+            if (rel == null)
+            {
+                MessageBox.Show(owner, "Save the scene inside the project's Scenes folder first.", "Start scene",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            GhostProject.Current!.StartScene = rel;
+            GhostProject.SaveManifest();
+            MessageBox.Show(owner, "The packaged game now starts at " + rel, "Start scene", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
     }
 }

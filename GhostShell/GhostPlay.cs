@@ -66,11 +66,19 @@ namespace GhostShell
         {
             if (!GhostProject.IsOpen)
             {
-                MessageBox.Show(owner, "Open or create a project first.", "Play Standalone",
-                    MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
+                var r = MessageBox.Show(owner, "Standalone play needs a project. Save the current scene as a project now?",
+                    "Play Standalone", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+                if (r != DialogResult.Yes || !GhostProjectFlow.SaveProjectAs(owner)) return;
             }
             if (!GhostSceneFile.ConfirmDiscard(owner)) return;      // offers to save, so the player sees your latest edits
+
+            string? rel = GhostSceneFile.CurrentPath == null ? null : GhostProject.RelativeToRoot(GhostSceneFile.CurrentPath);
+            if (rel == null)
+            {
+                MessageBox.Show(owner, "Save the scene inside the project's Scenes folder first (File > Save Scene As).",
+                    "Play Standalone", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
 
             string? exe = Environment.ProcessPath;
             if (exe == null) return;
@@ -79,6 +87,8 @@ namespace GhostShell
                 var psi = new ProcessStartInfo(exe) { UseShellExecute = false };
                 psi.ArgumentList.Add("--play");
                 psi.ArgumentList.Add(GhostProject.ManifestPath!);
+                psi.ArgumentList.Add("--scene");
+                psi.ArgumentList.Add(rel);
                 Process.Start(psi);
             }
             catch (Exception ex)
@@ -94,11 +104,14 @@ namespace GhostShell
         public static bool IsPlayer { get; private set; }
         public static string? ProjectPath { get; private set; }
 
+        public static string? SceneOverride { get; private set; }
+
         public static void ParseArgs(string[] args)
         {
             for (int i = 0; i + 1 < args.Length; i++)
-                if (args[i].Equals("--play", StringComparison.OrdinalIgnoreCase))
+                if (args[i].Equals("--scene", StringComparison.OrdinalIgnoreCase)) 
                 {
+                    SceneOverride = args[i + 1];
                     IsPlayer = true;
                     ProjectPath = Path.GetFullPath(args[i + 1]);
                     return;
@@ -117,6 +130,7 @@ namespace GhostShell
         // Opens the project, loads its start scene and starts playing. false = failed (the window is closing).
         public static bool Launch(Form form)
         {
+
             string path = ProjectPath ?? "";
             string? error = null;
 
@@ -133,7 +147,7 @@ namespace GhostShell
                 }
                 else
                 {
-                    string start = GhostProject.Current!.StartScene;
+                    string start = SceneOverride ?? GhostProject.Current!.StartScene;
                     string scene = start.Length > 0 ? Path.Combine(GhostProject.Root!, start) : "";
                     if (!File.Exists(scene)) error = $"The start scene was not found:\n{scene}";
                     else if (!GhostSceneFile.Open(scene)) { form.Close(); return false; }   // Open already explained why
