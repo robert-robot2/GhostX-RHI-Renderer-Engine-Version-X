@@ -94,11 +94,11 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [x] Phase 15: Test/ Fix/ Add/ Quality Control 
 - [x] Phase 15.A: Trace Stack Error For New Project open Project/ Requires Furrther Debugging
 - [x] Phase 15.B: Max Caps Per scene Increased
-- [x] Phase 15.C: Advanced Object Roles
 - [X] Phase 12.C: Level 1 Build and Test Play / Instructions/ ASSIMILIATION SUCCESSFUL....
 - **Active Core**
 - [ ] Phase 13.D: A CAD-style set of annotation tools on top of the blueprint grid.
 - [ ] Phase 12.E: Add UI For PlayTest On Level 1, HUD, enemies, roles, Collision, Camera, Animation States???
+- [ ] Phase 15.C: Advanced Object Roles
 - [ ] Phase 15.D: Skysphere add full Display without horizon cutoff toggle 
 - [ ] Phase 15.E: Idle move left move right, since its billboard well reuse move right and up and down dont trigger animation only left and right with up and down key press, and space for jump
 - **Active SubCore**
@@ -117,8 +117,9 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [ ] Phase : RHI Vulkan Backend
 - **Pending**
 - [ ] Phase : Fix Projects from 15.A
-- [ ] Phase : Check All Editor Windows/ Move To window Palette/ Add DropDowns
+- [ ] Phase : Sprite Animation State Editor
 - [ ] Phase : Player Controls Editor
+- [ ] Phase : Check All Editor Windows/ Move To window Palette/ Add DropDowns
 - [ ] Phase : Audio
 - [ ] Phase : Advanced Object Roles/ Chaos
 - [ ] Phase : Multi Ext Mesh import gltf, obj etc.. textures, normal/specular maps, shadows
