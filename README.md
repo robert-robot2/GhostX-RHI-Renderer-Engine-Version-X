@@ -76,9 +76,9 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [x] Phase 11.A: FBX Imports as Default Color Import. Must Be Set to 2 For Sit Largest Side TO Default for Default Import(2 should be the auto default not 0?)
 - [x] Phase 11.B: Saving models, the Models palette and Content Browser tiles.
 - [x] Phase 11.C: Materials, collider fit, re-import.
-- [x] Phase 12 A: Pre-Building Prep, Scene switching 
-- [x] Phase 12 B: Pre-Building Prep, The standalone exe
-- [x] Phase 13 A: Viewport tools, grid, gizmos and dimensions
+- [x] Phase 12.A: Pre-Building Prep, Scene switching 
+- [x] Phase 12.B: Pre-Building Prep, The standalone exe
+- [x] Phase 13.A: Viewport tools, grid, gizmos and dimensions
 - [x] Phase 13.B: Drag gizmos (translate, rotate, scale), axis constraints, grid snapping.
 - **Active Core**
 - [ ] Phase 13.C: click a dimension to type a new size, edge selection, units in Details.
@@ -86,8 +86,8 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - **Active SubCore**
 - [ ] Phase : Add All Editors Windows Popups to Be able to Reshow if Closed or malfunctioning to docking Suite and Dropdown Windows Selection/ Check Viewport
 - **Testing/Game**
-- [ ] Phase 12 C: Level 1 Build and Test Play / Instructions
-- [ ] Phase 12 D: Level 2 Build And Test Play Packaged Exe / Instructions
+- [ ] Phase 12.C: Level 1 Build and Test Play / Instructions
+- [ ] Phase 12.D: Level 2 Build And Test Play Packaged Exe / Instructions
 - **DEBUG/ERRORS**
 - [ ] Phase Errors: Docking Suite Debug Needs reset/ delete xml layout but why?
 - [ ] Phase Errors: AnyCPU cannot find DLL in Debug
