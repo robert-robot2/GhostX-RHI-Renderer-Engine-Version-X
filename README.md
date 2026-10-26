@@ -123,6 +123,7 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [ ] Phase : Gamepad
 - [ ] Phase : Check All Editor Windows/ Move To window Palette/ Add DropDowns
 - [ ] Phase : Audio
+- [ ] Phase : Vertical Sync, Rendering Polish
 - [ ] Phase : Expert Object Roles/ Chaos
 - [ ] Phase : Multi Ext Mesh import gltf, obj etc.. textures, normal/specular maps, shadows
 - [ ] Phase : Spot Light / Ray Casting / Global Illumination / Bloom / Subsurface Scattering
