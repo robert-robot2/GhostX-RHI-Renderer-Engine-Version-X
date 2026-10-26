@@ -92,7 +92,7 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [x] Phase 13.C: Click a dimension to type a new size, edge selection, units in Details.
 - [x] Phase 14: Viewport Added to Window Dropdown if Docking Suite Fails/ Added Post Build Event GhostGame.dll copy to X64 Release Folder
 - [x] Phase 15: Test/ Fix/ Add/ Quality Control 
-- [x] Phase 15.A: Trace Stack Error For New Project open Project/ Requires Furrther Debugging
+- [x] Phase 15.A: Added Save as, Save, Set Startup Scene/Trace Stack Error For New Project open Project/ Requires Furrther Debugging
 - [x] Phase 15.B: Max Caps Per scene Increased / Play Calls Scene
 - [X] Phase 12.C: Level 1 Build and Test Play / Instructions/ ASSIMILIATION SUCCESSFUL....
 - **Active Core**
