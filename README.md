@@ -112,7 +112,8 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [ ] Phase : Particle Manager
 - [ ] Phase : Full Mesh Editor/ Sculpting/Animation/Texture Painting
 - [ ] Phase : Packaged Updater
-- [ ] Phase : Interactive Blazor WASM Ghost UI Documentation/Download/Sote/Mod/Updates
+- [ ] Phase : Multiple RHI Backends Mods
+- [ ] Phase : Interactive Blazor WASM Ghost UI Documentation/Download/Store/Mod/Updates
 - [ ] Phase : Live Download Patcher From Interactive Blazor UI instead of Store in Launcher Store is Now inside App UI.
 - [ ] Phase : Easy Mod Download Library from Blazor UI Dashboard
 - [ ] Phase : To be added, Experimental
