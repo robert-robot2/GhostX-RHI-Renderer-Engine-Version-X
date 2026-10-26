@@ -297,8 +297,10 @@ namespace GhostShell
             // Forward left-button mouse events (client coords) for picking and dragging
             _renderPanel.MouseDown += (s, e) =>
             {
-                if (e.Button == MouseButtons.Left)
-                    GhostEngine.GhostEngine_MouseDown(e.X, e.Y, 0);
+                if (e.Button != MouseButtons.Left) return;
+                GhostEngine.GhostEngine_MouseDown(e.X, e.Y, 0);
+                if (GhostEngine.GhostEngine_TakeDimClick(out int kind, out int index, out int objId, out float len) != 0)
+                    BeginInvoke(new Action(() => GhostUnits.EditFromClick(_renderPanel, kind, index, objId, len)));   // after the click finishes
             };
             _renderPanel.MouseMove += (s, e) => GhostEngine.GhostEngine_MouseMove(e.X, e.Y);
             _renderPanel.MouseWheel += (s, e) => GhostEngine.GhostEngine_MouseWheel(e.Delta);

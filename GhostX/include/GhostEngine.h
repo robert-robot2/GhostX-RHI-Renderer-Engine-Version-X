@@ -255,6 +255,13 @@ extern "C"
     GHOST_API void GhostEngine_GetGizmoSettings(GhostGizmoSettings* out);
     GHOST_API void GhostEngine_SetGizmoSettings(const GhostGizmoSettings* in);
 
+    // ---- Dimension editing (13.C) ----
+// 1 once after a dimension label or an edge was clicked. kind: 0 = axis dimension (index 0..2 = X Y Z), 1 = polygon edge (index 0 = A, 1 = B ...).
+    GHOST_API int  GhostEngine_TakeDimClick(int* kind, int* index, int* objectId, float* worldLen);
+    GHOST_API int  GhostEngine_GetObjectSize(int objectId, float* xyz);             // world size per axis (mesh bounds x scale)
+    GHOST_API void GhostEngine_SetObjectSize(int objectId, int axis, float worldSize);
+    GHOST_API void GhostEngine_ScaleObject(int objectId, float factor);             // uniform
+
 
 
 }

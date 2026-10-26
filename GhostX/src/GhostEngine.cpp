@@ -109,6 +109,16 @@ static void GizmoUpdate(int x, int y);
 static int  GizmoHit(int x, int y);
 
 
+// Shared State
+
+// ---- Dimension / edge clicks (13.C) ----
+struct LabelHit { float rect[4]; float seg[4]; bool hasSeg; int kind, index, objectId; float len; };
+static std::vector<LabelHit> g_labelHits;
+struct DimClick { bool valid = false; int kind = 0, index = 0, objectId = 0; float len = 0.0f; };
+static DimClick g_dimClick;
+static int g_selEdgeObj = 0, g_selEdgeLetter = -1;
+static bool LabelClick(int x, int y);
+
 // Window pixel -> render pixel. clampOut = keep dragging when the cursor is over the bars.
 static bool PanelToRender(int px, int py, int& rx, int& ry, bool clampOut)
 {
@@ -623,6 +633,7 @@ void GhostEngine_MouseDown(int px, int py, int button)
     if (button != 0 || g_looking || !g_haveCam || g_playState != GhostPlayState::Editing) return;
     int x, y;
     if (!PanelToRender(px, py, x, y, false)) return;          // clicked the dark bars
+    if (LabelClick(x, y)) return;                      // clicked a dimension label or an edge: the editor asks for a value
     if (GizmoBegin(x, y)) return;                      // grabbed a gizmo handle: no picking, no free drag
     int id = PickAt(x, y);
 
@@ -1540,7 +1551,14 @@ static void OverlayDims(const GhostObject& o, const GhostVec3& eye)
 
         char t[40];
         FormatLength(ext[k], t, (int)sizeof t);
-        g_ov.Label((d0 + d1) * 0.5f, t, kAxisCol[k], 17.0f, 0.0f, -13.0f);
+        float rc[4];
+        if (g_ov.Label((d0 + d1) * 0.5f, t, kAxisCol[k], 17.0f, 0.0f, -13.0f, rc))
+        {
+            LabelHit h = {};
+            memcpy(h.rect, rc, sizeof rc);
+            h.kind = 0; h.index = k; h.objectId = o.id; h.len = ext[k];
+            g_labelHits.push_back(h);
+        }
     }
 }
 
@@ -1592,7 +1610,10 @@ static void OverlayFaceEdges(const GhostObject& o, const GhostVec3& eye)
     {
         if (e[i].dead) continue;
         const GhostVec3 a = XformPoint(M, e[i].a, 1.0f), b = XformPoint(M, e[i].b, 1.0f);
-        g_ov.Line(a, b, cy, 2.5f, false);
+        const bool sel = (g_selEdgeObj == o.id && g_selEdgeLetter == letter);
+        const float yel[4] = { 1.0f, 0.92f, 0.30f, 1.0f };
+        const float* col = sel ? yel : cy;
+        g_ov.Line(a, b, col, sel ? 4.5f : 2.5f, false);
 
         const float len = (b - a).Length();
         const GhostVec3 mid = (a + b) * 0.5f;
@@ -1600,16 +1621,51 @@ static void OverlayFaceEdges(const GhostObject& o, const GhostVec3& eye)
         char ls[32], label[56];
         FormatLength(len, ls, (int)sizeof ls);
         snprintf(label, sizeof label, "%c  %s", 'A' + letter, ls);
-        g_ov.Label(mid + away, label, cy, 16.0f, 0.0f, 0.0f);
+
+        float rc[4] = { 0.0f, 0.0f, -1.0f, -1.0f };                 // a negative size never matches a click
+        const bool okL = g_ov.Label(mid + away, label, col, 16.0f, 0.0f, 0.0f, rc);
+        const GhostOverlay::SP pa = g_ov.Proj(a), pb = g_ov.Proj(b);
+        if (okL || (pa.ok && pb.ok))
+        {
+            LabelHit h = {};
+            memcpy(h.rect, rc, sizeof rc);
+            h.hasSeg = pa.ok && pb.ok;
+            if (h.hasSeg) { h.seg[0] = pa.x; h.seg[1] = pa.y; h.seg[2] = pb.x; h.seg[3] = pb.y; }
+            h.kind = 1; h.index = letter; h.objectId = o.id; h.len = len;
+            g_labelHits.push_back(h);
+        }
         letter++;
     }
+}
+
+static bool LabelClick(int x, int y)
+{
+    if (g_playState != GhostPlayState::Editing) return false;
+    for (size_t i = g_labelHits.size(); i-- > 0; )
+    {
+        const LabelHit& h = g_labelHits[i];
+        bool in = (float)x >= h.rect[0] && (float)x <= h.rect[0] + h.rect[2] &&
+            (float)y >= h.rect[1] && (float)y <= h.rect[1] + h.rect[3];
+        if (!in && h.hasSeg) in = PtSegDist((float)x, (float)y, h.seg[0], h.seg[1], h.seg[2], h.seg[3]) < 8.0f;
+        if (!in) continue;
+
+        g_dimClick.valid = true;
+        g_dimClick.kind = h.kind; g_dimClick.index = h.index; g_dimClick.objectId = h.objectId; g_dimClick.len = h.len;
+        if (h.kind == 1) { g_selEdgeObj = h.objectId; g_selEdgeLetter = h.index; }
+        return true;
+    }
+    g_selEdgeLetter = -1;                                            // clicked elsewhere: no edge selected
+    return false;
 }
 
 static void DrawViewportOverlay(const GhostMat4& view, const GhostMat4& proj, const GhostVec3& eye,
     unsigned int rw, unsigned int rh, bool editing)
 {
     if (!g_pipeline) return;
+
     g_ov.Begin(view, proj, rw, rh, &g_font);
+    g_labelHits.clear();
+
     const GhostViewSettings& s = g_viewCfg;
 
     if (editing)
@@ -3952,4 +4008,48 @@ void GhostEngine_SetGizmoSettings(const GhostGizmoSettings* in)
     g_gizSet.moveStep = cf(in->moveStep, 0.0f, 1000.0f);
     g_gizSet.rotStep = cf(in->rotStep, 0.0f, 180.0f);
     g_gizSet.scaleStep = cf(in->scaleStep, 0.0f, 10.0f);
+}
+
+
+int GhostEngine_TakeDimClick(int* kind, int* index, int* objectId, float* worldLen)
+{
+    if (!g_dimClick.valid) return 0;
+    if (kind) *kind = g_dimClick.kind;
+    if (index) *index = g_dimClick.index;
+    if (objectId) *objectId = g_dimClick.objectId;
+    if (worldLen) *worldLen = g_dimClick.len;
+    g_dimClick.valid = false;
+    return 1;
+}
+
+int GhostEngine_GetObjectSize(int id, float* xyz)
+{
+    GhostObject* o = FindObject(id);
+    if (!o || !xyz) return 0;
+    const GhostVec3 mn = GhostMesh_Min(o->meshId), mx = GhostMesh_Max(o->meshId);
+    xyz[0] = fabsf((mx.x - mn.x) * o->scale.x);
+    xyz[1] = fabsf((mx.y - mn.y) * o->scale.y);
+    xyz[2] = fabsf((mx.z - mn.z) * o->scale.z);
+    return 1;
+}
+
+void GhostEngine_SetObjectSize(int id, int axis, float world)
+{
+    GhostObject* o = FindObject(id);
+    if (!o || g_playState != GhostPlayState::Editing || axis < 0 || axis > 2 || world != world) return;
+    const GhostVec3 mn = GhostMesh_Min(o->meshId), mx = GhostMesh_Max(o->meshId);
+    const float meshExt[3] = { fabsf(mx.x - mn.x), fabsf(mx.y - mn.y), fabsf(mx.z - mn.z) };
+    if (meshExt[axis] < 1e-6f) return;
+
+    world = world < 0.0001f ? 0.0001f : (world > 100000.0f ? 100000.0f : world);
+    float* s = (axis == 0) ? &o->scale.x : (axis == 1 ? &o->scale.y : &o->scale.z);
+    *s = (*s < 0.0f ? -1.0f : 1.0f) * (world / meshExt[axis]);        // the mirror sign stays
+}
+
+void GhostEngine_ScaleObject(int id, float f)
+{
+    GhostObject* o = FindObject(id);
+    if (!o || g_playState != GhostPlayState::Editing || f != f) return;
+    f = f < 0.001f ? 0.001f : (f > 1000.0f ? 1000.0f : f);
+    o->scale = o->scale * f;
 }

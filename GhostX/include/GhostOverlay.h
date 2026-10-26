@@ -119,13 +119,17 @@ public:
         }
     }
 
-    // Text centered on a world point, with a pixel offset
-    void Label(const GhostVec3& p, const char* s, const float* c, float sizePx, float dx, float dy)
+    
+    // Text centered on a world point, with a pixel offset. rect4 (optional) receives x, y, w, h in pixels.
+    bool Label(const GhostVec3& p, const char* s, const float* c, float sizePx, float dx, float dy, float* rect4 = nullptr)
     {
         const SP sp = Proj(p);
-        if (!sp.ok || !font || !font->ready) return;
+        if (!sp.ok || !font || !font->ready) return false;
         const float tw = GhostText_Measure(*font, sizePx, s);
-        TextPx(sp.x - tw * 0.5f + dx, sp.y - sizePx * 0.5f + dy, sizePx, s, c);
+        const float x = sp.x - tw * 0.5f + dx, y = sp.y - sizePx * 0.5f + dy;
+        if (rect4) { rect4[0] = x - 4.0f; rect4[1] = y - 2.0f; rect4[2] = tw + 8.0f; rect4[3] = sizePx + 4.0f; }
+        TextPx(x, y, sizePx, s, c);
+        return true;
     }
 
 private:

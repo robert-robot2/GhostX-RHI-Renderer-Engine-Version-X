@@ -366,5 +366,15 @@ namespace GhostShell
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern void GhostEngine_SetGizmoSettings(ref GhostGizmoSettings s);
 
+        // ---- Dimension editing ----
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_TakeDimClick(out int kind, out int index, out int objectId, out float worldLen);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetObjectSize(int objectId, [Out] float[] xyz);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetObjectSize(int objectId, int axis, float worldSize);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_ScaleObject(int objectId, float factor);
+
     }
 }

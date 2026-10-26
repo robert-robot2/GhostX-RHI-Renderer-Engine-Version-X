@@ -556,6 +556,7 @@ namespace GhostShell
             ColliderOffset = new Vec3Edit(
     () => { var g = GetG(); return (g.cox, g.coy, g.coz); },
     (x, y, z) => { var g = GetG(); g.cox = x; g.coy = y; g.coz = z; SetG(g); });
+            Dimensions = new DimEdit(id);
         }
 
         private GhostObjectInfo Get() { var i = new GhostObjectInfo(); GhostEngine.GhostEngine_GetObject(_id, ref i); return i; }
@@ -566,6 +567,9 @@ namespace GhostShell
         [Category("Transform")] public Vec3Edit Position { get; }
         [Category("Transform"), DisplayName("Rotation (deg)")] public Vec3Edit Rotation { get; }
         [Category("Transform")] public Vec3Edit Scale { get; }
+
+        [Category("Transform"), DisplayName("Size (type 10mm, 2in ...)")]
+        public DimEdit Dimensions { get; }
 
         // ---- Material: edits go to the Target Face, or to every face when it is "All Faces" ----
         private delegate void MatEdit(ref GhostMaterialInfo m);
