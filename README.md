@@ -104,7 +104,7 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - **Active SubCore**
 - [ ] Phase 16: Advanced Pre-Built Primitives List
 - **Testing/Game**
-- [ ] Phase 12.D: Level 2 Build And Test Play Packaged Exe / Instructions
+- [ ] Phase 12.D: Test: Level 2 Build And Test Play Packaged Exe / Instructions/ Scene Switching
 - **DEBUG/ERRORS**
 - [ ] Phase Errors: Docking Suite Debug Needs reset/ delete xml layout but why?
 - [ ] Phase Errors: AnyCPU cannot find DLL in Debug
