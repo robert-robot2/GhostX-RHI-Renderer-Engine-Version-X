@@ -1459,6 +1459,18 @@ namespace GhostShell
             if (strip == null) return;
 
             var menu = new ToolStripMenuItem("Window");
+
+            var viewportItem = new ToolStripMenuItem("Viewport");
+            viewportItem.Click += (s, e) =>
+            {
+                if (_dockViewport.DockState == DockState.Unknown || _dockViewport.DockPanel == null)
+                    _dockViewport.Show(_dock, DockState.Document);
+                else
+                    _dockViewport.Show(_dock);
+            };
+            menu.DropDownItems.Add(viewportItem);
+            menu.DropDownItems.Add(new ToolStripSeparator());
+
             foreach (PanelDock d in _tools)
             {
                 PanelDock dock = d;
@@ -1479,9 +1491,21 @@ namespace GhostShell
 
             menu.DropDownOpening += (s, e) =>
             {
-                for (int i = 0; i < _tools.Count; i++)
-                    ((ToolStripMenuItem)menu.DropDownItems[i]).Checked = IsShown(_tools[i]);
-                // this may be wrong order
+                viewportItem.Checked = _dockViewport.DockPanel != null && !_dockViewport.IsHidden;
+
+                foreach (PanelDock d in _tools)
+                {
+                    // find the matching menu item by text instead of index
+                    foreach (ToolStripItem ti in menu.DropDownItems)
+                    {
+                        if (ti is ToolStripMenuItem mi && mi.Text == d.Text)
+                        {
+                            mi.Checked = IsShown(d);
+                            break;
+                        }
+                    }
+                }
+
                 uiItem.Checked = IsShown(_dockDesigner);
                 animItem.Checked = IsShown(_dockAnim);
             };
