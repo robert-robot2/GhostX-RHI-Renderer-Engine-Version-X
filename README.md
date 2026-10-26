@@ -98,7 +98,7 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [X] Phase 12.C: Level 1 Build and Test Play / Instructions/ ASSIMILIATION SUCCESSFUL....
 - **Active Core**
 - [ ] Phase 13.D: A CAD-style set of annotation tools on top of the blueprint grid.
-- [ ] Phase 12.E: Add UI For PlayTest On Level 1, HUD, enemies, roles
+- [ ] Phase 12.E: Add UI For PlayTest On Level 1, HUD, enemies, roles, Collision, Camera
 - [ ] Phase 15.D: Skysphere add full Display without horizon cutoff toggle 
 - [ ] Phase 15.E: Idle move left move right, since its billboard well reuse move right and up and down dont trigger animation only left and right with up and down key press, and space for jump
 - **Active SubCore**
