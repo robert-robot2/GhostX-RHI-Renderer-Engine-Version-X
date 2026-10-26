@@ -80,15 +80,15 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [x] Phase 12.B: Pre-Building Prep, The standalone exe
 - [x] Phase 13.A: Viewport tools, grid, gizmos and dimensions
 - [x] Phase 13.B: Drag gizmos (translate, rotate, scale), axis constraints, grid snapping.
+- [x] Phase 13.C: Click a dimension to type a new size, edge selection, units in Details.
 - [x] Phase 14: Viewport Added to Window Dropdown if Docking Suite Fails/ Added Post Build Event GhostGame.dll copy to X64 Release Folder
 - **Active Core**
-- [ ] Phase 13.C: Click a dimension to type a new size, edge selection, units in Details.
 - [ ] Phase 13.D: A CAD-style set of annotation tools on top of the blueprint grid.
 - **Active SubCore**
+- [ ] Phase 15: Advanced Pre-Built Primitives List
 - **Testing/Game**
 - [ ] Phase 12.C: Level 1 Build and Test Play / Instructions
 - [ ] Phase 12.D: Level 2 Build And Test Play Packaged Exe / Instructions
-- [ ] Phase 15: Advanced Pre-Built Primitives List
 - **DEBUG/ERRORS**
 - [ ] Phase Errors: Docking Suite Debug Needs reset/ delete xml layout but why?
 - [ ] Phase Errors: AnyCPU cannot find DLL in Debug
