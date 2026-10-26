@@ -24,7 +24,8 @@
 ![Blender](https://img.shields.io/badge/3D-Blender-F5792A?style=flat-square&logo=blender&logoColor=white)
 ![GIMP](https://img.shields.io/badge/Graphics-GIMP-5C5543?style=flat-square&logo=gimp&logoColor=white)
 <img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/cec25a8f-66a0-46a4-8217-a65bb15e44a8" />
-<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/c59fc271-96f4-4db6-9075-1ded16956a5b" />
+<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/a38f0367-068a-43b7-a453-62e5600b9122" />
+
 
 
 
