@@ -94,6 +94,21 @@ static std::string g_modelWarn;                     // warnings from model files
 static void PerformSceneSwitch();
 
 
+// ---- Gizmo drag state (13.B) ----
+struct GizmoState
+{
+    bool active = false, local = false, snapping = false;
+    int  id = 0, axis = -1, tool = 0;                    // axis: 0..2 = X Y Z, 3 = uniform scale
+    GhostVec3 startPos, startRot, startScale, dir, u, v;
+    float t0 = 0.0f, d0 = 0.0f, ox = 0.0f, oy = 0.0f, lastAngle = 0.0f, accum = 0.0f, value = 0.0f;
+};
+static GizmoState g_gizmo;
+static int        g_gizmoHover = -1;
+static bool GizmoBegin(int x, int y);
+static void GizmoUpdate(int x, int y);
+static int  GizmoHit(int x, int y);
+
+
 // Window pixel -> render pixel. clampOut = keep dragging when the cursor is over the bars.
 static bool PanelToRender(int px, int py, int& rx, int& ry, bool clampOut)
 {
@@ -608,7 +623,7 @@ void GhostEngine_MouseDown(int px, int py, int button)
     if (button != 0 || g_looking || !g_haveCam || g_playState != GhostPlayState::Editing) return;
     int x, y;
     if (!PanelToRender(px, py, x, y, false)) return;          // clicked the dark bars
-
+    if (GizmoBegin(x, y)) return;                      // grabbed a gizmo handle: no picking, no free drag
     int id = PickAt(x, y);
 
     // Shift+click on an object: select it and pick the face under the cursor. No drag.
@@ -646,6 +661,12 @@ void GhostEngine_MouseMove(int px, int py)
     if (g_looking || !g_haveCam || g_playState != GhostPlayState::Editing) { g_hoverId = 0; return; }
 
     int x, y;
+    if (g_gizmo.active)
+    {
+        PanelToRender(px, py, x, y, true);              // clamped, so a drag can run over the bars
+        GizmoUpdate(x, y);
+        return;
+    }
     if (g_dragging)
     {
         PanelToRender(px, py, x, y, true);                    // clamped, so a drag can run over the bars
@@ -655,7 +676,8 @@ void GhostEngine_MouseMove(int px, int py)
             *pos = hit + g_dragOffset;
         return;
     }
-    if (!PanelToRender(px, py, x, y, false)) { g_hoverId = 0; return; }
+    if (!PanelToRender(px, py, x, y, false)) { g_hoverId = 0; g_gizmoHover = -1; return; }
+    g_gizmoHover = GizmoHit(x, y);
     g_hoverId = PickAt(x, y);
 }
 
@@ -664,6 +686,7 @@ void GhostEngine_MouseUp(int x, int y, int button)
     if (button == 0) UiMouseEvent(2, x, y);
     (void)x; (void)y;
     if (button != 0) return;
+    g_gizmo.active = false;
     g_dragging = false;
     g_dragId = 0;
 }
@@ -1127,60 +1150,362 @@ static void OverlayBounds(const GhostObject& o, const GhostVec3& eye)
     for (int e = 0; e < 12; e++) g_ov.Line(c[E[e][0]], c[E[e][1]], col, 1.5f, false);
 }
 
-// Origin dot and XYZ axes, in the shape of the current tool. The size is constant on screen.
-static void OverlayGizmo(int selId, const GhostMat4& proj)
+// ---------------- Gizmo: shared frame, hit testing, dragging, drawing ----------------
+struct GizmoFrame
 {
+    GhostVec3 pos;
+    GhostVec3 ax[3];
+    float     L = 1.0f;          // world length of the handles (constant on screen)
+    int       tool = 0;          // the tool that actually applies to this entity
+    bool      object = false;
+};
+
+static GhostGizmoSettings g_gizSet = { 1, 0.0f, 15.0f, 0.1f };
+
+static bool GizmoFrameOf(int selId, GizmoFrame& f)
+{
+    if (!g_viewCfg.showSelection || !g_haveCam || selId == 0) return false;
     GhostVec3* pp = EntityPosition(selId);
-    if (!pp) return;
-    const GhostVec3 pos = *pp;
+    if (!pp) return false;
+    GhostObject* o = FindObject(selId);
+    f.object = (o != nullptr);
+    f.pos = *pp;
 
-    GhostVec3 ax[3] = { { 1, 0, 0 },{ 0, 1, 0 },{ 0, 0, 1 } };
-    if (g_viewCfg.space == 1)
-        if (GhostObject* o = FindObject(selId))
-        {
-            const GhostMat4 M = GhostObjectModel(*o);
-            for (int k = 0; k < 3; k++) ax[k] = GhostVec3(M.m[0][k], M.m[1][k], M.m[2][k]).Normalize();
-        }
+    int tool = g_viewCfg.tool;
+    if (tool == 4) tool = 0;                                   // the Dimension tool has no handles
+    if (!o && (tool == 2 || tool == 3)) tool = 0;              // only objects can be rotated and scaled
+    f.tool = tool;
 
-    const GhostOverlay::Clip c = g_ov.ToClip(pos);
-    if (c.z < 0.0f || c.w < 0.1f) return;
-    const float pxPerUnit = proj.m[1][1] * (float)g_ov.h * 0.5f / c.w;
-    const float L = 90.0f / pxPerUnit;
-    static const char* names[3] = { "X", "Y", "Z" };
-    const int tool = g_viewCfg.tool;
-
-    if (tool == 2)                                              // rotate: one ring per axis
+    f.ax[0] = GhostVec3(1, 0, 0); f.ax[1] = GhostVec3(0, 1, 0); f.ax[2] = GhostVec3(0, 0, 1);
+    if (o && (g_viewCfg.space == 1 || tool == 3))              // scale always uses the object's own axes
     {
-        for (int k = 0; k < 3; k++)
+        const GhostMat4 M = GhostObjectModel(*o);
+        for (int k = 0; k < 3; k++) f.ax[k] = GhostVec3(M.m[0][k], M.m[1][k], M.m[2][k]).Normalize();
+    }
+
+    const GhostVec3 v = XformPoint(g_view, f.pos, 1.0f);       // view-space depth
+    if (v.z < 0.1f) return false;
+    f.L = 90.0f * v.z / (g_proj.m[1][1] * (float)g_mainRH * 0.5f);   // 90 pixels
+    return true;
+}
+
+static float SnapTo(float v, float step) { return step > 1e-6f ? floorf(v / step + 0.5f) * step : v; }
+static float Round3(float v) { return floorf(v * 1000.0f + 0.5f) / 1000.0f; }
+
+static float PtSegDist(float px, float py, float ax, float ay, float bx, float by)
+{
+    const float dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+    float t = l2 > 1e-6f ? ((px - ax) * dx + (py - ay) * dy) / l2 : 0.0f;
+    t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+    const float cx = ax + dx * t - px, cy = ay + dy * t - py;
+    return sqrtf(cx * cx + cy * cy);
+}
+
+// t on the line (p0 + t*a) that is closest to the ray (o + s*d). false when they are nearly parallel
+static bool AxisParam(const GhostVec3& o, const GhostVec3& d, const GhostVec3& p0, const GhostVec3& a, float& t)
+{
+    const GhostVec3 w0 = o - p0;
+    const float b = d.Dot(a), dd = d.Dot(w0), e = a.Dot(w0);
+    const float den = 1.0f - b * b;
+    if (den < 1e-3f) return false;
+    t = (e - b * dd) / den;
+    return true;
+}
+
+static bool RayPlanePN(const GhostVec3& o, const GhostVec3& d, const GhostVec3& p, const GhostVec3& n, GhostVec3& hit)
+{
+    const float den = d.Dot(n);
+    if (fabsf(den) < 0.03f) return false;                      // the plane is edge-on
+    const float t = (p - o).Dot(n) / den;
+    if (t < 0.0f) return false;
+    hit = o + d * t;
+    return true;
+}
+
+// -1 = nothing, 0..2 = an axis, 3 = the uniform scale handle
+static int GizmoHit(int x, int y)
+{
+    GizmoFrame f;
+    if (!GizmoFrameOf(g_scene.selectedId, f) || f.tool < 1) return -1;
+    float ox, oy;
+    if (!WorldToScreen(f.pos, ox, oy)) return -1;
+
+    if (f.tool == 3)
+    {
+        const float dx = (float)x - ox, dy = (float)y - oy;
+        if (sqrtf(dx * dx + dy * dy) < 9.0f) return 3;
+    }
+
+    float best = 1e9f;
+    int hit = -1;
+    for (int k = 0; k < 3; k++)
+    {
+        float d = 1e9f;
+        if (f.tool == 2)                                       // the ring
         {
-            const GhostVec3 u = ax[(k + 1) % 3], v = ax[(k + 2) % 3];
+            const GhostVec3 u = f.ax[(k + 1) % 3], v = f.ax[(k + 2) % 3];
+            const float R = f.L * 0.8f;
+            float px0 = 0, py0 = 0;
+            bool have = false;
+            for (int s = 0; s <= 48; s++)
+            {
+                const float a = (float)s / 48.0f * 2.0f * GHOST_PI;
+                float px, py;
+                if (!WorldToScreen(f.pos + (u * cosf(a) + v * sinf(a)) * R, px, py)) { have = false; continue; }
+                if (have) { const float sd = PtSegDist((float)x, (float)y, px0, py0, px, py); if (sd < d) d = sd; }
+                px0 = px; py0 = py; have = true;
+            }
+            if (d < 7.0f && d < best) { best = d; hit = k; }
+        }
+        else                                                   // the arrow / line (the first 15% is left free for grabbing the object)
+        {
+            float ax, ay, bx, by;
+            if (!WorldToScreen(f.pos + f.ax[k] * (f.L * 0.15f), ax, ay) ||
+                !WorldToScreen(f.pos + f.ax[k] * f.L, bx, by)) continue;
+            d = PtSegDist((float)x, (float)y, ax, ay, bx, by);
+            if (d < 9.0f && d < best) { best = d; hit = k; }
+        }
+    }
+    return hit;
+}
+
+static bool GizmoBegin(int x, int y)
+{
+    g_gizmo.active = false;
+    GizmoFrame f;
+    if (!GizmoFrameOf(g_scene.selectedId, f) || f.tool < 1) return false;
+    const int h = GizmoHit(x, y);
+    if (h < 0) return false;
+
+    GhostVec3 ro, rd;
+    if (!ScreenRay(x, y, ro, rd)) return false;
+    GhostObject* o = FindObject(g_scene.selectedId);
+
+    GizmoState g;
+    g.id = g_scene.selectedId;
+    g.axis = h;
+    g.tool = f.tool;
+    g.local = (g_viewCfg.space == 1) || f.tool == 3;
+    g.startPos = f.pos;
+    if (o) { g.startRot = o->rotationDeg; g.startScale = o->scale; }
+    if (h < 3) { g.dir = f.ax[h]; g.u = f.ax[(h + 1) % 3]; g.v = f.ax[(h + 2) % 3]; }
+
+    if (f.tool == 1 || (f.tool == 3 && h < 3))                 // slide along an axis
+    {
+        float t;
+        if (!AxisParam(ro, rd, f.pos, g.dir, t)) return true;               // looking straight down the axis: nothing to grab
+        if (f.tool == 3 && fabsf(t) < f.L * 0.05f) return true;
+        g.t0 = t;
+    }
+    else if (f.tool == 2)                                      // turn around an axis
+    {
+        GhostVec3 hit;
+        if (!RayPlanePN(ro, rd, f.pos, g.dir, hit)) return true;
+        const GhostVec3 r = hit - f.pos;
+        g.lastAngle = atan2f(r.Dot(g.v), r.Dot(g.u));
+    }
+    else                                                       // uniform scale: the distance from the origin on screen
+    {
+        float ox, oy;
+        if (!WorldToScreen(f.pos, ox, oy)) return true;
+        g.ox = ox; g.oy = oy;
+        g.d0 = sqrtf(((float)x - ox) * ((float)x - ox) + ((float)y - oy) * ((float)y - oy));
+    }
+    g.active = true;
+    g_gizmo = g;
+    return true;                                               // the click was consumed by the gizmo
+}
+
+// Euler order is the engine's: model = Ry * Rx * Rz
+static void ApplyRotation(GhostObject& o, const GizmoState& g, float rad)
+{
+    const float d2r = GHOST_PI / 180.0f, r2d = 180.0f / GHOST_PI;
+    const GhostMat4 R0 = GhostMat4::RotationY(g.startRot.y * d2r) * GhostMat4::RotationX(g.startRot.x * d2r) *
+        GhostMat4::RotationZ(g.startRot.z * d2r);
+
+    const GhostVec3 a = g.local ? GhostVec3((float)(g.axis == 0), (float)(g.axis == 1), (float)(g.axis == 2)) : g.dir;
+    const float c = cosf(rad), s = sinf(rad), t = 1.0f - c;
+    GhostMat4 Rd = GhostMat4::Identity();                      // axis-angle (Rodrigues), same handedness as RotationX/Y/Z
+    Rd.m[0][0] = t * a.x * a.x + c;       Rd.m[0][1] = t * a.x * a.y - s * a.z; Rd.m[0][2] = t * a.x * a.z + s * a.y;
+    Rd.m[1][0] = t * a.x * a.y + s * a.z; Rd.m[1][1] = t * a.y * a.y + c;       Rd.m[1][2] = t * a.y * a.z - s * a.x;
+    Rd.m[2][0] = t * a.x * a.z - s * a.y; Rd.m[2][1] = t * a.y * a.z + s * a.x; Rd.m[2][2] = t * a.z * a.z + c;
+
+    const GhostMat4 Rn = g.local ? (R0 * Rd) : (Rd * R0);
+
+    float ex, ey, ez;
+    const float r12 = Rn.m[1][2];
+    if (fabsf(r12) < 0.99999f)
+    {
+        ex = asinf(-r12);
+        ey = atan2f(Rn.m[0][2], Rn.m[2][2]);
+        ez = atan2f(Rn.m[1][0], Rn.m[1][1]);
+    }
+    else                                                       // gimbal lock: the Z turn is folded into Y
+    {
+        ex = (r12 < 0.0f) ? GHOST_PI * 0.5f : -GHOST_PI * 0.5f;
+        ey = atan2f(-Rn.m[2][0], Rn.m[0][0]);
+        ez = 0.0f;
+    }
+    o.rotationDeg = GhostVec3(Round3(ex * r2d), Round3(ey * r2d), Round3(ez * r2d));
+}
+
+static void GizmoUpdate(int x, int y)
+{
+    GizmoState& g = g_gizmo;
+    if (!g.active) return;
+    GhostVec3* pos = EntityPosition(g.id);
+    GhostObject* o = FindObject(g.id);
+    if (!pos || ((g.tool == 2 || g.tool == 3) && !o)) { g.active = false; return; }
+
+    if (GetAsyncKeyState(VK_ESCAPE) & 0x8000)                  // cancel: put everything back
+    {
+        *pos = g.startPos;
+        if (o) { o->rotationDeg = g.startRot; o->scale = g.startScale; }
+        g.active = false;
+        return;
+    }
+
+    g.snapping = (g_gizSet.snap != 0) != ((GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0);   // Shift flips snapping
+    GhostVec3 ro, rd;
+    if (!ScreenRay(x, y, ro, rd)) return;
+
+    if (g.tool == 1)
+    {
+        float t;
+        if (!AxisParam(ro, rd, g.startPos, g.dir, t)) return;
+        float s = t - g.t0;
+        if (g.snapping)
+        {
+            const float step = g_gizSet.moveStep > 0.0f ? g_gizSet.moveStep : g_viewCfg.gridSize;
+            if (g_viewCfg.space == 0)                          // world axes: land on the grid lines themselves
+            {
+                const float a0 = g.startPos.Dot(g.dir);
+                s = SnapTo(a0 + s, step) - a0;
+            }
+            else s = SnapTo(s, step);                          // local axes: snap the distance travelled
+        }
+        *pos = g.startPos + g.dir * s;
+        g.value = s;
+    }
+    else if (g.tool == 2)
+    {
+        GhostVec3 hit;
+        if (!RayPlanePN(ro, rd, g.startPos, g.dir, hit)) return;
+        const GhostVec3 r = hit - g.startPos;
+        const float a = atan2f(r.Dot(g.v), r.Dot(g.u));
+        float d = a - g.lastAngle;
+        while (d > GHOST_PI) d -= 2.0f * GHOST_PI;             // follow the cursor round past +-180 degrees
+        while (d < -GHOST_PI) d += 2.0f * GHOST_PI;
+        g.accum += d;
+        g.lastAngle = a;
+
+        float deg = g.accum * (180.0f / GHOST_PI);
+        if (g.snapping) deg = SnapTo(deg, g_gizSet.rotStep);
+        ApplyRotation(*o, g, deg * (GHOST_PI / 180.0f));
+        g.value = deg;
+    }
+    else                                                       // scale
+    {
+        float f;
+        if (g.axis == 3)
+        {
+            const float dx = (float)x - g.ox, dy = (float)y - g.oy;
+            f = 1.0f + (sqrtf(dx * dx + dy * dy) - g.d0) / 100.0f;      // 100 pixels = +1.0
+        }
+        else
+        {
+            float t;
+            if (!AxisParam(ro, rd, g.startPos, g.dir, t)) return;
+            f = t / g.t0;
+        }
+        if (g.snapping) f = SnapTo(f, g_gizSet.scaleStep);
+        f = f < 0.01f ? 0.01f : (f > 100.0f ? 100.0f : f);
+
+        GhostVec3 ns = g.startScale;
+        if (g.axis == 3) ns = g.startScale * f;
+        else if (g.axis == 0) ns.x *= f;
+        else if (g.axis == 1) ns.y *= f;
+        else ns.z *= f;
+        o->scale = ns;
+        g.value = f;
+    }
+}
+
+static void OverlayGizmo(int selId)
+{
+    GizmoFrame f;
+    if (!GizmoFrameOf(selId, f)) return;
+    const GhostVec3 pos = f.pos;
+    const float L = f.L;
+    const int tool = f.tool;
+    static const char* names[3] = { "X", "Y", "Z" };
+    static const float kHot[4] = { 1.0f, 0.92f, 0.30f, 1.0f };
+    const int act = g_gizmo.active ? g_gizmo.axis : g_gizmoHover;     // the axis that is hovered or being dragged
+
+    auto colorOf = [&](int k, float* c)
+        {
+            const float* b = (k == act) ? kHot : kAxisCol[k];
+            c[0] = b[0]; c[1] = b[1]; c[2] = b[2];
+            c[3] = (g_gizmo.active && act >= 0 && act < 3 && k != act) ? 0.30f : 1.0f;   // while dragging, dim the others
+        };
+
+    for (int k = 0; k < 3; k++)
+    {
+        float c[4];
+        colorOf(k, c);
+        const float w = (k == act) ? 3.6f : 2.4f;
+
+        if (tool == 2)                                          // rotate: one ring per axis
+        {
+            const GhostVec3 u = f.ax[(k + 1) % 3], v = f.ax[(k + 2) % 3];
             const float R = L * 0.8f;
             for (int s = 0; s < 48; s++)
             {
                 const float a0 = (float)s / 48.0f * 2.0f * GHOST_PI, a1 = (float)(s + 1) / 48.0f * 2.0f * GHOST_PI;
-                g_ov.Line(pos + (u * cosf(a0) + v * sinf(a0)) * R, pos + (u * cosf(a1) + v * sinf(a1)) * R, kAxisCol[k], 2.2f, false);
+                g_ov.Line(pos + (u * cosf(a0) + v * sinf(a0)) * R, pos + (u * cosf(a1) + v * sinf(a1)) * R, c, w, false);
             }
         }
-    }
-    else
-    {
-        for (int k = 0; k < 3; k++)
+        else
         {
-            const GhostVec3 end = pos + ax[k] * L;
-            if (tool == 1) g_ov.Arrow(pos, end, kAxisCol[k], 2.5f, 14.0f, false);
+            const GhostVec3 end = pos + f.ax[k] * L;
+            if (tool == 1) g_ov.Arrow(pos, end, c, w, 14.0f, false);
             else
             {
-                g_ov.Line(pos, end, kAxisCol[k], 2.5f, false);
-                if (tool == 3) g_ov.Point(end, 10.0f, kAxisCol[k]);
+                g_ov.Line(pos, end, c, w, false);
+                if (tool == 3) g_ov.Point(end, (k == act) ? 13.0f : 10.0f, c);
             }
-            g_ov.Label(pos + ax[k] * (L * 1.16f), names[k], kAxisCol[k], 16.0f, 0.0f, 0.0f);
+            g_ov.Label(pos + f.ax[k] * (L * 1.16f), names[k], c, 16.0f, 0.0f, 0.0f);
         }
+    }
+
+    if (tool == 3)                                              // the centre handle scales all three axes
+    {
+        const float white[4] = { 0.92f, 0.92f, 0.92f, 1.0f };
+        g_ov.Point(pos, 16.0f, act == 3 ? kHot : white);
     }
 
     const float black[4] = { 0, 0, 0, 0.9f }, dot[4] = { 1.0f, 0.82f, 0.30f, 1.0f };
     g_ov.Point(pos, 10.0f, black);
     g_ov.Point(pos, 6.0f, dot);                                 // the origin
+
+    if (g_gizmo.active)                                         // readout at the top of the viewport
+    {
+        const GizmoState& g = g_gizmo;
+        const char* ax = (g.axis >= 0 && g.axis < 3) ? names[g.axis] : "";
+        const char* sn = g.snapping ? "   (snap)" : "";
+        char t[96], l[32];
+        if (g.tool == 1) { FormatLength(g.value, l, (int)sizeof l); snprintf(t, sizeof t, "Move %s   %s%s", ax, l, sn); }
+        else if (g.tool == 2) snprintf(t, sizeof t, "Rotate %s   %.1f deg%s", ax, g.value, sn);
+        else if (g.axis == 3) snprintf(t, sizeof t, "Scale (uniform)   x%.2f%s", g.value, sn);
+        else snprintf(t, sizeof t, "Scale %s   x%.2f%s", ax, g.value, sn);
+        const float tw = GhostText_Measure(g_font, 20.0f, t);
+        g_ov.TextPx(((float)g_ov.w - tw) * 0.5f, 14.0f, 20.0f, t, kHot);
+    }
 }
+
+
+
+
 
 // Arrows between the box edges, one per axis, with the length as a label
 static void OverlayDims(const GhostObject& o, const GhostVec3& eye)
@@ -1298,7 +1623,7 @@ static void DrawViewportOverlay(const GhostMat4& view, const GhostMat4& proj, co
             if (s.showSelection)
             {
                 if (o) OverlayBounds(*o, eye);
-                OverlayGizmo(sel, proj);
+                OverlayGizmo(sel);
             }
             if (o && (s.showDims || s.tool == 4))
             {
@@ -1597,6 +1922,11 @@ void GhostEngine_Tick()
         const float inst = 1.0f / dt;
         g_fps = (g_fps <= 0.0f) ? inst : g_fps + (inst - g_fps) * 0.05f;
     }
+    // a drag never outlives the mouse button (lost focus, Play pressed mid-drag)
+    if (g_gizmo.active && (g_playState != GhostPlayState::Editing ||
+        !((GetAsyncKeyState(VK_LBUTTON) | GetAsyncKeyState(VK_RBUTTON)) & 0x8000)))
+        g_gizmo.active = false;
+
     // ---- Play mode: sample input, then run the fixed-timestep simulation ----
     g_input.Sample(g_inputEnabled && g_playState == GhostPlayState::Playing);
     if (g_playState == GhostPlayState::Playing)
@@ -3608,4 +3938,18 @@ void GhostEngine_SetViewSettings(const GhostViewSettings* in)
     s.tool = ci(s.tool, 0, 4);            s.space = ci(s.space, 0, 1);
     s.unit = ci(s.unit, 0, 4);            s.decimals = ci(s.decimals, 0, 3);
     g_viewCfg = s;
+}
+
+
+
+void GhostEngine_GetGizmoSettings(GhostGizmoSettings* out) { if (out) *out = g_gizSet; }
+
+void GhostEngine_SetGizmoSettings(const GhostGizmoSettings* in)
+{
+    if (!in) return;
+    auto cf = [](float v, float lo, float hi) { return v != v ? lo : (v < lo ? lo : (v > hi ? hi : v)); };
+    g_gizSet.snap = in->snap ? 1 : 0;
+    g_gizSet.moveStep = cf(in->moveStep, 0.0f, 1000.0f);
+    g_gizSet.rotStep = cf(in->rotStep, 0.0f, 180.0f);
+    g_gizSet.scaleStep = cf(in->scaleStep, 0.0f, 10.0f);
 }

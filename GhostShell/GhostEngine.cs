@@ -104,6 +104,14 @@ namespace GhostShell
         public int tool, space, unit, decimals;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GhostGizmoSettings
+    {
+        public int snap;
+        public float moveStep, rotStep, scaleStep;
+    }
+
+
     internal static class GhostEngine
     {
         private const string DllName = "GhostX.dll";
@@ -351,6 +359,12 @@ namespace GhostShell
         public static extern void GhostEngine_GetViewSettings(out GhostViewSettings s);
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern void GhostEngine_SetViewSettings(ref GhostViewSettings s);
+
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_GetGizmoSettings(out GhostGizmoSettings s);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetGizmoSettings(ref GhostGizmoSettings s);
 
     }
 }

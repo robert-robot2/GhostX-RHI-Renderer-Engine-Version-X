@@ -13,6 +13,7 @@ namespace GhostShell
         public string SolutionPath { get; set; } = "";
         public string LastProjectFolder { get; set; } = "";
         public string ViewSettings { get; set; } = "";
+        public string GizmoSettings { get; set; } = "";
     }
 
     internal static class GhostSettings

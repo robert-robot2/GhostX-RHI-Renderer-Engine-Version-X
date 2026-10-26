@@ -94,6 +94,14 @@ struct GhostViewSettings
     int   gridExtent;                          // lines on each side of the camera
     int   tool, space, unit, decimals;         // tool: 0 select, 1 translate, 2 rotate, 3 scale, 4 dimension.  space: 0 world, 1 local.  unit: 0 mm, 1 cm, 2 m, 3 in, 4 ft
 };
+struct GhostGizmoSettings
+{
+    int   snap;                // 1 = snapping on
+    float moveStep;            // 0 = use the grid size
+    float rotStep;             // degrees, 0 = off
+    float scaleStep;           // factor step, 0 = off
+};
+
 
 extern "C"
 {
@@ -242,4 +250,11 @@ extern "C"
     // ---- Viewport overlay settings ----
     GHOST_API void GhostEngine_GetViewSettings(GhostViewSettings* out);
     GHOST_API void GhostEngine_SetViewSettings(const GhostViewSettings* in);
+
+    // Gizmos
+    GHOST_API void GhostEngine_GetGizmoSettings(GhostGizmoSettings* out);
+    GHOST_API void GhostEngine_SetGizmoSettings(const GhostGizmoSettings* in);
+
+
+
 }

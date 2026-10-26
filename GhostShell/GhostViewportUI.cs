@@ -35,6 +35,10 @@ namespace GhostShell
         private readonly ContextMenuStrip _toolMenu = new(), _viewMenu = new();
         private readonly List<(ToolStripMenuItem item, Func<GhostViewSettings, bool> on)> _marks = new();
 
+        private delegate void ChangeG(ref GhostGizmoSettings g);
+        private readonly List<(ToolStripMenuItem item, Func<GhostGizmoSettings, bool> on)> _marksG = new();
+
+
         public GhostViewportBar(Control host)
         {
             _host = host;
@@ -87,6 +91,32 @@ namespace GhostShell
             return it;
         }
 
+        private ToolStripMenuItem AddG(ToolStripItemCollection into, string text, Func<GhostGizmoSettings, bool> on, ChangeG apply)
+        {
+            var it = new ToolStripMenuItem(text);
+            it.Click += (s, e) => EditG(apply);
+            into.Add(it);
+            _marksG.Add((it, on));
+            return it;
+        }
+
+        private void EditG(ChangeG c)
+        {
+            GhostEngine.GhostEngine_GetGizmoSettings(out GhostGizmoSettings g);
+            c(ref g);
+            GhostEngine.GhostEngine_SetGizmoSettings(ref g);
+            PersistG();
+        }
+
+        private static void PersistG()
+        {
+            GhostEngine.GhostEngine_GetGizmoSettings(out GhostGizmoSettings g);        // read back the clamped values
+            CultureInfo I = CultureInfo.InvariantCulture;
+            GhostSettings.Data.GizmoSettings = string.Join(",",
+                g.snap.ToString(I), g.moveStep.ToString("R", I), g.rotStep.ToString("R", I), g.scaleStep.ToString("R", I));
+            GhostSettings.Save();
+        }
+
         private void BuildToolMenu()
         {
             string[] names = { "Select", "Translate (move)", "Rotate", "Scale", "Dimension" };
@@ -98,6 +128,33 @@ namespace GhostShell
             _toolMenu.Items.Add(new ToolStripSeparator());
             Add(_toolMenu.Items, "Gizmo space: World", s => s.space == 0, (ref GhostViewSettings s) => s.space = 0);
             Add(_toolMenu.Items, "Gizmo space: Local", s => s.space == 1, (ref GhostViewSettings s) => s.space = 1);
+            _toolMenu.Items.Add(new ToolStripSeparator());
+            AddG(_toolMenu.Items, "Snapping  (hold Shift while dragging to flip it)", g => g.snap != 0, (ref GhostGizmoSettings g) => g.snap ^= 1);
+
+            ToolStripMenuItem mv = Sub(_toolMenu.Items, "Move snap");
+            AddG(mv.DropDownItems, "Grid size", g => g.moveStep <= 0f, (ref GhostGizmoSettings g) => g.moveStep = 0f);
+            foreach (float sz in new[] { 0.01f, 0.1f, 0.25f, 0.5f, 1f, 5f })
+            {
+                float v = sz;
+                AddG(mv.DropDownItems, v.ToString("0.##", CultureInfo.InvariantCulture),
+                    g => Math.Abs(g.moveStep - v) < 1e-4f, (ref GhostGizmoSettings g) => g.moveStep = v);
+            }
+
+            ToolStripMenuItem rt = Sub(_toolMenu.Items, "Rotate snap (degrees)");
+            foreach (float deg in new[] { 1f, 5f, 15f, 45f, 90f })
+            {
+                float v = deg;
+                AddG(rt.DropDownItems, v.ToString("0.##", CultureInfo.InvariantCulture),
+                    g => Math.Abs(g.rotStep - v) < 1e-4f, (ref GhostGizmoSettings g) => g.rotStep = v);
+            }
+
+            ToolStripMenuItem sc = Sub(_toolMenu.Items, "Scale snap");
+            foreach (float st in new[] { 0.01f, 0.05f, 0.1f, 0.25f, 0.5f })
+            {
+                float v = st;
+                AddG(sc.DropDownItems, v.ToString("0.##", CultureInfo.InvariantCulture),
+                    g => Math.Abs(g.scaleStep - v) < 1e-4f, (ref GhostGizmoSettings g) => g.scaleStep = v);
+            }
         }
 
         private void BuildViewMenu()
@@ -192,6 +249,8 @@ namespace GhostShell
         {
             GhostEngine.GhostEngine_GetViewSettings(out GhostViewSettings s);
             foreach (var (item, on) in _marks) item.Checked = on(s);
+            GhostEngine.GhostEngine_GetGizmoSettings(out GhostGizmoSettings gs);
+            foreach (var (item, on) in _marksG) item.Checked = on(gs);
         }
 
         private void Sync()
@@ -253,6 +312,17 @@ namespace GhostShell
         {
             if (TryParse(GhostSettings.Data.ViewSettings, out GhostViewSettings s))
                 GhostEngine.GhostEngine_SetViewSettings(ref s);
+            string[] gp = (GhostSettings.Data.GizmoSettings ?? "").Split(',');
+            CultureInfo ci = CultureInfo.InvariantCulture;
+            if (gp.Length == 4 &&
+                int.TryParse(gp[0], NumberStyles.Integer, ci, out int gSnap) &&
+                float.TryParse(gp[1], NumberStyles.Float, ci, out float gMove) &&
+                float.TryParse(gp[2], NumberStyles.Float, ci, out float gRot) &&
+                float.TryParse(gp[3], NumberStyles.Float, ci, out float gScale))
+            {
+                var g = new GhostGizmoSettings { snap = gSnap, moveStep = gMove, rotStep = gRot, scaleStep = gScale };
+                GhostEngine.GhostEngine_SetGizmoSettings(ref g);
+            }
             Sync();
         }
     }
