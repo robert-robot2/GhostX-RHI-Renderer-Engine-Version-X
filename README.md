@@ -67,7 +67,7 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 ## Capacity
 - **To Be filled**
 - **One million vertices Scene Limit**
-- **64 Mesh Max Cap per Scene Limit**
+- **2048 Max Scene Objects**
 ## Requirements
 - 4 Mhz DOS OS Computer with OnBoard GPU
 ---
