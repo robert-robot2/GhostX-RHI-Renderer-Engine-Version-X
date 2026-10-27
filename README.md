@@ -315,9 +315,6 @@ You can either:
 - Press `Ctrl + P` to enter Play mode.
 - Test the HUD and gameplay.
 - Check player movement, collisions, coins, enemies, lighting, and the Goal.
-- Note anything that does not work as expected.
-- Commit your changes to Git.
-
 ---
 
 ## Part B — Build and Test Level 2
