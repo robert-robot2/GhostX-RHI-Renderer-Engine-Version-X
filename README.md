@@ -319,12 +319,7 @@ You can either:
 
 ## Part B — Build and Test Level 2
 
-### 1. Build the Solution
-
-Build all three required projects.
-
-- **Debug | x64** is fine for editor testing.
-- Run with `Ctrl + F5`.
+### 1. Build Level 2
 
 ### 2. Test the Level Transition
 
