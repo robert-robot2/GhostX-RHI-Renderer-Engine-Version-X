@@ -102,7 +102,8 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - **Active SubCore**
 - [ ] Phase 13.D: A CAD-style set of annotation tools on top of the blueprint grid.
 - [ ] Phase 18: Advanced Pre-Built Primitives List
-- [ ] Phase 15.D: Skysphere add full Display without horizon cutoff toggle 
+- [ ] Phase 15.D: Skysphere add full Display without horizon cutoff toggle
+- [ ] Phase 15.F: Controls: Ctrl removed for down, Q/E added for Up and Down
 - [ ] Phase 16: Sprite Animation State Editor
 - [ ] Phase 17: Player Controls Editor
 - **Testing/Game**
