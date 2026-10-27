@@ -500,17 +500,6 @@ To package an existing Release build:
 
 **Expected outcome:** A playable two-level GhostX game with a working HUD, level transitions, a win screen, and a packaged Windows executable.
 
-
-
-
-
-
----
-
-
-## License
-
-This project is licensed under the **MIT License**.
 ---
 
 ## Blazor WASM Integration Instructions
