@@ -88,6 +88,7 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [x] Phase 15.G: Restore Function: Projects New/Load from 15.A /Removed var hint fixed Constructor In GhostCOntentBrowser.cs
 - [x] Phase 15.F: Controls: Ctrl in Editor removed for down, Q/E/Space added for Up and Down
 - [x] Phase 16: Sprite Animation State Editor Phases
+- [x] Phase 19: Advanced Pre-Built Primitives List
 - **Active Core**
 - [ ] Phase 12.E: Add UI For PlayTest On Level 1, HUD, enemies, roles, Collision, Camera, Animation States???
 - [ ] Phase 12.D: Test: Level 2 Build And Test Play Packaged Exe / Instructions/ Scene Switching
@@ -95,7 +96,6 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [ ] Phase 15.D: Skysphere add full Display without horizon cutoff toggle
 - **Active SubCore**
 - [ ] Phase 13.D: A CAD-style set of annotation tools on top of the blueprint grid.
-- [ ] Phase 19: Advanced Pre-Built Primitives List
 - [ ] Phase 18: Player Controls Editor
 - **Testing/Game**
 - [ ] Phase : Pending Tests
