@@ -50,18 +50,6 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 ## Errors:
 - **FLAWLESS VICTORY**
 
-
-## Features
-
-- 🎮 **DirectX 12 renderer** behind an RHI interface, so other backends can be added later
-- 💡 **Per-pixel lighting:** ambient, directional, point and rect area lights (up to 16)
-- 🧊 **Textures:** import PNG/JPG/BMP, per-face materials, six UV mapping modes
-- 🎥 **Cameras:** drop up to 4 Free Cameras, each with its own live viewport window
-- 🪟 **Dockable editor:** every panel docks, tabs, floats and auto-hides, and the layout is saved
-- 🖱️ **Click, drag and drop:** select, move and spawn everything in the viewport
-- 🔗 **Native/managed bridge:** a C++ engine DLL driven from C# through P/Invoke
-- 🌐 **Blazor WASM UI (experimental):** an optional web UI hosted in WebView2
-
 ## Capacity
 - **To Be filled**
 - **One million vertices Scene Limit**
