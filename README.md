@@ -146,18 +146,6 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [ ] Direct X 4
 - [ ] DirectX 9
 
-
-## Editor at a glance
-
-| Panel | What it does |
-|---|---|
-| **Palette** | Lighting, Primitives and Cameras. Drag an item into the viewport, or double-click to spawn at screen center |
-| **Viewport** | The main view. Select, drag and drop, with right-mouse look and WASD |
-| **Hierarchy** | Scene Settings, objects, lights and cameras. Double-click a camera to make it the main view |
-| **Details** | Properties of the selection: transform, material, light and camera settings. Updates live while you drag |
-| **Content Browser** | Texture thumbnails, Import button, drag-and-drop from Explorer |
-| **Camera windows** | One live window per dropped camera, floating or docked |
-
 ## Controls
 
 | Input | Action |
@@ -173,44 +161,6 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 | Drag a texture tile onto an object | Apply it (hold `Shift` for one face) |
 | 'Ctrl + D' | Duplicates Selected Item |
 > Camera keys only work while a viewport has focus, so typing in a panel never moves the camera.
-
-## What's New
-
-### 🪟 Docking, camera viewports and resolution
-- VS-style docking with **DockPanelSuite**: dock, tab, float, auto-hide and resize every panel
-- The layout is saved on exit and restored on launch, with a **Window** menu and **Reset Layout**
-- **One swap chain and depth buffer per camera window**, rendered live every frame
-- Click a camera window to fly that camera
-- **Per-camera resolution** (Match Window, or fixed sizes such as 1280×720 and 1920×1080) rendered offscreen and letterboxed, with picking mapped from window pixels to image pixels
-
-### 🎥 Cameras
-- **Free Camera** entities with their own icon and direction arrow
-- Position, Yaw, Pitch and FOV in Details, plus a **Main View Camera** switch
-- Limit of 4 cameras, and the last camera can never be deleted
-
-### 🧊 Textures and materials
-- Import PNG, JPG and BMP from a dialog or by dragging files from Explorer
-- Content Browser with thumbnails, and drag a tile onto an object to texture it
-- Per-face materials with mapping modes: **Mesh UV, Box, Planar XY/XZ/YZ, Cylindrical, Spherical, Cube Cross**
-- Tiling, offset, rotation, wrap, filter and tint
-- sRGB textures with generated mip chains, and a resize option that re-uploads at any size up to 4096
-- **Shift+click face selection** with a glow highlight
-
-### 💡 Lighting
-- Ambient, directional, point and rect area lights, calculated per pixel
-- Smooth range falloff, one-sided rect lights, gamma-correct output
-- Viewport icons that stay a constant screen size, with hover and selection highlights
-
-### 🌎 Scene and engine
-- Backend-agnostic scene model: objects, lights and cameras share one ID space
-- Per-object constant buffers (up to 1024 slots), and a mesh registry (Cube, Triangle, Ship)
-- Mouse-ray picking with exact ray-triangle tests for faces
-- Fixed the mirrored X axis (LookAt handedness, strafe direction, mouse-look yaw)
-- The projection uses the real viewport aspect ratio
-
-### ⚙️ Engine API
-Exports for objects, lights, cameras, materials, textures, viewports, mouse input and scene versioning, each with a P/Invoke on the C# side.
----
 
 ## How To FAQ
 
