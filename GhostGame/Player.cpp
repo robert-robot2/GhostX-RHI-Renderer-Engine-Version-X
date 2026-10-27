@@ -70,8 +70,8 @@ static bool TryPortal(Body& b, int entry)
         memset(g_vel, 0, sizeof g_vel);
         S.camSnap = true;
 
-        // There is no portal cool yet i think this got broken becaus ei adde dmid code seesion
-      //  S.portalCool = 0.4f;
+      
+        S.portalCool = 0.4f;
 
 
         return true;
@@ -153,9 +153,8 @@ void Player_Update(float dt)
         }
     }
 
-    // Needs POrtal Cool
-
-    /*
+    
+    
     if (S.portalCool > 0.0f) S.portalCool -= dt;
     else
     {
@@ -169,7 +168,7 @@ void Player_Update(float dt)
             if (G->GetTag(pid[i], t, sizeof t) && strcmp(t, "PortalEntry") == 0 && TryPortal(b, pid[i])) break;
         }
     }
-    */
+    
 
     // ---- Falling off the world ----
     if (b.pos[1] < Cfg::FallLimit) { Game_Restart(true); return; }

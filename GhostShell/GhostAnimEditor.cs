@@ -325,6 +325,105 @@ namespace GhostShell
         public bool IsDirty => _doc.ToJson() != _saved;
         private string DocName => _path == null ? "Untitled animation" : Path.GetFileName(_path);
 
+        internal sealed class AnimStatesDialog : Form
+        {
+            public static readonly (string State, string When)[] Standard =
+            {
+            ("Idle", "standing still"),                      ("Walk", "moving left or right"),
+            ("Run", "moving while Shift is held"),           ("Jump", "in the air, going up (Space)"),
+            ("Fall", "in the air, coming down"),             ("Crouch", "Down held on the ground"),
+            ("Hurt", "hit while big"),                       ("Die", "a stomped enemy"),
+            ("Break", "a brick hit from below"),             ("Used", "a ? block after it was hit"),
+            ("Attack", "placeholder: left click (Phase 17)"), ("SpinAttack", "placeholder: combo (Phase 17)"),
+        };
+            private const string Same = "(same name)";
+            private readonly DataGridView _grid = new();
+            private readonly Dictionary<string, string> _extra = new(StringComparer.OrdinalIgnoreCase);
+
+            public AnimStatesDialog(AnimDoc doc)
+            {
+                Text = "Animation states";
+                FormBorderStyle = FormBorderStyle.FixedDialog;
+                StartPosition = FormStartPosition.CenterParent;
+                MaximizeBox = false; MinimizeBox = false; ShowInTaskbar = false;
+                ClientSize = new Size(700, 490);
+                Color bg = Color.FromArgb(0x25, 0x25, 0x28), bg2 = Color.FromArgb(0x1E, 0x1E, 0x1E), fg = Color.FromArgb(0xF2, 0xF2, 0xF2);
+                BackColor = bg; ForeColor = fg;
+
+                Controls.Add(new Label
+                {
+                    Text = "Pick the clip that plays for each state. \"(same name)\" uses a clip called like the state.",
+                    Location = new Point(16, 12),
+                    Size = new Size(668, 22)
+                });
+
+                _grid.Location = new Point(16, 40); _grid.Size = new Size(668, 396);
+                _grid.BackgroundColor = bg2; _grid.GridColor = Color.FromArgb(0x3A, 0x3A, 0x40); _grid.BorderStyle = BorderStyle.FixedSingle;
+                _grid.EnableHeadersVisualStyles = false;
+                _grid.ColumnHeadersDefaultCellStyle.BackColor = bg; _grid.ColumnHeadersDefaultCellStyle.ForeColor = fg;
+                _grid.DefaultCellStyle.BackColor = bg2; _grid.DefaultCellStyle.ForeColor = fg;
+                _grid.DefaultCellStyle.SelectionBackColor = Color.FromArgb(0x5A, 0x42, 0x1E); _grid.DefaultCellStyle.SelectionForeColor = fg;
+                _grid.RowHeadersVisible = false; _grid.AllowUserToAddRows = false; _grid.AllowUserToResizeRows = false;
+                _grid.EditMode = DataGridViewEditMode.EditOnEnter;
+                _grid.DataError += (s, e) => e.ThrowException = false;
+
+                var cState = new DataGridViewTextBoxColumn { HeaderText = "State", ReadOnly = true, Width = 120 };
+                var cWhen = new DataGridViewTextBoxColumn { HeaderText = "Plays when", ReadOnly = true, Width = 280 };
+                var cClip = new DataGridViewComboBoxColumn { HeaderText = "Clip", Width = 240, FlatStyle = FlatStyle.Flat };
+                cClip.Items.Add(Same);
+                foreach (AnimClipDoc c in doc.Clips) cClip.Items.Add(c.Name);
+                foreach (var kv in doc.States)
+                    if (!cClip.Items.Contains(kv.Value)) cClip.Items.Add(kv.Value);      // a mapping to a clip that no longer exists stays visible
+                _grid.Columns.AddRange(cState, cWhen, cClip);
+
+                foreach (var (state, when) in Standard)
+                {
+                    doc.States.TryGetValue(state, out string? cur);
+                    _grid.Rows.Add(state, when, string.IsNullOrEmpty(cur) ? Same : cur);
+                }
+                foreach (var kv in doc.States)
+                    if (Array.FindIndex(Standard, s => string.Equals(s.State, kv.Key, StringComparison.OrdinalIgnoreCase)) < 0)
+                        _extra[kv.Key] = kv.Value;                                      // states added by hand in the file are kept
+                Controls.Add(_grid);
+
+                var ok = new Button
+                {
+                    Text = "OK",
+                    Location = new Point(504, 448),
+                    Size = new Size(84, 28),
+                    FlatStyle = FlatStyle.Flat,
+                    BackColor = bg2,
+                    ForeColor = fg,
+                    DialogResult = DialogResult.OK
+                };
+                var cancel = new Button
+                {
+                    Text = "Cancel",
+                    Location = new Point(600, 448),
+                    Size = new Size(84, 28),
+                    FlatStyle = FlatStyle.Flat,
+                    BackColor = bg2,
+                    ForeColor = fg,
+                    DialogResult = DialogResult.Cancel
+                };
+                Controls.Add(ok); Controls.Add(cancel);
+                AcceptButton = ok; CancelButton = cancel;
+            }
+
+            public void Apply(AnimDoc doc)
+            {
+                doc.States.Clear();
+                foreach (DataGridViewRow r in _grid.Rows)
+                {
+                    string state = r.Cells[0].Value?.ToString() ?? "";
+                    string clip = r.Cells[2].Value?.ToString() ?? "";
+                    if (state.Length > 0 && clip.Length > 0 && clip != Same) doc.States[state] = clip;
+                }
+                foreach (var kv in _extra) doc.States[kv.Key] = kv.Value;
+            }
+        }
+
+
         public GhostAnimEditor()
         {
             BackColor = Bg;
@@ -345,6 +444,7 @@ namespace GhostShell
             bar.Controls.Add(Btn("Save As...", () => SaveAs(), "Save under a new name"));
             bar.Controls.Add(Btn("Assign To Selected Sprite", AssignToSelected, "Puts this animation on the Sprite Actor selected in the scene"));
             bar.Controls.Add(Btn("Add Standard Clips", AddStandardClips, "Adds empty Idle, Walk, Jump, Fall, Hurt and Die clips"));
+            bar.Controls.Add(Btn("States...", EditStates, "Choose which clip plays for Idle, Walk, Run, Jump, Fall..."));
             _title.AutoSize = true; _title.ForeColor = Accent; _title.Margin = new Padding(8, 6, 0, 0);
             bar.Controls.Add(_title);
 
@@ -501,7 +601,13 @@ namespace GhostShell
             WireEvents();
             SetDoc(new AnimDoc(), null);
         }
-
+        private void EditStates()
+        {
+            using var dlg = new AnimStatesDialog(_doc);
+            if (dlg.ShowDialog(FindForm()) != DialogResult.OK) return;
+            dlg.Apply(_doc);
+            Touch();                       // the title gets a *; Save writes the states
+        }
         private Button Btn(string text, Action click, string tip)
         {
             var b = new Button

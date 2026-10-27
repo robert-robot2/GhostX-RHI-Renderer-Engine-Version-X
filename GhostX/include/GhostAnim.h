@@ -2,7 +2,7 @@
 #include "GhostSceneIO.h"        // GhostLoadTexFn
 #include <string>
 #include <vector>
-
+#include <utility>
 struct GhostClip
 {
     std::string      name;
@@ -19,6 +19,7 @@ struct GhostAnimAsset
     int  source = 1;             // 0 single image, 1 sprite sheet
     int  cols = 1, rows = 1;
     std::vector<GhostClip> clips;
+    std::vector<std::pair<std::string, std::string>> states;     // state name -> clip name
 };
 
 bool GhostAnim_Load(GhostAnimAsset& a, const std::string& projectRoot, const std::string& absFile,

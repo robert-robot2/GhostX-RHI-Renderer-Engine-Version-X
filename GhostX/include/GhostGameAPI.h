@@ -130,7 +130,7 @@ extern "C" {
         void (*Quit)(void);                                   // packaged game: closes it. In the editor: stops Play
 
         int (*GetObjectProps)(int id, GhostObjectProps* out);
-
+        int (*SpriteSetState)(int id, const char* stateName);      // plays the clip the animation maps this state to (or a clip with the same name)
 
     } GhostGameAPI;
 

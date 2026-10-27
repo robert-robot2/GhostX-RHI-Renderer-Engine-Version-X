@@ -2122,8 +2122,8 @@ void GhostEngine_Tick()
     if (down('S'))        g_eye = g_eye - forward * speed;
     if (down('A'))        g_eye = g_eye - right * speed;
     if (down('D'))        g_eye = g_eye + right * speed;
-    if (down(VK_SPACE))   g_eye.y += speed;
-    if (down(VK_CONTROL)) g_eye.y -= speed;
+    if (down(VK_SPACE) || down('E')) g_eye.y += speed;
+    if (down('Q'))                   g_eye.y -= speed;
     // ---- Working state -> active camera ----
     if (cam)
     {
@@ -3013,7 +3013,17 @@ static int Api_SpriteSetFlip(int id, int flip) { GhostObject* o = FindSprite(id)
 static int Api_SpriteSetFrame(int id, int f) { GhostObject* o = FindSprite(id); if (!o) return 0; o->sprite.frame = f < 0 ? 0 : (f > 4095 ? 4095 : f); return 1; }
 static int Api_SpriteSetAnim(int id, const char* p) { GhostObject* o = FindSprite(id); return o ? SetSpriteAnimImpl(o->sprite, p ? p : "") : 0; }
 static int Api_SpriteSetSpeed(int id, float v) { GhostObject* o = FindSprite(id); if (!o) return 0; o->sprite.animSpeed = v < 0.0f ? 0.0f : (v > 10.0f ? 10.0f : v); return 1; }
-
+static int Api_SpriteSetState(int id, const char* state)
+{
+    GhostObject* o = FindSprite(id);
+    if (!o || !state) return 0;
+    std::string clip = state;
+    const GhostSprite& s = o->sprite;
+    if (s.animId >= 0 && s.animId < (int)g_anims.size())
+        for (const auto& kv : g_anims[(size_t)s.animId].states)
+            if (_stricmp(kv.first.c_str(), state) == 0) { if (!kv.second.empty()) clip = kv.second; break; }
+    return Api_SpriteSetClip(id, clip.c_str());
+}
 static int Api_LoadScene(const char* rel)
 {
     if (!rel || !*rel || g_playState == GhostPlayState::Editing) return 0;
@@ -3078,6 +3088,7 @@ static void BuildGameApi()
     a.SpriteSetAnim = Api_SpriteSetAnim;  a.SpriteSetSpeed = Api_SpriteSetSpeed;
     a.LoadScene = Api_LoadScene;  a.GetSceneName = Api_GetSceneName;  a.Quit = Api_Quit;
     a.GetObjectProps = Api_GetObjectProps;
+    a.SpriteSetState = Api_SpriteSetState;
 }
 
 // Runs between steps (never inside game code). The editor's own scene stays safe in g_playBackup.

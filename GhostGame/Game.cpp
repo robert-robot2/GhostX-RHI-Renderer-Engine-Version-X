@@ -16,8 +16,8 @@ static int FindLevelIndex()
 
 int Sprite_Play(int id, const char* clip, const char* fallback)
 {
-    if (G->SpriteSetClip(id, clip)) return 1;
-    return (fallback && G->SpriteSetClip(id, fallback)) ? 1 : 0;
+    if (G->SpriteSetState(id, clip)) return 1;
+    return (fallback && G->SpriteSetState(id, fallback)) ? 1 : 0;
 }
 
 void Sprite_FaceScreen(int id, float v)

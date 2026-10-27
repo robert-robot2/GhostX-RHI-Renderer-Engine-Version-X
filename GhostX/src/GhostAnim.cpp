@@ -89,7 +89,10 @@ bool GhostAnim_Load(GhostAnimAsset& a, const std::string& root, const std::strin
                 if (c.frames.empty()) { warn += "Skipped clip \"" + c.name + "\": it has no frames.\n"; continue; }
                 n.clips.push_back(std::move(c));
             }
-
+        if (j.contains("states") && j["states"].is_object())
+            for (auto it = j["states"].begin(); it != j["states"].end(); ++it)
+                if (it.value().is_string() && n.states.size() < 64)
+                    n.states.push_back({ it.key(), it.value().get<std::string>() });
         a = std::move(n);
         return true;
     }

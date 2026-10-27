@@ -64,6 +64,8 @@ static const GhostParamDesc kSkyParams[] =
     P_FLOAT("Night Black Cutoff",         "Night Layer", 0.03f, 0.0f, 1.0f),
     P_FLOAT("Night Black Softness",       "Night Layer", 0.20f, 0.0f, 1.0f),
     P_BOOL("Night Flip Horizontal",      "Night Layer", 0.0f),
+
+
 };
 static_assert(sizeof(kSkyParams) / sizeof(kSkyParams[0]) == SKY_PARAM_COUNT, "SkyParam enum and kSkyParams are out of sync");
 

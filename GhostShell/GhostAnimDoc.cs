@@ -37,6 +37,8 @@ namespace GhostShell
         public int Cols = 1, Rows = 1;
         public readonly List<AnimClipDoc> Clips = new();
 
+        public readonly Dictionary<string, string> States = new(StringComparer.OrdinalIgnoreCase);
+
         public int FrameCount => Cols * Rows;
 
         public void NormalizeGrid()
@@ -117,6 +119,11 @@ namespace GhostShell
                     }
                     d.Clips.Add(c);
                 }
+
+            if (o["states"] is JsonObject so)
+                foreach (var kv in so)
+                    if (kv.Value is JsonValue sv && sv.TryGetValue<string>(out var sc) && !string.IsNullOrWhiteSpace(sc))
+                        d.States[kv.Key] = sc;
             return d;
         }
 
@@ -147,6 +154,9 @@ namespace GhostShell
                 ["rows"] = Rows,
                 ["clips"] = clips,
             };
+            var st = new JsonObject();
+            foreach (var kv in States) st[kv.Key] = kv.Value;
+            o["states"] = st;
             return o.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
         }
 
