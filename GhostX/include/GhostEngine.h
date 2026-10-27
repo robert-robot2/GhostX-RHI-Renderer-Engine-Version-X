@@ -52,11 +52,13 @@ struct GhostCameraInfo
 struct GhostGameplayInfo
 {
     int   id;
-    int   role;                 // 0 static, 1 player, 2 enemy, 3 coin, 4 block, 5 goal, 6 custom
+    int   role;                 // 0 static, 1 player, 2 enemy, 3 coin, 4 block, 5 goal, 6 custom, 7 portal entry, 8 portal exit, 9 breakable, 10 moving object, 11 projectile
     int   collider;
     float csx, csy, csz;        // collider size (multiplied by the object's scale)
     float cox, coy, coz;        // collider center offset (multiplied by the object's scale)
     int   visible;
+    int   locked, pathMode, breakEffect, contents, portalTrigger;
+    float moveX, moveY, moveZ, moveSpeed, movePause;
 };
 struct GhostModParamInfo
 {
@@ -262,6 +264,7 @@ extern "C"
     GHOST_API void GhostEngine_SetObjectSize(int objectId, int axis, float worldSize);
     GHOST_API void GhostEngine_ScaleObject(int objectId, float factor);             // uniform
 
-
+    GHOST_API int  GhostEngine_GetLinkId(int objectId, char* buf, int bufSize);
+    GHOST_API void GhostEngine_SetLinkId(int objectId, const char* utf8);
 
 }

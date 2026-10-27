@@ -25,7 +25,18 @@ extern "C" {
 #define GHOST_API_MESH_SQUARE   3
 #define GHOST_API_MESH_QUAD 4
 
-
+    // Settings from Details > Gameplay > Behavior
+    typedef struct GhostObjectProps
+    {
+        char  link[32];
+        float pathOffset[3];
+        float moveSpeed, movePause;
+        int   pathMode;        // 0 ping-pong, 1 restart at A, 2 once
+        int   breakEffect;     // 0 vanish, 1 play "Break" then vanish, 2 play "Break" and leave rubble
+        int   contents;        // 0 role default, 1 nothing, 2 coin, 3 power-up
+        int   portalTrigger;   // 0 touch, 1 press Down
+        int   locked;
+    } GhostObjectProps;
 
     typedef struct GhostGameAPI
     {
@@ -117,6 +128,10 @@ extern "C" {
         int  (*LoadScene)(const char* projectRelativePath);   // switches scene after the current step. 1 = queued, 0 = file not found
         int  (*GetSceneName)(char* buf, int bufSize);         // file name of the running scene, e.g. "Level1.ghostscene" (0 = untitled)
         void (*Quit)(void);                                   // packaged game: closes it. In the editor: stops Play
+
+        int (*GetObjectProps)(int id, GhostObjectProps* out);
+
+
     } GhostGameAPI;
 
     // A game module must export:

@@ -59,6 +59,8 @@ namespace GhostShell
         public float csx, csy, csz;
         public float cox, coy, coz;
         public int visible;
+        public int locked, pathMode, breakEffect, contents, portalTrigger;
+        public float moveX, moveY, moveZ, moveSpeed, movePause;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -375,6 +377,13 @@ namespace GhostShell
         public static extern void GhostEngine_SetObjectSize(int objectId, int axis, float worldSize);
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern void GhostEngine_ScaleObject(int objectId, float factor);
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetLinkId(int objectId, [Out] byte[] buf, int bufSize);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetLinkId(int objectId, [MarshalAs(UnmanagedType.LPUTF8Str)] string text);
+
+
 
     }
 }

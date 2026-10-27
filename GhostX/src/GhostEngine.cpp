@@ -655,7 +655,7 @@ void GhostEngine_MouseDown(int px, int py, int button)
     g_scene.selectedId = id;
     g_dragging = false;
     if (id == 0) return;
-
+    if (GhostObject* lo = FindObject(id)) if (lo->locked) return;     // locked: selectable, but it never starts a drag
     GhostVec3* pos = EntityPosition(id);
     GhostVec3 o, d, hit;
     if (!pos || !ScreenRay(x, y, o, d) || !RayPlane(o, d, *pos, hit)) return;
@@ -1185,6 +1185,8 @@ static bool GizmoFrameOf(int selId, GizmoFrame& f)
     int tool = g_viewCfg.tool;
     if (tool == 4) tool = 0;                                   // the Dimension tool has no handles
     if (!o && (tool == 2 || tool == 3)) tool = 0;              // only objects can be rotated and scaled
+    if (o && o->locked) tool = 0;                              // a locked object shows plain axes and nothing can be grabbed
+
     f.tool = tool;
 
     f.ax[0] = GhostVec3(1, 0, 0); f.ax[1] = GhostVec3(0, 1, 0); f.ax[2] = GhostVec3(0, 0, 1);
@@ -1680,6 +1682,31 @@ static void DrawViewportOverlay(const GhostMat4& view, const GhostMat4& proj, co
             {
                 if (o) OverlayBounds(*o, eye);
                 OverlayGizmo(sel);
+            }
+            if (o && s.showSelection)
+            {
+                if (o->locked)
+                {
+                    const float red[4] = { 1.0f, 0.45f, 0.35f, 1.0f };
+                    g_ov.Label(o->position, "LOCKED", red, 15.0f, 0.0f, 26.0f);
+                }
+                if (o->role == GHOST_ROLE_MOVER || o->role == GHOST_ROLE_PROJECTILE)
+                {
+                    const GhostVec3 b = o->position + o->pathOffset;
+                    const float c[4] = { 1.0f, 0.62f, 0.20f, 0.95f };
+                    g_ov.Line(o->position, b, c, 2.0f, false);
+                    g_ov.Point(b, 9.0f, c);
+                    g_ov.Label(o->position, "A", c, 15.0f, 0.0f, -22.0f);
+                    g_ov.Label(b, "B", c, 15.0f, 0.0f, -16.0f);
+                }
+                if (o->role == GHOST_ROLE_PORTAL_ENTRY && !o->link.empty())
+                    for (const GhostObject& x : g_scene.objects)
+                        if (x.role == GHOST_ROLE_PORTAL_EXIT && x.link == o->link)
+                        {
+                            const float c[4] = { 0.30f, 0.95f, 0.95f, 0.95f };
+                            g_ov.Line(o->position, x.position, c, 2.0f, false);
+                            g_ov.Label(x.position, "EXIT", c, 15.0f, 0.0f, -22.0f);
+                        }
             }
             if (o && (s.showDims || s.tool == 4))
             {
@@ -2579,9 +2606,10 @@ static int Api_SetTag(int id, const char* tag)
     GhostObject* o = FindObject(id);
     if (!o) return 0;
     std::string t = tag ? tag : "";
-    static const char* names[] = { "", "Player", "Enemy", "Coin", "Block", "Goal" };
+    static const char* names[GHOST_ROLE_COUNT] = { "", "Player", "Enemy", "Coin", "Block", "Goal", nullptr,
+        "PortalEntry", "PortalExit", "Breakable", "Mover", "Projectile" };
     o->role = GHOST_ROLE_CUSTOM;
-    for (int i = 0; i < 6; i++) if (t == names[i]) { o->role = i; break; }
+    for (int i = 0; i < GHOST_ROLE_COUNT; i++) if (names[i] && t == names[i]) { o->role = i; break; }
     if (o->role == GHOST_ROLE_CUSTOM) { if (t.size() > 31) t.resize(31); o->customTag = t; }
     return 1;
 }
@@ -3006,7 +3034,19 @@ static int Api_GetSceneName(char* buf, int size)
 }
 
 static void Api_Quit() { g_quitRequested = true; }
-
+static int Api_GetObjectProps(int id, GhostObjectProps* out)
+{
+    GhostObject* o = FindObject(id);
+    if (!o || !out) return 0;
+    memset(out, 0, sizeof * out);
+    strncpy_s(out->link, sizeof out->link, o->link.c_str(), _TRUNCATE);
+    out->pathOffset[0] = o->pathOffset.x; out->pathOffset[1] = o->pathOffset.y; out->pathOffset[2] = o->pathOffset.z;
+    out->moveSpeed = o->moveSpeed;  out->movePause = o->movePause;
+    out->pathMode = o->pathMode;    out->breakEffect = o->breakEffect;
+    out->contents = o->contents;    out->portalTrigger = o->portalTrigger;
+    out->locked = o->locked ? 1 : 0;
+    return 1;
+}
 
 static void BuildGameApi()
 {
@@ -3037,6 +3077,7 @@ static void BuildGameApi()
     a.SpriteSetClip = Api_SpriteSetClip;  a.SpriteSetFlip = Api_SpriteSetFlip;  a.SpriteSetFrame = Api_SpriteSetFrame;
     a.SpriteSetAnim = Api_SpriteSetAnim;  a.SpriteSetSpeed = Api_SpriteSetSpeed;
     a.LoadScene = Api_LoadScene;  a.GetSceneName = Api_GetSceneName;  a.Quit = Api_Quit;
+    a.GetObjectProps = Api_GetObjectProps;
 }
 
 // Runs between steps (never inside game code). The editor's own scene stays safe in g_playBackup.
@@ -3162,10 +3203,12 @@ int GhostEngine_GetGameplay(int objectId, GhostGameplayInfo* out)
 {
     GhostObject* o = FindObject(objectId);
     if (!o || !out) return 0;
-      *out = { o->id, o->role, o->collider ? 1 : 0,
+    *out = { o->id, o->role, o->collider ? 1 : 0,
              o->colliderSize.x, o->colliderSize.y, o->colliderSize.z,
              o->colliderOffset.x, o->colliderOffset.y, o->colliderOffset.z,
-             o->visible ? 1 : 0 };
+             o->visible ? 1 : 0,
+             o->locked ? 1 : 0, o->pathMode, o->breakEffect, o->contents, o->portalTrigger,
+             o->pathOffset.x, o->pathOffset.y, o->pathOffset.z, o->moveSpeed, o->movePause };
     return 1;
 }
 
@@ -3180,6 +3223,16 @@ void GhostEngine_SetGameplay(const GhostGameplayInfo* in)
     o->colliderSize = { size(in->csx), size(in->csy), size(in->csz) };
     o->colliderOffset = { in->cox, in->coy, in->coz };
     o->visible = (in->visible != 0);
+    auto ci = [](int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); };
+    auto cf = [](float v, float lo, float hi) { return v != v ? lo : (v < lo ? lo : (v > hi ? hi : v)); };
+    o->locked = (in->locked != 0);
+    o->pathMode = ci(in->pathMode, 0, 2);
+    o->breakEffect = ci(in->breakEffect, 0, 2);
+    o->contents = ci(in->contents, 0, 3);
+    o->portalTrigger = ci(in->portalTrigger, 0, 2);
+    o->pathOffset = { cf(in->moveX, -10000.0f, 10000.0f), cf(in->moveY, -10000.0f, 10000.0f), cf(in->moveZ, -10000.0f, 10000.0f) };
+    o->moveSpeed = cf(in->moveSpeed, 0.01f, 100.0f);
+    o->movePause = cf(in->movePause, 0.0f, 60.0f);
 }
 
 int GhostEngine_GetCustomTag(int objectId, char* buf, int bufSize)
@@ -4052,4 +4105,23 @@ void GhostEngine_ScaleObject(int id, float f)
     if (!o || g_playState != GhostPlayState::Editing || f != f) return;
     f = f < 0.001f ? 0.001f : (f > 1000.0f ? 1000.0f : f);
     o->scale = o->scale * f;
+}
+
+int GhostEngine_GetLinkId(int id, char* buf, int size)
+{
+    if (!buf || size <= 0) return 0;
+    buf[0] = 0;
+    GhostObject* o = FindObject(id);
+    if (!o) return 0;
+    CopyMsg(o->link, buf, size);
+    return 1;
+}
+
+void GhostEngine_SetLinkId(int id, const char* t)
+{
+    GhostObject* o = FindObject(id);
+    if (!o) return;
+    std::string s = t ? t : "";
+    if (s.size() > 31) s.resize(31);
+    o->link = s;
 }

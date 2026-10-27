@@ -19,6 +19,8 @@ namespace Cfg
     constexpr float FallLimit = -15.0f;
     constexpr float CamDistance = 7.0f, CamPitch = -25.0f, CamTargetHeight = 0.6f;
     constexpr float CamTurnSpeed = 100.0f, CamSmooth = 10.0f;
+    constexpr bool SideScroller = true;        // true: W/S (up/down) don't move the player, only left/right
+    constexpr bool SmallBreaksBricks = true;   // false = small Mario only bumps bricks, like the original
 }
 
 struct GameState
@@ -40,6 +42,7 @@ struct GameState
     int   level = -1;                  // index in kLevels, -1 = not one of them
     bool  lastLevel = true;
     float advance = 0.0f;              // seconds since the Goal, for auto-advancing
+    float portalCool = 0.0f;
 };
 extern GameState S;
 
@@ -75,6 +78,8 @@ void Coin_Collect(int id);
 void Enemy_Kill(int id);
 void Blocks_Bump(int id);
 void PowerUp_Remove(int id);
+void Movers_Update(float dt);
+
 
 // ---- Game.cpp ----
 void Game_Restart(bool died);

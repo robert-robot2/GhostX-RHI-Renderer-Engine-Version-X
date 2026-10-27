@@ -8,6 +8,7 @@ using System.Drawing.Imaging;
 using System.IO;
 using System.Text;
 using System.Windows.Forms;
+using System.Windows.Forms.Design.Behavior;
 
 namespace GhostShell
 {
@@ -70,6 +71,7 @@ namespace GhostShell
             ColliderOffset = new Vec3Edit(
     () => { var g = Gp(); return (g.cox, g.coy, g.coz); },
     (x, y, z) => { var g = Gp(); g.cox = x; g.coy = y; g.coz = z; SetGp(g); });
+            Behavior = new BehaviorEdit(id);
         }
 
         private GhostObjectInfo Obj() { var i = new GhostObjectInfo(); GhostEngine.GhostEngine_GetObject(_id, ref i); return i; }
@@ -230,6 +232,11 @@ namespace GhostShell
 
         [Category("Gameplay"), DisplayName("Visible In Game")]
         public bool VisibleInGame { get => Gp().visible != 0; set { var g = Gp(); g.visible = value ? 1 : 0; SetGp(g); } }
+
+        [Category("Gameplay"), DisplayName("Locked in place")]
+        public bool Locked { get => Gp().locked != 0; set { var g = Gp(); g.locked = value ? 1 : 0; SetGp(g); } }
+
+        [Category("Gameplay")] public BehaviorEdit Behavior { get; }
     }
 
     // Play > Create Test Sprite Sheet: a 4 x 2 sheet and a matching .ghostanim, so there is something to test with

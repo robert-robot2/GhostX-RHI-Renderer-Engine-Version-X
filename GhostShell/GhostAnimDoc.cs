@@ -25,8 +25,10 @@ namespace GhostShell
 
         public static readonly (string Name, float Fps, bool Loop)[] Standard =
         {
-            ("Idle", 4f, true), ("Walk", 10f, true), ("Jump", 1f, false),
-            ("Fall", 1f, false), ("Hurt", 1f, false), ("Die", 6f, false),
+            ("Idle", 4f, true), ("Walk", 10f, true), ("Run", 14f, true), ("Jump", 1f, false),
+            ("Fall", 1f, false), ("Hurt", 1f, false), ("Die", 6f, false), ("Break", 12f, false),
+            ("Used", 1f, false),
+
         };
 
         public string Name = "NewAnimation";

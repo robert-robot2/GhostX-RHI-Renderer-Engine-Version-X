@@ -203,13 +203,22 @@ struct GhostObject
     // A model that couldn't be loaded keeps its reference here, so saving the scene doesn't lose it
     std::string missingMesh, missingMeshFile, missingFaces;
     bool      useVertexColor = false;
+    bool        locked = false;               // can't be moved in the viewport
+    std::string link;                         // portals: an Entry and an Exit with the same link are a pair (max 31 chars)
+    GhostVec3   pathOffset = { 0, 0, 0 };     // movers and projectiles: where B is, relative to A (the placed position)
+    float       moveSpeed = 2.0f, movePause = 0.0f;
+    int         pathMode = 0;                 // 0 ping-pong, 1 restart at A, 2 once
+    int         breakEffect = 0;              // breakables: 0 vanish, 1 play "Break" then vanish, 2 play "Break" and leave rubble
+    int         contents = 0;                 // blocks, breakables: 0 role default, 1 nothing, 2 coin, 3 power-up
+    int         portalTrigger = 1;            // 0 touch, 1 press Down
 };
 // The tag the game module searches by: the role's name, or the custom text
 inline std::string GhostObject_Tag(const GhostObject& o)
 {
-    static const char* names[] = { "", "Player", "Enemy", "Coin", "Block", "Goal" };
+    static const char* names[GHOST_ROLE_COUNT] = { "", "Player", "Enemy", "Coin", "Block", "Goal", "",
+        "PortalEntry", "PortalExit", "Breakable", "Mover", "Projectile" };
     if (o.role == GHOST_ROLE_CUSTOM) return o.customTag;
-    if (o.role >= 1 && o.role <= 5) return names[o.role];
+    if (o.role >= 1 && o.role < GHOST_ROLE_COUNT) return names[o.role];
     return "";
 }
 

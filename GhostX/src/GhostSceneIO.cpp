@@ -176,6 +176,12 @@ bool GhostScene_Save(const GhostScene& s, const std::string& root, const std::st
             jo["colliderSize"] = V3(o.colliderSize);
             jo["colliderOffset"] = V3(o.colliderOffset);
             jo["visible"] = o.visible;
+            jo["locked"] = o.locked;
+            jo["link"] = o.link;
+            jo["move"] = json{ { "offset", V3(o.pathOffset) },{ "speed", o.moveSpeed },{ "pause", o.movePause },{ "mode", o.pathMode } };
+            jo["breakEffect"] = o.breakEffect;
+            jo["contents"] = o.contents;
+            jo["portalTrigger"] = o.portalTrigger;
             jo["shadow"] = json{ { "mode", o.shadowMode },{ "light", o.shadowLightId },{ "receive", o.receiveShadows } };
             if (o.meshId == GHOST_MESH_QUAD)
             {
@@ -435,6 +441,20 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
                 ReadV3(jo, "colliderSize", o.colliderSize);
                 ReadV3(jo, "colliderOffset", o.colliderOffset);
                 o.visible = jo.value("visible", true);
+                o.locked = jo.value("locked", false);
+                o.link = jo.value("link", std::string());
+                if (o.link.size() > 31) o.link.resize(31);
+                if (jo.contains("move") && jo["move"].is_object())
+                {
+                    const json& mv = jo["move"];
+                    ReadV3(mv, "offset", o.pathOffset);
+                    o.moveSpeed = mv.value("speed", 2.0f);
+                    o.movePause = mv.value("pause", 0.0f);
+                    o.pathMode = Clampi(mv.value("mode", 0), 0, 2);
+                }
+                o.breakEffect = Clampi(jo.value("breakEffect", 0), 0, 2);
+                o.contents = Clampi(jo.value("contents", 0), 0, 3);
+                o.portalTrigger = Clampi(jo.value("portalTrigger", 1), 0, 2);
                 if (jo.contains("shadow") && jo["shadow"].is_object())
                 {
                     const json& sh = jo["shadow"];
@@ -636,6 +656,8 @@ unsigned int GhostScene_Hash(const GhostScene& s)
         I(o.useVertexColor ? 1 : 0);
         I(o.role); S(o.customTag); I(o.collider ? 1 : 0); V(o.colliderSize); V(o.colliderOffset); I(o.visible ? 1 : 0);
         I(o.shadowMode); I(o.shadowLightId); I(o.receiveShadows ? 1 : 0);
+        I(o.locked ? 1 : 0); S(o.link); V(o.pathOffset); F(o.moveSpeed); F(o.movePause);
+        I(o.pathMode); I(o.breakEffect); I(o.contents); I(o.portalTrigger);
         const int n = GhostMesh_FaceCount(o.meshId);
         for (int f = 0; f < n; f++) mix(&o.faces[f], sizeof(GhostMaterial));
         if (o.meshId == GHOST_MESH_QUAD)

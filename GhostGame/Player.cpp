@@ -41,6 +41,44 @@ static void Shrink(Body& b)
     for (int i = 0; i < 3; i++) b.off[i] /= Cfg::GrowFactor;
 }
 
+// Stand on or touch an Entry, then press its trigger. A Link ID pairs an Entry with an Exit.
+// A Link ID ending in .ghostscene loads that scene instead.
+static bool TryPortal(Body& b, int entry)
+{
+    GhostObjectProps pr = {};
+    if (!G->GetObjectProps(entry, &pr)) return false;
+    const bool go = pr.portalTrigger == 0 ||
+        (pr.portalTrigger == 1 && (G->KeyPressed(VK_DOWN) || G->KeyPressed('S'))) ||
+        (pr.portalTrigger == 2 && G->KeyPressed('F'));
+    if (!go) return false;
+    if (strstr(pr.link, ".ghostscene")) return G->LoadScene(pr.link) != 0;
+
+    int ids[64];
+    const int n = G->FindAllByTag("PortalExit", ids, 64);
+    for (int i = 0; i < n; i++)
+    {
+        GhostObjectProps ex = {};
+        if (!G->GetObjectProps(ids[i], &ex) || strcmp(ex.link, pr.link) != 0) continue;
+
+        float mn[3], mx[3], p[3];
+        G->GetPosition(ids[i], p);
+        float cx = p[0], cz = p[2], top = p[1];
+        if (G->GetBounds(ids[i], mn, mx)) { cx = (mn[0] + mx[0]) * 0.5f; cz = (mn[2] + mx[2]) * 0.5f; top = mx[1]; }
+        b.pos[0] = cx;
+        b.pos[1] = top + b.half[1] + 0.02f;
+        b.pos[2] = cz;
+        memset(g_vel, 0, sizeof g_vel);
+        S.camSnap = true;
+
+        // There is no portal cool yet i think this got broken becaus ei adde dmid code seesion
+      //  S.portalCool = 0.4f;
+
+
+        return true;
+    }
+    return false;
+}
+
 void Player_Update(float dt)
 {
     Body b;
@@ -48,8 +86,8 @@ void Player_Update(float dt)
     S.error = nullptr;
 
     // ---- Input: camera-relative movement ----
-    float ix = (G->KeyDown('D') ? 1.0f : 0.0f) - (G->KeyDown('A') ? 1.0f : 0.0f);
-    float iz = (G->KeyDown('W') ? 1.0f : 0.0f) - (G->KeyDown('S') ? 1.0f : 0.0f);
+    float ix = ((G->KeyDown('D') || G->KeyDown(VK_RIGHT)) ? 1.0f : 0.0f) - ((G->KeyDown('A') || G->KeyDown(VK_LEFT)) ? 1.0f : 0.0f);
+    float iz = Cfg::SideScroller ? 0.0f : ((G->KeyDown('W') ? 1.0f : 0.0f) - (G->KeyDown('S') ? 1.0f : 0.0f));
     float yaw = S.camYaw * 0.0174532925f;
     float sy = sinf(yaw), cy = cosf(yaw);
     float dx = sy * iz + cy * ix;                  // forward = (sin, cos), right = (cos, -sin)
@@ -91,6 +129,11 @@ void Player_Update(float dt)
         if (strcmp(tag, "Coin") == 0) Coin_Collect(ids[i]);
         else if (strcmp(tag, "Goal") == 0) S.complete = true;
         else if (strcmp(tag, "PowerUp") == 0) { PowerUp_Remove(ids[i]); Grow(b); }
+        else if (strcmp(tag, "Projectile") == 0 && S.invuln <= 0.0f)           // fireballs hurt and can't be stomped
+        {
+            if (S.big) { Shrink(b); S.invuln = Cfg::Invulnerable; S.hurt = 0.45f; g_vel[1] = 6.0f; }
+            else { Game_Restart(true); return; }
+        }
         else if (strcmp(tag, "Enemy") == 0)
         {
             float emn[3], emx[3];
@@ -110,6 +153,24 @@ void Player_Update(float dt)
         }
     }
 
+    // Needs POrtal Cool
+
+    /*
+    if (S.portalCool > 0.0f) S.portalCool -= dt;
+    else
+    {
+        Body e = b;
+        for (int i = 0; i < 3; i++) e.half[i] += 0.1f;       // a slightly bigger box, so standing on a pipe still counts
+        int pid[16];
+        const int pn = QueryBody(e, pid, 16);
+        for (int i = 0; i < pn; i++)
+        {
+            char t[32];
+            if (G->GetTag(pid[i], t, sizeof t) && strcmp(t, "PortalEntry") == 0 && TryPortal(b, pid[i])) break;
+        }
+    }
+    */
+
     // ---- Falling off the world ----
     if (b.pos[1] < Cfg::FallLimit) { Game_Restart(true); return; }
 
@@ -120,10 +181,13 @@ void Player_Update(float dt)
         Sprite_FaceScreen(S.player, g_vel[0] * cosf(yaw2) - g_vel[2] * sinf(yaw2));   // left / right as seen on screen
 
         const float planar = sqrtf(g_vel[0] * g_vel[0] + g_vel[2] * g_vel[2]);
+        const bool shift = G->KeyDown(VK_SHIFT);
+        const bool crouch = G->KeyDown(VK_DOWN) || G->KeyDown('S');
         if (S.hurt > 0.0f)        Sprite_Play(S.player, "Hurt", "Idle");
         else if (!g_grounded)     Sprite_Play(S.player, g_vel[1] > 0.0f ? "Jump" : "Fall", "Jump");
-        else if (planar > 0.4f)   Sprite_Play(S.player, "Walk", "Idle");
-        else                      Sprite_Play(S.player, "Idle", nullptr);
+        else if (planar > 0.4f) { if (shift) Sprite_Play(S.player, "Run", "Walk"); else Sprite_Play(S.player, "Walk", "Idle"); }
+        else if (crouch)          Sprite_Play(S.player, "Crouch", "Idle");
+        else                      Sprite_Play(S.player, "Idle", nullptr);                     Sprite_Play(S.player, "Idle", nullptr);
 
         G->SpriteSetSpeed(S.player, (g_grounded && planar > 0.4f && G->KeyDown(VK_SHIFT)) ? 1.6f : 1.0f);   // running looks faster
         if (S.hurt > 0.0f) S.hurt -= dt;

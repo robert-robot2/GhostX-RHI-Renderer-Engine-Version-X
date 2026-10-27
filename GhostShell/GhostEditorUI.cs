@@ -3,9 +3,10 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Drawing;
+using System.IO;
 using System.Text;
 using System.Windows.Forms;
-using System.IO;
+using System.Windows.Forms.Design.Behavior;
 using WeifenLuo.WinFormsUI.Docking;
 namespace GhostShell
 {
@@ -402,7 +403,8 @@ namespace GhostShell
     }
     internal class RoleConverter : FixedListConverter
     {
-        public static readonly string[] Names = { "Static", "Player", "Enemy", "Coin", "Block", "Goal", "Custom" };
+        public static readonly string[] Names = { "Static", "Player", "Enemy", "Coin", "Block", "Goal", "Custom",
+            "Portal Entry", "Portal Exit", "Breakable", "Moving Object", "Projectile" };
         protected override string[] Items => Names;
     }
 
@@ -528,6 +530,81 @@ namespace GhostShell
         protected override string[] Items => Names;
     }
 
+    internal sealed class PathModeConverter : FixedListConverter
+    { public static readonly string[] Names = { "Ping-Pong (A to B and back)", "Restart (jump back to A)", "Once (stop at B)" }; protected override string[] Items => Names; }
+    internal sealed class BreakEffectConverter : FixedListConverter
+    { public static readonly string[] Names = { "Vanish", "Play Break clip, then vanish", "Play Break clip, leave rubble" }; protected override string[] Items => Names; }
+    internal sealed class ContentsConverter : FixedListConverter
+    { public static readonly string[] Names = { "Role default", "Nothing", "Coin", "Power-up" }; protected override string[] Items => Names; }
+    internal sealed class PortalTriggerConverter : FixedListConverter
+    { public static readonly string[] Names = { "Touch (walk through)", "Press Down", "Press F" }; protected override string[] Items => Names; }
+
+    // Details > Gameplay > Behavior: the settings the new roles use
+    [TypeConverter(typeof(ExpandableObjectConverter))]
+    internal sealed class BehaviorEdit
+    {
+        private readonly int _id;
+
+        public BehaviorEdit(int id)
+        {
+            _id = id;
+            MoveOffset = new Vec3Edit(
+                () => { var g = Get(); return (g.moveX, g.moveY, g.moveZ); },
+                (x, y, z) => { var g = Get(); g.moveX = x; g.moveY = y; g.moveZ = z; Set(g); });
+        }
+
+        private GhostGameplayInfo Get() { var g = new GhostGameplayInfo(); GhostEngine.GhostEngine_GetGameplay(_id, ref g); return g; }
+        private void Set(GhostGameplayInfo g) => GhostEngine.GhostEngine_SetGameplay(ref g);
+
+        [DisplayName("Link ID (portals, or Scenes/Other.ghostscene)")]
+        public string LinkId
+        {
+            get
+            {
+                var b = new byte[64];
+                GhostEngine.GhostEngine_GetLinkId(_id, b, b.Length);
+                int n = Array.IndexOf(b, (byte)0);
+                return Encoding.UTF8.GetString(b, 0, n < 0 ? b.Length : n);
+            }
+            set => GhostEngine.GhostEngine_SetLinkId(_id, value ?? "");
+        }
+
+        [DisplayName("Portal Trigger"), TypeConverter(typeof(PortalTriggerConverter))]
+        public string PortalTrigger
+        {
+            get => PortalTriggerConverter.Names[Math.Clamp(Get().portalTrigger, 0, 2)];
+            set { int i = Array.IndexOf(PortalTriggerConverter.Names, value); if (i >= 0) { var g = Get(); g.portalTrigger = i; Set(g); } }
+        }
+
+        [DisplayName("Move Offset (A to B)")] public Vec3Edit MoveOffset { get; }
+        [DisplayName("Move Speed (units/s)")] public float MoveSpeed { get => Get().moveSpeed; set { var g = Get(); g.moveSpeed = value; Set(g); } }
+        [DisplayName("Move Pause at ends (s)")] public float MovePause { get => Get().movePause; set { var g = Get(); g.movePause = value; Set(g); } }
+
+        [DisplayName("Path Mode"), TypeConverter(typeof(PathModeConverter))]
+        public string PathMode
+        {
+            get => PathModeConverter.Names[Math.Clamp(Get().pathMode, 0, 2)];
+            set { int i = Array.IndexOf(PathModeConverter.Names, value); if (i >= 0) { var g = Get(); g.pathMode = i; Set(g); } }
+        }
+
+        [DisplayName("Break Effect"), TypeConverter(typeof(BreakEffectConverter))]
+        public string BreakEffect
+        {
+            get => BreakEffectConverter.Names[Math.Clamp(Get().breakEffect, 0, 2)];
+            set { int i = Array.IndexOf(BreakEffectConverter.Names, value); if (i >= 0) { var g = Get(); g.breakEffect = i; Set(g); } }
+        }
+
+        [DisplayName("Contents (blocks, breakables)"), TypeConverter(typeof(ContentsConverter))]
+        public string Contents
+        {
+            get => ContentsConverter.Names[Math.Clamp(Get().contents, 0, 3)];
+            set { int i = Array.IndexOf(ContentsConverter.Names, value); if (i >= 0) { var g = Get(); g.contents = i; Set(g); } }
+        }
+
+        public override string ToString() => "(role settings)";
+    }
+
+
     internal class ObjectProxy
     {
         private readonly int _id;
@@ -557,6 +634,7 @@ namespace GhostShell
     () => { var g = GetG(); return (g.cox, g.coy, g.coz); },
     (x, y, z) => { var g = GetG(); g.cox = x; g.coy = y; g.coz = z; SetG(g); });
             Dimensions = new DimEdit(id);
+            Behavior = new BehaviorEdit(id);
         }
 
         private GhostObjectInfo Get() { var i = new GhostObjectInfo(); GhostEngine.GhostEngine_GetObject(_id, ref i); return i; }
@@ -907,6 +985,13 @@ namespace GhostShell
             get => GetG().visible != 0;
             set { var g = GetG(); g.visible = value ? 1 : 0; SetG(g); }
         }
+
+        [Category("Gameplay"), DisplayName("Locked in place")]
+        public bool Locked { get => GetG().locked != 0; set { var g = GetG(); g.locked = value ? 1 : 0; SetG(g); } }
+
+        [Category("Gameplay")] public BehaviorEdit Behavior { get; }
+
+
     }
 
     internal abstract class LightProxy

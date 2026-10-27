@@ -32,9 +32,11 @@ void Game_Restart(bool died)
     if (died) S.deaths++;
     S.coins = 0; S.enemiesDown = 0;
     S.big = false; S.advance = 0.0f; S.invuln = 0.0f; S.hurt = 0.0f; S.complete = false;
+    S.portalCool = 0.0f;
     Level_Reset();
     Player_Reset();
     S.camSnap = true;
+
 }
 
 static void Camera_Update(float dt)
@@ -173,6 +175,7 @@ GHOST_GAME_EXPORT void GhostGame_Update(float dt)
         }
         if (G->UIButtonClicked(g_ui, "QuitButton")) G->Quit();
     }
+    Movers_Update(dt);
     if (!S.complete) Player_Update(dt);
     else Sprite_Play(S.player, "Idle", nullptr);
     if (S.complete && !S.lastLevel)                      // go to the next level after 2.5 seconds
