@@ -472,7 +472,8 @@ To package an existing Release build:
 - [ ] Orbit Camera assigned as the Game Start Camera.
 - [x] Scene saved as `Scenes/Level1.ghostscene`.
 - [ ] Startup scene configured in `TestGame.ghostproject`.
-- [ ] HUD created and tested.
+- [x] HUD created.
+- [ ] HUD Tested.
 - [x] Play Mode Test.
 
 ### Level 2 and Gameplay
