@@ -463,10 +463,12 @@ To package an existing Release build:
 - [ ] Object Roles and colliders configured.
 - [ ] Orbit Camera assigned as the Game Start Camera.
 - [x] Scene saved as `Scenes/Level1.ghostscene`.
-- [ ] Startup scene configured in `TestGame.ghostproject`.
+- [x] Startup scene configured in `TestGame.ghostproject`.
 - [x] HUD created.
+- [x] HUD Renders.
 - [ ] HUD Tested.
 - [x] Play Mode Test.
+- [ ] New Window Play Mode Test Error.
 
 ### Level 2 and Gameplay
 
