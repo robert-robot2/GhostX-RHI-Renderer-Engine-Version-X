@@ -161,7 +161,7 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 | Drag a texture tile onto an object | Apply it (hold `Shift` for one face) |
 | 'Ctrl + D' | Duplicates Selected Item |
 > Camera keys only work while a viewport has focus, so typing in a panel never moves the camera.
-
+- Coming Soon, Right Click Features, Copy Paste etc.
 ## How To FAQ
 
 - Coming Soon
