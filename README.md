@@ -86,12 +86,12 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [x] Phase 15.C: Advanced Object Roles
 - [x] Phase 15.E: 2D Animation States Push to Phase 16
 - [x] Phase 15.G: Restore Function: Projects New/Load from 15.A /Removed var hint fixed Constructor In GhostCOntentBrowser.cs
+- [ ] Phase 15.F: Controls: Ctrl in Editor removed for down, Q/E/Space added for Up and Down
 - **Active Core**
 - [ ] Phase 12.E: Add UI For PlayTest On Level 1, HUD, enemies, roles, Collision, Camera, Animation States???
 - [ ] Phase 12.D: Test: Level 2 Build And Test Play Packaged Exe / Instructions/ Scene Switching
 - [ ] Phase 17: Super Mario Infinitus Required: Expert Roles/ SkySphere inactive Below Axis For underground
 - [ ] Phase 15.D: Skysphere add full Display without horizon cutoff toggle
-- [ ] Phase 15.F: Controls: Ctrl removed for down, Q/E added for Up and Down
 - [ ] Phase 16: Sprite Animation State Editor Phases
 - **Active SubCore**
 - [ ] Phase 13.D: A CAD-style set of annotation tools on top of the blueprint grid.
