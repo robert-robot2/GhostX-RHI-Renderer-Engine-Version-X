@@ -43,7 +43,7 @@ namespace GhostShell
             BackColor = Bg;
 
             var bar = new Panel { Dock = DockStyle.Top, Height = 30, BackColor = Bg };
-            var _hint = new Label
+            _hint = new Label
             {
                 Dock = DockStyle.Fill,
                 ForeColor = Color.Gray,
