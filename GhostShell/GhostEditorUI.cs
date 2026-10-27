@@ -1624,6 +1624,16 @@ namespace GhostShell
                     Add("Triangle", "obj", 1);
                     Add("Ship", "obj", 2);
                     Add("Square", "obj", 3);
+                    Add("Cylinder", "obj", 5);
+                    Add("Cone", "obj", 6);
+                    Add("Capsule", "obj", 7);
+                    Add("Plane", "obj", 8);
+                    Add("UV Sphere", "obj", 9);
+                    Add("Ico Sphere", "obj", 10);
+                    Add("Torus", "obj", 11);
+                    Add("Pyramid", "obj", 12);
+                    Add("Wedge", "obj", 13);
+                    Add("Disc", "obj", 14);
                     break;
                 case 2:
                     Add("Sprite Actor", "obj", 4);

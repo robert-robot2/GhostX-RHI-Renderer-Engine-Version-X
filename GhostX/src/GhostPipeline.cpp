@@ -92,6 +92,420 @@ static GhostVertex QuadVertices[] =
 };
 static unsigned short QuadIndices[] = { 0, 1, 2,  0, 2, 3 };
 
+// ============================================================
+//  Procedural geometry helpers
+// ============================================================
+#define PRIM_PI 3.14159265358979323846f
+
+// ---- Cylinder (16 segments, separate top/bottom/side faces) ----
+// Top face: indices 0..15  (16 tris = 48 indices)
+// Bottom face: indices 48..95
+// Side face: indices 96..191 (32 tris)
+static std::vector<GhostVertex> s_CylinderVerts;
+static std::vector<unsigned short> s_CylinderIdx;
+
+static void BuildCylinder()
+{
+    if (!s_CylinderVerts.empty()) return;
+    const int SEG = 16;
+    // center top, center bottom, then SEG*2 ring verts (top ring, bottom ring)
+    // plus SEG*2 side verts with correct normals
+    const float y0 = -0.5f, y1 = 0.5f;
+
+    // Top cap center
+    s_CylinderVerts.push_back({ 0,y1,0, 1,1,1,1, 0,1,0, 0.5f,0.5f });
+    // Bottom cap center  
+    s_CylinderVerts.push_back({ 0,y0,0, 1,1,1,1, 0,-1,0, 0.5f,0.5f });
+
+    // Top ring verts (for caps, normal = up/down)
+    for (int i = 0; i < SEG; i++) {
+        float a = 2.f * PRIM_PI * i / SEG;
+        float x = cosf(a) * 0.5f, z = sinf(a) * 0.5f;
+        s_CylinderVerts.push_back({ x,y1,z, 1,1,1,1, 0,1,0, x + 0.5f, z + 0.5f });
+    }
+    // Bottom ring verts (for caps)
+    for (int i = 0; i < SEG; i++) {
+        float a = 2.f * PRIM_PI * i / SEG;
+        float x = cosf(a) * 0.5f, z = sinf(a) * 0.5f;
+        s_CylinderVerts.push_back({ x,y0,z, 1,1,1,1, 0,-1,0, x + 0.5f, z + 0.5f });
+    }
+    // Side verts (top then bottom, outward normals, per-segment UV)
+    for (int i = 0; i <= SEG; i++) {
+        float a = 2.f * PRIM_PI * i / SEG;
+        float x = cosf(a) * 0.5f, z = sinf(a) * 0.5f;
+        float nx = cosf(a), nz = sinf(a);
+        float u = (float)i / SEG;
+        s_CylinderVerts.push_back({ x,y1,z, 1,1,1,1, nx,0,nz, u,0 });
+        s_CylinderVerts.push_back({ x,y0,z, 1,1,1,1, nx,0,nz, u,1 });
+    }
+
+    // Top cap tris (fan from vertex 0)
+    for (int i = 0; i < SEG; i++) {
+        int a = 2 + i, b = 2 + (i + 1) % SEG;
+        s_CylinderIdx.push_back(0); s_CylinderIdx.push_back(a); s_CylinderIdx.push_back(b);
+    }
+    // Bottom cap tris (fan from vertex 1, wound CW from below)
+    for (int i = 0; i < SEG; i++) {
+        int a = 2 + SEG + i, b = 2 + SEG + (i + 1) % SEG;
+        s_CylinderIdx.push_back(1); s_CylinderIdx.push_back(b); s_CylinderIdx.push_back(a);
+    }
+    // Side tris
+    int base = 2 + SEG * 2;
+    for (int i = 0; i < SEG; i++) {
+        int tl = base + i * 2, tr = base + (i + 1) * 2;
+        int bl = tl + 1, br = tr + 1;
+        s_CylinderIdx.push_back(tl); s_CylinderIdx.push_back(bl); s_CylinderIdx.push_back(tr);
+        s_CylinderIdx.push_back(bl); s_CylinderIdx.push_back(br); s_CylinderIdx.push_back(tr);
+    }
+}
+
+// ---- Cone (16 segments) ----
+static std::vector<GhostVertex> s_ConeVerts;
+static std::vector<unsigned short> s_ConeIdx;
+
+static void BuildCone()
+{
+    if (!s_ConeVerts.empty()) return;
+    const int SEG = 16;
+    const float yBot = -0.5f, yTop = 0.5f;
+
+    // Bottom cap center
+    s_ConeVerts.push_back({ 0,yBot,0, 1,1,1,1, 0,-1,0, 0.5f,0.5f });
+    // Bottom ring
+    for (int i = 0; i < SEG; i++) {
+        float a = 2.f * PRIM_PI * i / SEG;
+        float x = cosf(a) * 0.5f, z = sinf(a) * 0.5f;
+        s_ConeVerts.push_back({ x,yBot,z, 1,1,1,1, 0,-1,0, x + 0.5f,z + 0.5f });
+    }
+    // Side: apex + ring with outward-slanted normals
+    // apex (repeated SEG times for correct normals)
+    float slopeY = 0.5f / sqrtf(0.5f * 0.5f + 1.0f * 1.0f); // sin of slope angle
+    float slopeR = 1.0f / sqrtf(0.5f * 0.5f + 1.0f * 1.0f); // cos
+    for (int i = 0; i < SEG; i++) {
+        float a = 2.f * PRIM_PI * (i + 0.5f) / SEG;
+        float nx = cosf(a) * slopeR, nz = sinf(a) * slopeR;
+        s_ConeVerts.push_back({ 0,yTop,0, 1,1,1,1, nx,slopeY,nz, (float)(i + 0.5f) / SEG,0 });
+    }
+    // Side ring
+    for (int i = 0; i <= SEG; i++) {
+        float a = 2.f * PRIM_PI * i / SEG;
+        float x = cosf(a) * 0.5f, z = sinf(a) * 0.5f;
+        float nx = cosf(a) * slopeR, nz = sinf(a) * slopeR;
+        s_ConeVerts.push_back({ x,yBot,z, 1,1,1,1, nx,slopeY,nz, (float)i / SEG,1 });
+    }
+
+    // Bottom cap
+    for (int i = 0; i < SEG; i++) {
+        int a = 1 + i, b = 1 + (i + 1) % SEG;
+        s_ConeIdx.push_back(0); s_ConeIdx.push_back(b); s_ConeIdx.push_back(a);
+    }
+    // Side tris
+    int apexBase = 1 + SEG, ringBase = apexBase + SEG;
+    for (int i = 0; i < SEG; i++) {
+        s_ConeIdx.push_back((unsigned short)(apexBase + i));
+        s_ConeIdx.push_back((unsigned short)(ringBase + i));
+        s_ConeIdx.push_back((unsigned short)(ringBase + i + 1));
+    }
+}
+
+// ---- Capsule (16 seg, 8 rings each hemisphere + 1 cylinder ring) ----
+static std::vector<GhostVertex> s_CapsuleVerts;
+static std::vector<unsigned short> s_CapsuleIdx;
+
+static void BuildCapsule()
+{
+    if (!s_CapsuleVerts.empty()) return;
+    const int SEG = 16, RINGS = 6;
+    // Top hemisphere, cylinder band, bottom hemisphere
+    // Total height: 2 units (-1 to 1), radius 0.5
+    const float R = 0.5f, cH = 0.5f; // cylinder half-height
+
+    auto addVert = [&](float x, float y, float z, float u, float v) {
+        float len = sqrtf(x * x + y * y + z * z);
+        float nx = x / len, ny = y / len, nz = z / len;
+        s_CapsuleVerts.push_back({ x,y,z,1,1,1,1,nx,ny,nz,u,v });
+        };
+
+    // Top cap (RINGS rings from top pole downward to equator)
+    for (int r = 0; r <= RINGS; r++) {
+        float phi = PRIM_PI * 0.5f * r / RINGS; // 0 = top pole, pi/2 = equator
+        float cy = cH + R * cosf(phi);
+        float cr = R * sinf(phi);
+        for (int i = 0; i <= SEG; i++) {
+            float a = 2.f * PRIM_PI * i / SEG;
+            float u = (float)i / SEG, v = (float)r / (RINGS * 2 + 1);
+            addVert(cr * cosf(a), cy, cr * sinf(a), u, v);
+        }
+    }
+    // Bottom cap (RINGS rings from equator down to bottom pole)
+    for (int r = 0; r <= RINGS; r++) {
+        float phi = PRIM_PI * 0.5f + PRIM_PI * 0.5f * r / RINGS;
+        float cy = -cH + R * cosf(phi);
+        float cr = R * sinf(phi);
+        for (int i = 0; i <= SEG; i++) {
+            float a = 2.f * PRIM_PI * i / SEG;
+            float u = (float)i / SEG, v = (float)(RINGS + r) / (RINGS * 2 + 1);
+            addVert(cr * cosf(a), cy, cr * sinf(a), u, v);
+        }
+    }
+
+    int stride = SEG + 1;
+    int totalRings = (RINGS + 1) * 2;
+    for (int r = 0; r < totalRings - 1; r++) {
+        for (int i = 0; i < SEG; i++) {
+            int tl = r * stride + i, tr = tl + 1, bl = tl + stride, br = bl + 1;
+            s_CapsuleIdx.push_back(tl); s_CapsuleIdx.push_back(bl); s_CapsuleIdx.push_back(tr);
+            s_CapsuleIdx.push_back(bl); s_CapsuleIdx.push_back(br); s_CapsuleIdx.push_back(tr);
+        }
+    }
+}
+
+// ---- Plane (subdivided 1x1 quad, 10x10 grid) ----
+static std::vector<GhostVertex> s_PlaneVerts;
+static std::vector<unsigned short> s_PlaneIdx;
+
+static void BuildPlane()
+{
+    if (!s_PlaneVerts.empty()) return;
+    const int N = 10;
+    for (int z = 0; z <= N; z++)
+        for (int x = 0; x <= N; x++) {
+            float fx = (float)x / N - 0.5f, fz = (float)z / N - 0.5f;
+            s_PlaneVerts.push_back({ fx,0,fz, 1,1,1,1, 0,1,0, (float)x / N,(float)z / N });
+        }
+    for (int z = 0; z < N; z++)
+        for (int x = 0; x < N; x++) {
+            int tl = z * (N + 1) + x, tr = tl + 1, bl = tl + (N + 1), br = bl + 1;
+            s_PlaneIdx.push_back(tl); s_PlaneIdx.push_back(bl); s_PlaneIdx.push_back(tr);
+            s_PlaneIdx.push_back(bl); s_PlaneIdx.push_back(br); s_PlaneIdx.push_back(tr);
+        }
+}
+
+// ---- UV Sphere (16 seg x 12 rings) ----
+static std::vector<GhostVertex> s_UVSphereVerts;
+static std::vector<unsigned short> s_UVSphereIdx;
+
+static void BuildUVSphere()
+{
+    if (!s_UVSphereVerts.empty()) return;
+    const int SEG = 16, RINGS = 12;
+    for (int r = 0; r <= RINGS; r++) {
+        float phi = PRIM_PI * r / RINGS;
+        float y = cosf(phi) * 0.5f, cr = sinf(phi) * 0.5f;
+        for (int i = 0; i <= SEG; i++) {
+            float a = 2.f * PRIM_PI * i / SEG;
+            float x = cr * cosf(a), z = cr * sinf(a);
+            float len = sqrtf(x * x + y * y + z * z);
+            s_UVSphereVerts.push_back({ x,y,z,1,1,1,1, x / len,y / len,z / len, (float)i / SEG,(float)r / RINGS });
+        }
+    }
+    int stride = SEG + 1;
+    for (int r = 0; r < RINGS; r++)
+        for (int i = 0; i < SEG; i++) {
+            int tl = r * stride + i, tr = tl + 1, bl = tl + stride, br = bl + 1;
+            s_UVSphereIdx.push_back(tl); s_UVSphereIdx.push_back(bl); s_UVSphereIdx.push_back(tr);
+            s_UVSphereIdx.push_back(bl); s_UVSphereIdx.push_back(br); s_UVSphereIdx.push_back(tr);
+        }
+}
+
+// ---- Ico Sphere (subdivided icosahedron, 2 passes = 320 tris) ----
+static std::vector<GhostVertex> s_IcoVerts;
+static std::vector<unsigned short> s_IcoIdx;
+
+static void BuildIcoSphere()
+{
+    if (!s_IcoVerts.empty()) return;
+
+    const float t = (1.f + sqrtf(5.f)) * 0.5f;
+    struct F3 { float x, y, z; };
+    struct I3 { int a, b, c; };
+
+    F3 raw[12] = {
+        { -1,t,0 },{ 1,t,0 },{ -1,-t,0 },{ 1,-t,0 },
+        { 0,-1,t },{ 0,1,t },{ 0,-1,-t },{ 0,1,-t },
+        { t,0,-1 },{ t,0,1 },{ -t,0,-1 },{ -t,0,1 }
+    };
+
+    std::vector<F3> pts;
+    for (auto& p : raw) {
+        float len = sqrtf(p.x * p.x + p.y * p.y + p.z * p.z);
+        pts.push_back({ p.x / len * 0.5f, p.y / len * 0.5f, p.z / len * 0.5f });
+    }
+
+    std::vector<I3> faces = {
+        { 0,11,5 },{ 0,5,1 },{ 0,1,7 },{ 0,7,10 },{ 0,10,11 },
+        { 1,5,9 },{ 5,11,4 },{ 11,10,2 },{ 10,7,6 },{ 7,1,8 },
+        { 3,9,4 },{ 3,4,2 },{ 3,2,6 },{ 3,6,8 },{ 3,8,9 },
+        { 4,9,5 },{ 2,4,11 },{ 6,2,10 },{ 8,6,7 },{ 9,8,1 }
+    };
+
+    for (int sub = 0; sub < 2; sub++) {
+        std::vector<I3> newFaces;
+        for (auto& f : faces) {
+            auto mid = [&](int x, int y) -> int {
+                float mx = (pts[x].x + pts[y].x) * 0.5f;
+                float my = (pts[x].y + pts[y].y) * 0.5f;
+                float mz = (pts[x].z + pts[y].z) * 0.5f;
+                float len = sqrtf(mx * mx + my * my + mz * mz);
+                pts.push_back({ mx / len * 0.5f, my / len * 0.5f, mz / len * 0.5f });
+                return (int)pts.size() - 1;
+                };
+            int ab = mid(f.a, f.b), bc = mid(f.b, f.c), ca = mid(f.c, f.a);
+            newFaces.push_back({ f.a, ab, ca });
+            newFaces.push_back({ f.b, bc, ab });
+            newFaces.push_back({ f.c, ca, bc });
+            newFaces.push_back({ ab, bc, ca });
+        }
+        faces = newFaces;
+    }
+
+    for (auto& p : pts) {
+        float nx = p.x * 2.f, ny = p.y * 2.f, nz = p.z * 2.f;
+        float u = atan2f(nz, nx) / (2.f * PRIM_PI) + 0.5f;
+        float v = asinf(ny < -1.f ? -1.f : (ny > 1.f ? 1.f : ny)) / PRIM_PI + 0.5f;
+        s_IcoVerts.push_back({ p.x, p.y, p.z, 1,1,1,1, nx, ny, nz, u, v });
+    }
+    for (auto& f : faces) {
+        s_IcoIdx.push_back((unsigned short)f.a);
+        s_IcoIdx.push_back((unsigned short)f.b);
+        s_IcoIdx.push_back((unsigned short)f.c);
+    }
+}
+
+// ---- Torus (24 major x 12 minor) ----
+static std::vector<GhostVertex> s_TorusVerts;
+static std::vector<unsigned short> s_TorusIdx;
+
+static void BuildTorus()
+{
+    if (!s_TorusVerts.empty()) return;
+    const int MAJ = 24, MIN = 12;
+    const float R = 0.35f, r = 0.15f; // major/minor radii (fits in 1x0.3x1 box)
+    for (int j = 0; j <= MAJ; j++) {
+        float phi = 2.f * PRIM_PI * j / MAJ;
+        float cx = R * cosf(phi), cz = R * sinf(phi);
+        for (int i = 0; i <= MIN; i++) {
+            float theta = 2.f * PRIM_PI * i / MIN;
+            float px = (R + r * cosf(theta)) * cosf(phi);
+            float py = r * sinf(theta);
+            float pz = (R + r * cosf(theta)) * sinf(phi);
+            float nx = cosf(theta) * cosf(phi);
+            float ny = sinf(theta);
+            float nz = cosf(theta) * sinf(phi);
+            s_TorusVerts.push_back({ px,py,pz,1,1,1,1,nx,ny,nz,(float)j / MAJ,(float)i / MIN });
+        }
+    }
+    int stride = MIN + 1;
+    for (int j = 0; j < MAJ; j++)
+        for (int i = 0; i < MIN; i++) {
+            int tl = j * stride + i, tr = tl + 1, bl = tl + stride, br = bl + 1;
+            s_TorusIdx.push_back(tl); s_TorusIdx.push_back(bl); s_TorusIdx.push_back(tr);
+            s_TorusIdx.push_back(bl); s_TorusIdx.push_back(br); s_TorusIdx.push_back(tr);
+        }
+}
+
+// ---- Pyramid (square base) ----
+static GhostVertex PyramidVertices[] = {
+    // Bottom face
+    { -0.5f,-0.5f,-0.5f, 1,1,1,1, 0,-1,0, 0,0 },
+    { 0.5f,-0.5f,-0.5f, 1,1,1,1, 0,-1,0, 1,0 },
+    { 0.5f,-0.5f, 0.5f, 1,1,1,1, 0,-1,0, 1,1 },
+    { -0.5f,-0.5f, 0.5f, 1,1,1,1, 0,-1,0, 0,1 },
+    // Front face
+    { -0.5f,-0.5f,-0.5f, 1,1,1,1, 0,0.4472f,-0.8944f, 0,1 },
+    { 0.5f,-0.5f,-0.5f, 1,1,1,1, 0,0.4472f,-0.8944f, 1,1 },
+    { 0.0f, 0.5f, 0.0f, 1,1,1,1, 0,0.4472f,-0.8944f, 0.5f,0 },
+    // Back face
+    { 0.5f,-0.5f, 0.5f, 1,1,1,1, 0,0.4472f, 0.8944f, 0,1 },
+    { -0.5f,-0.5f, 0.5f, 1,1,1,1, 0,0.4472f, 0.8944f, 1,1 },
+    { 0.0f, 0.5f, 0.0f, 1,1,1,1, 0,0.4472f, 0.8944f, 0.5f,0 },
+    // Left face
+    { -0.5f,-0.5f, 0.5f, 1,1,1,1, -0.8944f,0.4472f,0, 0,1 },
+    { -0.5f,-0.5f,-0.5f, 1,1,1,1, -0.8944f,0.4472f,0, 1,1 },
+    { 0.0f, 0.5f, 0.0f, 1,1,1,1, -0.8944f,0.4472f,0, 0.5f,0 },
+    // Right face
+    { 0.5f,-0.5f,-0.5f, 1,1,1,1, 0.8944f,0.4472f,0, 0,1 },
+    { 0.5f,-0.5f, 0.5f, 1,1,1,1, 0.8944f,0.4472f,0, 1,1 },
+    { 0.0f, 0.5f, 0.0f, 1,1,1,1, 0.8944f,0.4472f,0, 0.5f,0 },
+};
+static unsigned short PyramidIndices[] = {
+    0,1,2,  0,2,3,        // bottom
+    4,5,6,                 // front
+    7,8,9,                 // back
+    10,11,12,              // left
+    13,14,15,              // right
+};
+
+// ---- Wedge (ramp) ----
+static GhostVertex WedgeVertices[] = {
+    // Bottom
+    { -0.5f,-0.5f,-0.5f, 1,1,1,1, 0,-1,0, 0,0 },
+    { 0.5f,-0.5f,-0.5f, 1,1,1,1, 0,-1,0, 1,0 },
+    { 0.5f,-0.5f, 0.5f, 1,1,1,1, 0,-1,0, 1,1 },
+    { -0.5f,-0.5f, 0.5f, 1,1,1,1, 0,-1,0, 0,1 },
+    // Back (vertical)
+    { -0.5f,-0.5f, 0.5f, 1,1,1,1, 0,0,1, 0,1 },
+    { 0.5f,-0.5f, 0.5f, 1,1,1,1, 0,0,1, 1,1 },
+    { 0.5f, 0.5f, 0.5f, 1,1,1,1, 0,0,1, 1,0 },
+    { -0.5f, 0.5f, 0.5f, 1,1,1,1, 0,0,1, 0,0 },
+    // Slope
+    { -0.5f,-0.5f,-0.5f, 1,1,1,1, 0,0.7071f,-0.7071f, 0,1 },
+    { 0.5f,-0.5f,-0.5f, 1,1,1,1, 0,0.7071f,-0.7071f, 1,1 },
+    { 0.5f, 0.5f, 0.5f, 1,1,1,1, 0,0.7071f,-0.7071f, 1,0 },
+    { -0.5f, 0.5f, 0.5f, 1,1,1,1, 0,0.7071f,-0.7071f, 0,0 },
+    // Left
+    { -0.5f,-0.5f,-0.5f, 1,1,1,1, -1,0,0, 0,1 },
+    { -0.5f,-0.5f, 0.5f, 1,1,1,1, -1,0,0, 1,1 },
+    { -0.5f, 0.5f, 0.5f, 1,1,1,1, -1,0,0, 1,0 },
+    // Right
+    { 0.5f,-0.5f, 0.5f, 1,1,1,1, 1,0,0, 0,1 },
+    { 0.5f,-0.5f,-0.5f, 1,1,1,1, 1,0,0, 1,1 },
+    { 0.5f, 0.5f, 0.5f, 1,1,1,1, 1,0,0, 1,0 },
+};
+static unsigned short WedgeIndices[] = {
+    0,1,2,  0,2,3,   // bottom
+    4,5,6,  4,6,7,   // back
+    8,9,10, 8,10,11, // slope
+    12,13,14,        // left tri
+    15,16,17,        // right tri
+};
+
+// ---- Disc (16 segments, flat cylinder) ----
+static std::vector<GhostVertex> s_DiscVerts;
+static std::vector<unsigned short> s_DiscIdx;
+
+static void BuildDisc()
+{
+    if (!s_DiscVerts.empty()) return;
+    const int SEG = 16;
+    const float h = 0.02f;
+    // Same layout as cylinder but very flat
+    s_DiscVerts.push_back({ 0, h,0, 1,1,1,1, 0,1,0, 0.5f,0.5f }); // top center
+    s_DiscVerts.push_back({ 0,-h,0, 1,1,1,1, 0,-1,0, 0.5f,0.5f }); // bot center
+    for (int i = 0; i < SEG; i++) {
+        float a = 2.f * PRIM_PI * i / SEG;
+        float x = cosf(a) * 0.5f, z = sinf(a) * 0.5f;
+        s_DiscVerts.push_back({ x, h,z,1,1,1,1,0,1,0,x + 0.5f,z + 0.5f });
+    }
+    for (int i = 0; i < SEG; i++) {
+        float a = 2.f * PRIM_PI * i / SEG;
+        float x = cosf(a) * 0.5f, z = sinf(a) * 0.5f;
+        s_DiscVerts.push_back({ x,-h,z,1,1,1,1,0,-1,0,x + 0.5f,z + 0.5f });
+    }
+    for (int i = 0; i <= SEG; i++) {
+        float a = 2.f * PRIM_PI * i / SEG;
+        float x = cosf(a) * 0.5f, z = sinf(a) * 0.5f;
+        s_DiscVerts.push_back({ x, h,z,1,1,1,1,cosf(a),0,sinf(a),(float)i / SEG,0 });
+        s_DiscVerts.push_back({ x,-h,z,1,1,1,1,cosf(a),0,sinf(a),(float)i / SEG,1 });
+    }
+    for (int i = 0; i < SEG; i++) { int a = 2 + i, b = 2 + (i + 1) % SEG; s_DiscIdx.push_back(0); s_DiscIdx.push_back(a); s_DiscIdx.push_back(b); }
+    for (int i = 0; i < SEG; i++) { int a = 2 + SEG + i, b = 2 + SEG + (i + 1) % SEG; s_DiscIdx.push_back(1); s_DiscIdx.push_back(b); s_DiscIdx.push_back(a); }
+    int base = 2 + SEG * 2;
+    for (int i = 0; i < SEG; i++) { int tl = base + i * 2, tr = base + (i + 1) * 2, bl = tl + 1, br = tr + 1; s_DiscIdx.push_back(tl); s_DiscIdx.push_back(bl); s_DiscIdx.push_back(tr); s_DiscIdx.push_back(bl); s_DiscIdx.push_back(br); s_DiscIdx.push_back(tr); }
+}
+
+
+
 bool GhostGetMeshCPU(GhostPipeline* p, int meshId, GhostMeshCPU* out)
 {
     *out = GhostMeshCPU();
@@ -114,7 +528,57 @@ bool GhostGetMeshCPU(GhostPipeline* p, int meshId, GhostMeshCPU* out)
         out->verts = QuadVertices;  out->vertexCount = sizeof(QuadVertices) / sizeof(QuadVertices[0]);
         out->idx16 = QuadIndices;   out->indexCount = sizeof(QuadIndices) / sizeof(QuadIndices[0]);
         return true;
+    case GHOST_MESH_CYLINDER:
+        BuildCylinder();
+        out->verts = s_CylinderVerts.data(); out->vertexCount = (unsigned int)s_CylinderVerts.size();
+        out->idx16 = s_CylinderIdx.data();   out->indexCount = (unsigned int)s_CylinderIdx.size();
+        return true;
+    case GHOST_MESH_CONE:
+        BuildCone();
+        out->verts = s_ConeVerts.data(); out->vertexCount = (unsigned int)s_ConeVerts.size();
+        out->idx16 = s_ConeIdx.data();   out->indexCount = (unsigned int)s_ConeIdx.size();
+        return true;
+    case GHOST_MESH_CAPSULE:
+        BuildCapsule();
+        out->verts = s_CapsuleVerts.data(); out->vertexCount = (unsigned int)s_CapsuleVerts.size();
+        out->idx16 = s_CapsuleIdx.data();   out->indexCount = (unsigned int)s_CapsuleIdx.size();
+        return true;
+    case GHOST_MESH_PLANE:
+        BuildPlane();
+        out->verts = s_PlaneVerts.data(); out->vertexCount = (unsigned int)s_PlaneVerts.size();
+        out->idx16 = s_PlaneIdx.data();   out->indexCount = (unsigned int)s_PlaneIdx.size();
+        return true;
+    case GHOST_MESH_UVSPHERE:
+        BuildUVSphere();
+        out->verts = s_UVSphereVerts.data(); out->vertexCount = (unsigned int)s_UVSphereVerts.size();
+        out->idx16 = s_UVSphereIdx.data();   out->indexCount = (unsigned int)s_UVSphereIdx.size();
+        return true;
+    case GHOST_MESH_ICOSPHERE:
+        BuildIcoSphere();
+        out->verts = s_IcoVerts.data(); out->vertexCount = (unsigned int)s_IcoVerts.size();
+        out->idx16 = s_IcoIdx.data();   out->indexCount = (unsigned int)s_IcoIdx.size();
+        return true;
+    case GHOST_MESH_TORUS:
+        BuildTorus();
+        out->verts = s_TorusVerts.data(); out->vertexCount = (unsigned int)s_TorusVerts.size();
+        out->idx16 = s_TorusIdx.data();   out->indexCount = (unsigned int)s_TorusIdx.size();
+        return true;
+    case GHOST_MESH_PYRAMID:
+        out->verts = PyramidVertices; out->vertexCount = sizeof(PyramidVertices) / sizeof(PyramidVertices[0]);
+        out->idx16 = PyramidIndices;  out->indexCount = sizeof(PyramidIndices) / sizeof(PyramidIndices[0]);
+        return true;
+    case GHOST_MESH_WEDGE:
+        out->verts = WedgeVertices; out->vertexCount = sizeof(WedgeVertices) / sizeof(WedgeVertices[0]);
+        out->idx16 = WedgeIndices;  out->indexCount = sizeof(WedgeIndices) / sizeof(WedgeIndices[0]);
+        return true;
+    case GHOST_MESH_DISC:
+        BuildDisc();
+        out->verts = s_DiscVerts.data(); out->vertexCount = (unsigned int)s_DiscVerts.size();
+        out->idx16 = s_DiscIdx.data();   out->indexCount = (unsigned int)s_DiscIdx.size();
+        return true;
     }
+
+
     if (p && meshId >= GHOST_MESH_COUNT && meshId < GHOST_MAX_MESHES)
     {
         const GhostMesh& m = p->meshes[meshId];
@@ -944,6 +1408,51 @@ GhostResult GhostUploadMeshes(IGhostRHI* rhi, GhostPipeline* p)
         CubeVertices, sizeof(CubeVertices), CubeIndices, sizeof(CubeIndices)) != GHOST_OK) return GHOST_FAIL;
     if (UploadMesh(d, p->meshes[GHOST_MESH_QUAD],
         QuadVertices, sizeof(QuadVertices), QuadIndices, sizeof(QuadIndices)) != GHOST_OK) return GHOST_FAIL;
+    // New primitives — built lazily then uploaded
+    {
+        GhostMeshCPU c; GhostGetMeshCPU(nullptr, GHOST_MESH_CYLINDER, &c);
+        if (UploadMesh(d, p->meshes[GHOST_MESH_CYLINDER], c.verts,
+            c.vertexCount * sizeof(GhostVertex), c.idx16, c.indexCount * sizeof(unsigned short)) != GHOST_OK) return GHOST_FAIL;
+    }
+    {
+        GhostMeshCPU c; GhostGetMeshCPU(nullptr, GHOST_MESH_CONE, &c);
+        if (UploadMesh(d, p->meshes[GHOST_MESH_CONE], c.verts,
+            c.vertexCount * sizeof(GhostVertex), c.idx16, c.indexCount * sizeof(unsigned short)) != GHOST_OK) return GHOST_FAIL;
+    }
+    {
+        GhostMeshCPU c; GhostGetMeshCPU(nullptr, GHOST_MESH_CAPSULE, &c);
+        if (UploadMesh(d, p->meshes[GHOST_MESH_CAPSULE], c.verts,
+            c.vertexCount * sizeof(GhostVertex), c.idx16, c.indexCount * sizeof(unsigned short)) != GHOST_OK) return GHOST_FAIL;
+    }
+    {
+        GhostMeshCPU c; GhostGetMeshCPU(nullptr, GHOST_MESH_PLANE, &c);
+        if (UploadMesh(d, p->meshes[GHOST_MESH_PLANE], c.verts,
+            c.vertexCount * sizeof(GhostVertex), c.idx16, c.indexCount * sizeof(unsigned short)) != GHOST_OK) return GHOST_FAIL;
+    }
+    {
+        GhostMeshCPU c; GhostGetMeshCPU(nullptr, GHOST_MESH_UVSPHERE, &c);
+        if (UploadMesh(d, p->meshes[GHOST_MESH_UVSPHERE], c.verts,
+            c.vertexCount * sizeof(GhostVertex), c.idx16, c.indexCount * sizeof(unsigned short)) != GHOST_OK) return GHOST_FAIL;
+    }
+    {
+        GhostMeshCPU c; GhostGetMeshCPU(nullptr, GHOST_MESH_ICOSPHERE, &c);
+        if (UploadMesh(d, p->meshes[GHOST_MESH_ICOSPHERE], c.verts,
+            c.vertexCount * sizeof(GhostVertex), c.idx16, c.indexCount * sizeof(unsigned short)) != GHOST_OK) return GHOST_FAIL;
+    }
+    {
+        GhostMeshCPU c; GhostGetMeshCPU(nullptr, GHOST_MESH_TORUS, &c);
+        if (UploadMesh(d, p->meshes[GHOST_MESH_TORUS], c.verts,
+            c.vertexCount * sizeof(GhostVertex), c.idx16, c.indexCount * sizeof(unsigned short)) != GHOST_OK) return GHOST_FAIL;
+    }
+    if (UploadMesh(d, p->meshes[GHOST_MESH_PYRAMID], PyramidVertices, sizeof(PyramidVertices),
+        PyramidIndices, sizeof(PyramidIndices)) != GHOST_OK) return GHOST_FAIL;
+    if (UploadMesh(d, p->meshes[GHOST_MESH_WEDGE], WedgeVertices, sizeof(WedgeVertices),
+        WedgeIndices, sizeof(WedgeIndices)) != GHOST_OK) return GHOST_FAIL;
+    {
+        GhostMeshCPU c; GhostGetMeshCPU(nullptr, GHOST_MESH_DISC, &c);
+        if (UploadMesh(d, p->meshes[GHOST_MESH_DISC], c.verts,
+            c.vertexCount * sizeof(GhostVertex), c.idx16, c.indexCount * sizeof(unsigned short)) != GHOST_OK) return GHOST_FAIL;
+    }
     return GHOST_OK;
 }
 void GhostDrawIcon(IGhostRHI* rhi, GhostPipeline* p, unsigned int slot)

@@ -5,7 +5,25 @@
 #include <string>
 #include <string.h>
 
-enum GhostMeshId { GHOST_MESH_CUBE = 0, GHOST_MESH_TRIANGLE, GHOST_MESH_SHIP, GHOST_MESH_SQUARE, GHOST_MESH_QUAD, GHOST_MESH_COUNT };
+enum GhostMeshId {
+    GHOST_MESH_CUBE = 0,
+    GHOST_MESH_TRIANGLE,
+    GHOST_MESH_SHIP,
+    GHOST_MESH_SQUARE,
+    GHOST_MESH_QUAD,
+    // New primitives
+    GHOST_MESH_CYLINDER,
+    GHOST_MESH_CONE,
+    GHOST_MESH_CAPSULE,
+    GHOST_MESH_PLANE,
+    GHOST_MESH_UVSPHERE,
+    GHOST_MESH_ICOSPHERE,
+    GHOST_MESH_TORUS,
+    GHOST_MESH_PYRAMID,
+    GHOST_MESH_WEDGE,
+    GHOST_MESH_DISC,
+    GHOST_MESH_COUNT
+};
 enum GhostRole {
     GHOST_ROLE_STATIC = 0, GHOST_ROLE_PLAYER, GHOST_ROLE_ENEMY, GHOST_ROLE_COIN,
     GHOST_ROLE_BLOCK, GHOST_ROLE_GOAL, GHOST_ROLE_CUSTOM,
@@ -90,6 +108,26 @@ inline std::vector<GhostMeshInfo> GhostBuildBuiltinMeshes()
     def(GHOST_MESH_SHIP, "Ship", { -3.2f, -1.0f, -3.0f }, { 3.2f, 3.0f, 11.0f }, { 0.1f, 0.1f, 0.1f }, 10, 6, shipFaces);
     def(GHOST_MESH_SQUARE, "Square", { -0.5f, -0.5f, -0.5f }, { 0.5f, 0.5f, 0.5f }, { 1, 1, 0.25f }, 24, 12, cubeFaces);
     def(GHOST_MESH_QUAD, "Sprite", { -0.5f, -0.5f, -0.25f }, { 0.5f, 0.5f, 0.25f }, { 1, 1, 1 }, 4, 2, { { "Face", 0, 6 } });
+    def(GHOST_MESH_CYLINDER, "Cylinder", { -0.5f,-0.5f,-0.5f }, { 0.5f, 0.5f, 0.5f }, { 1,1,1 }, 0, 0,
+        { { "Top",0,0 },{ "Bottom",0,0 },{ "Side",0,0 } });
+    def(GHOST_MESH_CONE, "Cone", { -0.5f,-0.5f,-0.5f }, { 0.5f, 0.5f, 0.5f }, { 1,1,1 }, 0, 0,
+        { { "Bottom",0,0 },{ "Side",0,0 } });
+    def(GHOST_MESH_CAPSULE, "Capsule", { -0.5f,-1.0f,-0.5f }, { 0.5f, 1.0f, 0.5f }, { 1,1,1 }, 0, 0,
+        { { "Body",0,0 } });
+    def(GHOST_MESH_PLANE, "Plane", { -0.5f, 0.0f,-0.5f }, { 0.5f, 0.0f, 0.5f }, { 1,1,1 }, 0, 0,
+        { { "Face",0,0 } });
+    def(GHOST_MESH_UVSPHERE, "UV Sphere", { -0.5f,-0.5f,-0.5f }, { 0.5f, 0.5f, 0.5f }, { 1,1,1 }, 0, 0,
+        { { "Body",0,0 } });
+    def(GHOST_MESH_ICOSPHERE, "Ico Sphere", { -0.5f,-0.5f,-0.5f }, { 0.5f, 0.5f, 0.5f }, { 1,1,1 }, 0, 0,
+        { { "Body",0,0 } });
+    def(GHOST_MESH_TORUS, "Torus", { -0.5f,-0.15f,-0.5f }, { 0.5f, 0.15f, 0.5f }, { 1,1,1 }, 0, 0,
+        { { "Body",0,0 } });
+    def(GHOST_MESH_PYRAMID, "Pyramid", { -0.5f,-0.5f,-0.5f }, { 0.5f, 0.5f, 0.5f }, { 1,1,1 }, 0, 0,
+        { { "Bottom",0,0 },{ "Front",0,0 },{ "Back",0,0 },{ "Left",0,0 },{ "Right",0,0 } });
+    def(GHOST_MESH_WEDGE, "Wedge", { -0.5f,-0.5f,-0.5f }, { 0.5f, 0.5f, 0.5f }, { 1,1,1 }, 0, 0,
+        { { "Bottom",0,0 },{ "Back",0,0 },{ "Slope",0,0 },{ "Left",0,0 },{ "Right",0,0 } });
+    def(GHOST_MESH_DISC, "Disc", { -0.5f,-0.02f,-0.5f }, { 0.5f, 0.02f, 0.5f }, { 1,1,1 }, 0, 0,
+        { { "Top",0,0 },{ "Bottom",0,0 },{ "Side",0,0 } });
     return v;
 }
 
