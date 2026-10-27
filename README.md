@@ -466,9 +466,9 @@ To package an existing Release build:
 - [x] Startup scene configured in `TestGame.ghostproject`.
 - [x] HUD created.
 - [x] HUD Renders.
-- [ ] HUD Tested.
+- [x] HUD Tested. Coin Collected.
 - [x] Play Mode Test.
-- [ ] New Window Play Mode Test Error.
+- [ ] New Window Play Mode Test Not Working.
 
 ### Level 2 and Gameplay
 
