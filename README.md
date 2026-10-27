@@ -85,7 +85,7 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [x] Phase 12.C: Level 1 Build and Test Play / Instructions/ ASSIMILIATION SUCCESSFUL....
 - [x] Phase 15.C: Advanced Object Roles
 - [x] Phase 15.E: 2D Animation States Push to Phase 16
-- [x] Phase 15.G: Restore Function: Projects New/Load from 15.A /Removed var hint fixed Constructor In GhostCOntentBrowser.cs
+- [x] Phase 15.G: Restore Function: Projects New/Load from 15.A /Removed var hint fixed Constructor In GhostContentBrowser.cs
 - [x] Phase 15.F: Controls: Ctrl in Editor removed for down, Q/E/Space added for Up and Down
 - [x] Phase 16: Sprite Animation State Editor Phases
 - [x] Phase 19: Advanced Pre-Built Primitives List
