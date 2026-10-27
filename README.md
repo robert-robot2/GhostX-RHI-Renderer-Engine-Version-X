@@ -92,7 +92,7 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [ ] Phase 19: Super Mario Infinitus Required: Expert Roles/ SkySphere inactive Below Axis For underground
 - [ ] Phase 15.D: Skysphere add full Display without horizon cutoff toggle
 - [ ] Phase 15.F: Controls: Ctrl removed for down, Q/E added for Up and Down
-- [ ] Phase 20: Sprite Animation State Editor Phases
+- [ ] Phase 16: Sprite Animation State Editor Phases
 - **Active SubCore**
 - [ ] Phase 13.D: A CAD-style set of annotation tools on top of the blueprint grid.
 - [ ] Phase 18: Advanced Pre-Built Primitives List
