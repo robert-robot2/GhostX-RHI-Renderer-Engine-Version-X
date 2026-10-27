@@ -48,7 +48,7 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - **Does Not Have Standalone Install Wizard for Built Games only Generate Files.**
 ---
 ## Errors:
--**FLAWLESS VICTORY**
+- **FLAWLESS VICTORY**
 
 
 ## Features
