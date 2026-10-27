@@ -466,14 +466,14 @@ To package an existing Release build:
 
 ### Level 1
 
-- [ ] Project created from the Blank template.
+- [x] Project created from the Blank template.
 - [ ] All required objects added.
 - [ ] Object Roles and colliders configured.
 - [ ] Orbit Camera assigned as the Game Start Camera.
-- [ ] Scene saved as `Scenes/Level1.ghostscene`.
+- [x] Scene saved as `Scenes/Level1.ghostscene`.
 - [ ] Startup scene configured in `TestGame.ghostproject`.
 - [ ] HUD created and tested.
-- [ ] Changes committed to Git.
+- [x] Play Mode Test.
 
 ### Level 2 and Gameplay
 
