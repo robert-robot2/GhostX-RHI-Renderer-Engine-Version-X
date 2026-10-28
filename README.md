@@ -103,9 +103,10 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [ ] Phase 12.E: Add UI For PlayTest On Level 1, HUD, enemies, roles, Collision, Camera, Animation States???
 - [ ] Phase 12.D: Test: Level 2 Build And Test Play Packaged Exe / Instructions/ Scene Switching
 - [ ] Phase 21: Per Clip textures
+- [ ] Phase 17: Super Mario Infinitus Required: Expert Roles/ SkySphere inactive Below Axis For underground
+- [ ] Phase Errors: Does Not Launch in Play Mode StandAlone Window
 - **Active SubCore**
 - [ ] Phase 13.D: A CAD-style set of annotation tools on top of the blueprint grid.
-- [ ] Phase 17: Super Mario Infinitus Required: Expert Roles/ SkySphere inactive Below Axis For underground
 - [ ] Phase 18: Player Controls Editor
 - **Testing/Game**
 - [ ] Phase 20: Roles Need to be Investigates some are working some are not
