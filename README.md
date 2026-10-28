@@ -52,10 +52,11 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - **Does Not Have Standalone Install Shield Wizard Setup Package Yet**
 - **Does Not Have Standalone Install Wizard for Built Games only Generate Files.**
 ---
-## Errors:
+## Definate Errors:
 - **StandAlone Play Window Cant find Project or Scene?**
+## Possible Encountered Errors:
 - **Projects Not loading Scenes sometimes?**
-- **Improted Textures Not showing on Content Broswer**
+- **Imported Textures Not showing on Content Broswer**
 - **Sprite Image Editor Needs Image Save Per Clip is Bleeding**
 
 ## Capacity
