@@ -386,10 +386,10 @@ void Entities_Update(float dt)
             {
                 p.vy -= Cfg::Gravity * dt;
                 if (p.vy < -Cfg::MaxFall) p.vy = -Cfg::MaxFall;
-                b.vel[0] = p.dir * Cfg::PickupSpeed; b.vel[1] = p.vy; b.vel[2] = 0.0f;
+                b.vel[0] = 0.0f; b.vel[1] = p.vy; b.vel[2] = p.dir * Cfg::PickupSpeed;
                 MoveResult r = MoveBody(b, dt);
                 p.vy = b.vel[1];
-                if (r.hitX) p.dir = -p.dir;
+                if (r.hitZ) p.dir = -p.dir;
                 if (p.type == PU_STAR && r.hitFloor) p.vy = Cfg::StarBounce;
                 StoreBody(b);
                 pos[1] = b.pos[1];

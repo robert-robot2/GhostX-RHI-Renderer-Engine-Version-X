@@ -18,7 +18,7 @@ namespace Cfg
     constexpr float EnemySpeed = 1.5f, EnemyPatrol = 3.0f;
     constexpr float StompBounce = 7.0f, StompBounceHeld = 11.0f;
     constexpr float GrowFactor = 1.4f, Invulnerable = 1.5f;
-    constexpr float FallLimit = -15.0f;
+    constexpr float FallLimit = -50.0f;
     constexpr float CamDistance = 7.0f, CamPitch = -25.0f, CamTargetHeight = 0.6f;
     constexpr float CamTurnSpeed = 100.0f, CamSmooth = 10.0f;
     constexpr bool SideScroller = false;        // true: W/S (up/down) don't move the player, only left/right
