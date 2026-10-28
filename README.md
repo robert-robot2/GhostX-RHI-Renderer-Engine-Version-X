@@ -99,6 +99,7 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [x] Phase Critical Errors Restore: Launches in Play Mode StandAlone Window, parse Updated
 - [x] Phase 17: Super Mario Infinitus Required: Expert Roles Updated
 - [x] Phase 20: Roles Need to be Investigates some are working some are not
+- [x] Phase 23: Enemy Pathways
 - **Active Core**
 - [ ] Phase 12.F: Build The Rest of Level 1, Test Goal Proceed to 12.D test Scene Switch/ Roles are not working yet/ Camera/ test enemies
 - [ ] Phase 12.D: Test: Level 2 Build And Test Play Packaged Exe / Instructions/ Scene Switching
