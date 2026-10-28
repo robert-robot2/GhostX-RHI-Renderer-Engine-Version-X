@@ -104,7 +104,7 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - **Active Core**
 - [ ] Phase 12.F: Build The Rest of Level 1, Test Goal Proceed to 12.D test
 - [ ] Phase 12.D: Test: Level 2 Build And Test Play Packaged Exe / Instructions/ Scene Switching
-- [ ] Phase 22: SkySphere inactive Below Axis For underground/ Change Mario Cooked Depth
+- [ ] Phase 22: SkySphere inactive Below Axis For underground
 - **Active SubCore**
 - [ ] Phase 13.D: A CAD-style set of annotation tools on top of the blueprint grid.
 - [ ] Phase 18: Player Controls Editor
