@@ -24,11 +24,7 @@
 ![Blender](https://img.shields.io/badge/3D-Blender-F5792A?style=flat-square&logo=blender&logoColor=white)
 ![GIMP](https://img.shields.io/badge/Graphics-GIMP-5C5543?style=flat-square&logo=gimp&logoColor=white)
 <img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/cec25a8f-66a0-46a4-8217-a65bb15e44a8" />
-<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/a38f0367-068a-43b7-a453-62e5600b9122" />
-<img width="1920" height="1080" alt="Screenshot 2026-10-27 165538" src="https://github.com/user-attachments/assets/9036b8d0-df6d-4d7d-9082-9a34ee7a262a" />
-<img width="1920" height="1080" alt="Screenshot 2026-10-27 165532" src="https://github.com/user-attachments/assets/2074c5ca-d4f4-4e08-97a4-a92b07b0eb4c" />
-<img width="1920" height="1080" alt="Screenshot 2026-10-27 165807" src="https://github.com/user-attachments/assets/03a69422-4ee1-4317-8c05-8c8942c4517d" />
-<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/31c81b72-6d05-40d2-aaca-0a1a7249e844" />
+<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/a827e690-a388-4c26-b3f9-ffa6e0f32869" />
 <img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/cd56c7eb-5888-4c5a-9cec-b8468b891c04" />
 
 
