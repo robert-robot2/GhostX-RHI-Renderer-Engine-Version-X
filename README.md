@@ -25,7 +25,8 @@
 ![GIMP](https://img.shields.io/badge/Graphics-GIMP-5C5543?style=flat-square&logo=gimp&logoColor=white)
 <img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/cec25a8f-66a0-46a4-8217-a65bb15e44a8" />
 <img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/a827e690-a388-4c26-b3f9-ffa6e0f32869" />
-<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/cd56c7eb-5888-4c5a-9cec-b8468b891c04" />
+<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/0b0fa2e7-8848-4942-88e0-cc3bd8de2ac7" />
+
 
 
 
