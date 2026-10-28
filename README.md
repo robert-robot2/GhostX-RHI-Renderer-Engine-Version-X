@@ -480,7 +480,7 @@ To package an existing Release build:
 - [x] HUD Renders.
 - [x] HUD Tested. Coin Collected.
 - [x] Play Mode Test.
-- [ ] New Window Play Mode Test Not Working.
+- [x] New Window Play Mode Test.
 
 ### Level 2 and Gameplay
 
