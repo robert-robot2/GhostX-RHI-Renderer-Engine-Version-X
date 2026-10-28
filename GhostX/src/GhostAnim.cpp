@@ -1,6 +1,3 @@
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
 #include "../include/GhostAnim.h"
 #include "../include/GhostImage.h"
 #include "../include/json.hpp"
@@ -9,7 +6,7 @@
 #include <string.h>
 #include <math.h>
 
-//GhostAnim.cpp
+// GhostAnim.cpp
 
 using json = nlohmann::json;
 namespace fs = std::filesystem;
@@ -24,7 +21,7 @@ bool GhostAnim_Load(GhostAnimAsset& a, const std::string& root, const std::strin
     {
         std::ifstream in(fs::path(GhostUtf8ToWide(file)), std::ios::binary);
         if (!in) { err = "Could not open " + file; return false; }
-        if (in.peek() == 0xEF) { char bom[3]; in.read(bom, 3); }          // skip a UTF-8 byte order mark
+        if (in.peek() == 0xEF) { char bom[3]; in.read(bom, 3); }   // skip UTF-8 BOM
         j = json::parse(in);
     }
     catch (const std::exception& e)
@@ -37,32 +34,20 @@ bool GhostAnim_Load(GhostAnimAsset& a, const std::string& root, const std::strin
     {
         if (!j.is_object() || j.value("format", std::string()) != "ghostanim")
         {
-            err = "This is not a GhostX animation file (\"format\" must be \"ghostanim\")."; return false;
+            err = "This is not a GhostX animation file (\"format\" must be \"ghostanim\").";
+            return false;
         }
         if (j.value("version", 0) > 1)
         {
-            err = "This animation file was saved by a newer version of GhostX."; return false;
+            err = "This animation file was saved by a newer version of GhostX.";
+            return false;
         }
 
         GhostAnimAsset n;
         n.name = j.value("name", GhostWideToUtf8(fs::path(GhostUtf8ToWide(file)).stem().wstring()));
-        n.texture = j.value("texture", std::string());
-        n.source = (j.value("source", std::string("sheet")) == "single") ? 0 : 1;
-        n.cols = Clampi(j.value("columns", 1), 1, 64);
-        n.rows = Clampi(j.value("rows", 1), 1, 64);
-        if (n.source == 0) n.cols = n.rows = 1;
 
-        if (!n.texture.empty() && loadTex)
-        {
-            fs::path p(GhostUtf8ToWide(n.texture));
-            if (p.is_relative() && !root.empty()) p = fs::path(GhostUtf8ToWide(root)) / p;
-            const std::string abs = GhostPath_Normalize(GhostWideToUtf8(p.wstring()));
-            const int id = loadTex(abs, GhostWideToUtf8(p.filename().wstring()));
-            if (id > 0) n.textureId = id; else warn += "Missing texture: " + n.texture + "\n";
-        }
-
-        const int maxFrame = n.cols * n.rows - 1;
         if (j.contains("clips") && j["clips"].is_array())
+        {
             for (const json& jc : j["clips"])
             {
                 if (!jc.is_object()) continue;
@@ -71,30 +56,65 @@ bool GhostAnim_Load(GhostAnimAsset& a, const std::string& root, const std::strin
                 GhostClip c;
                 c.name = jc.value("name", std::string());
                 if (c.name.empty()) { warn += "Skipped a clip with no name.\n"; continue; }
+
                 c.fps = jc.value("fps", 8.0f);
-                if (c.fps < 0.1f) c.fps = 0.1f;
+                if (c.fps < 0.1f)   c.fps = 0.1f;
                 if (c.fps > 120.0f) c.fps = 120.0f;
                 c.loop = jc.value("loop", true);
+
+                // Per-clip texture / grid
+                c.texture = jc.value("texture", std::string());
+                c.source = (jc.value("source", std::string("sheet")) == "single") ? 0 : 1;
+                c.cols = Clampi(jc.value("columns", 1), 1, 64);
+                c.rows = Clampi(jc.value("rows", 1), 1, 64);
+                if (c.source == 0) { c.cols = 1; c.rows = 1; }
+
+                // Load this clip's texture
+                if (!c.texture.empty() && loadTex)
+                {
+                    fs::path p(GhostUtf8ToWide(c.texture));
+                    if (p.is_relative() && !root.empty())
+                        p = fs::path(GhostUtf8ToWide(root)) / p;
+                    const std::string abs = GhostPath_Normalize(GhostWideToUtf8(p.wstring()));
+                    const int id = loadTex(abs, GhostWideToUtf8(p.filename().wstring()));
+                    if (id > 0) c.textureId = id;
+                    else warn += "Missing texture for clip \"" + c.name + "\": " + c.texture + "\n";
+                }
+
+                const int maxFrame = c.cols * c.rows - 1;
 
                 if (jc.contains("frames") && jc["frames"].is_array())
                 {
                     for (const json& f : jc["frames"])
-                        if (f.is_number_integer() && c.frames.size() < 256) c.frames.push_back(Clampi(f.get<int>(), 0, maxFrame));
+                        if (f.is_number_integer() && c.frames.size() < 256)
+                            c.frames.push_back(Clampi(f.get<int>(), 0, maxFrame));
                 }
                 else if (jc.contains("range") && jc["range"].is_array() && jc["range"].size() >= 2)
                 {
                     const int from = Clampi(jc["range"][0].get<int>(), 0, maxFrame);
                     const int to = Clampi(jc["range"][1].get<int>(), 0, maxFrame);
                     const int step = from <= to ? 1 : -1;
-                    for (int f = from; c.frames.size() < 256; f += step) { c.frames.push_back(f); if (f == to) break; }
+                    for (int f = from; c.frames.size() < 256; f += step)
+                    {
+                        c.frames.push_back(f);
+                        if (f == to) break;
+                    }
                 }
-                if (c.frames.empty()) { warn += "Skipped clip \"" + c.name + "\": it has no frames.\n"; continue; }
+
+                if (c.frames.empty())
+                {
+                    warn += "Skipped clip \"" + c.name + "\": it has no frames.\n";
+                    continue;
+                }
                 n.clips.push_back(std::move(c));
             }
+        }
+
         if (j.contains("states") && j["states"].is_object())
             for (auto it = j["states"].begin(); it != j["states"].end(); ++it)
                 if (it.value().is_string() && n.states.size() < 64)
                     n.states.push_back({ it.key(), it.value().get<std::string>() });
+
         a = std::move(n);
         return true;
     }

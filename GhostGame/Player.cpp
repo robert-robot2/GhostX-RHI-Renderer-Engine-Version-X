@@ -186,7 +186,7 @@ void Player_Update(float dt)
         else if (!g_grounded)     Sprite_Play(S.player, g_vel[1] > 0.0f ? "Jump" : "Fall", "Jump");
         else if (planar > 0.4f) { if (shift) Sprite_Play(S.player, "Run", "Walk"); else Sprite_Play(S.player, "Walk", "Idle"); }
         else if (crouch)          Sprite_Play(S.player, "Crouch", "Idle");
-        else                      Sprite_Play(S.player, "Idle", nullptr);                     Sprite_Play(S.player, "Idle", nullptr);
+        else                      Sprite_Play(S.player, "Idle", nullptr);   
 
         G->SpriteSetSpeed(S.player, (g_grounded && planar > 0.4f && G->KeyDown(VK_SHIFT)) ? 1.6f : 1.0f);   // running looks faster
         if (S.hurt > 0.0f) S.hurt -= dt;

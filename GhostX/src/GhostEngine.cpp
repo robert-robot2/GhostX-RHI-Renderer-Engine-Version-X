@@ -2929,18 +2929,32 @@ static void ReloadAnims()
     }
 }
 
+// Replace the existing SpriteDrawInfo function in GhostEngine.cpp with this:
+
 static void SpriteDrawInfo(const GhostObject& o, int& tex, int& cols, int& rows, int& frame)
 {
     const GhostSprite& s = o.sprite;
     tex = s.textureId;
     cols = s.source == 0 ? 1 : s.cols;
     rows = s.source == 0 ? 1 : s.rows;
-    if (s.animId >= 0 && s.animId < (int)g_anims.size())          // the animation's sheet wins
+
+    if (s.animId >= 0 && s.animId < (int)g_anims.size())
     {
         const GhostAnimAsset& a = g_anims[(size_t)s.animId];
-        if (a.textureId > 0) tex = a.textureId;
-        cols = a.cols; rows = a.rows;
+
+        // Find the active clip — same logic as UpdateSprites
+        int ci = GhostAnim_FindClip(a, s.clip.c_str());
+        if (ci < 0) ci = 0;
+
+        if (ci < (int)a.clips.size())
+        {
+            const GhostClip& c = a.clips[(size_t)ci];
+            if (c.textureId > 0) tex = c.textureId;
+            cols = c.source == 0 ? 1 : c.cols;
+            rows = c.source == 0 ? 1 : c.rows;
+        }
     }
+
     if (cols < 1) cols = 1;
     if (rows < 1) rows = 1;
     frame = s.curFrame < 0 ? 0 : (s.curFrame > cols * rows - 1 ? cols * rows - 1 : s.curFrame);
