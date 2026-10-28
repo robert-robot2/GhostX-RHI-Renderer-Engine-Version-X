@@ -25,7 +25,8 @@ static std::vector<Mover>    g_movers;
 static std::vector<Breaking> g_breaking;
 static std::vector<int>      g_moverIds, g_projIds;
 
-
+struct Debris { int id; float vel[3]; float life; };
+static std::vector<Debris> g_debris;
 
 static void Snapshot(const char* tag, std::vector<int>* idsOut)
 {
@@ -96,7 +97,7 @@ static void RebuildMovers()
 void Level_Init()
 {
     g_saved.clear(); g_coins.clear(); g_enemyIds.clear(); g_blocks.clear(); g_enemies.clear(); g_pickups.clear(); g_blockMem.clear(); g_hidden.clear();
-    g_breaking.clear(); g_moverIds.clear(); g_projIds.clear(); g_movers.clear();
+    g_breaking.clear(); g_moverIds.clear(); g_projIds.clear(); g_movers.clear(); g_debris.clear();
     Snapshot("Player", nullptr);
     Snapshot("Coin", &g_coins);
     Snapshot("Enemy", &g_enemyIds);
@@ -115,6 +116,8 @@ void Level_Init()
 
 void Level_Reset()
 {
+    for (const Debris& d : g_debris) G->Destroy(d.id);
+    g_debris.clear();
     g_breaking.clear();
     for (const Pickup& p : g_pickups) G->Destroy(p.id);
     g_pickups.clear(); g_blockMem.clear();
@@ -152,7 +155,27 @@ void Enemy_Kill(int id)
         }
 }
 
-
+static void SpawnDebris(int brickId)
+{
+    float p[3], s[3];
+    if (!G->GetPosition(brickId, p) || !G->GetScale(brickId, s)) return;
+    const float piece[3] = { s[0] * 0.3f, s[1] * 0.3f, s[2] * 0.3f };
+    const float brown[3] = { 0.55f, 0.30f, 0.18f };
+    for (int k = 0; k < 4; k++)
+    {
+        const float sx = (k & 1) ? 1.0f : -1.0f, sz = (k & 2) ? 1.0f : -1.0f;
+        const float pos[3] = { p[0] + sx * s[0] * 0.25f, p[1] + s[1] * 0.25f, p[2] + sz * s[2] * 0.25f };
+        int id = G->Spawn(GHOST_API_MESH_CUBE, pos);
+        if (!id) return;
+        G->SetScale(id, piece);
+        G->SetColor(id, brown);
+        G->SetTag(id, "Broken");                 // not solid, and nothing in the player code reacts to it
+        Debris d = {};
+        d.id = id; d.life = 1.2f;
+        d.vel[0] = sx * 2.0f; d.vel[1] = (k < 2) ? 8.5f : 7.0f; d.vel[2] = sz * 2.0f;
+        g_debris.push_back(d);
+    }
+}
 
 static void BreakBrick(int id, int effect)
 {
@@ -163,7 +186,7 @@ static void BreakBrick(int id, int effect)
         if (effect == 1) g_breaking.push_back({ id, 0.6f });
         return;                                            // effect 2: it stays on its last frame as rubble
     }
-    if (effect == 1) { G->SetVisible(id, 0); return; }     // a plain cube just vanishes...
+    if (effect == 1) { SpawnDebris(id); G->SetVisible(id, 0); return; }
     float s[3], p[3];                                      // ...or squashes into rubble
     G->GetScale(id, s);
     G->GetPosition(id, p);
@@ -398,7 +421,18 @@ void Entities_Update(float dt)
         if (pos[1] < Cfg::FallLimit) { G->Destroy(p.id); g_pickups.erase(g_pickups.begin() + i); continue; }
         i++;
     }
-    
+    for (size_t i = 0; i < g_debris.size(); )
+    {
+        Debris& d = g_debris[i];
+        float pos[3];
+        if (!G->GetPosition(d.id, pos)) { g_debris.erase(g_debris.begin() + i); continue; }
+        d.vel[1] -= Cfg::Gravity * dt;
+        for (int k = 0; k < 3; k++) pos[k] += d.vel[k] * dt;
+        G->SetPosition(d.id, pos);
+        d.life -= dt;
+        if (d.life <= 0.0f) { G->Destroy(d.id); g_debris.erase(g_debris.begin() + i); continue; }
+        i++;
+    }
     // ---- Enemies: walk A <-> B from their Behavior settings (Enemy Path Mode) ----
     for (Enemy& e : g_enemies)
     {
