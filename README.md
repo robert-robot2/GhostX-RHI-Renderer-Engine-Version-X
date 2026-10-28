@@ -100,7 +100,7 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [x] Phase 15.D: Skysphere add full Display without horizon cutoff toggle
 - [x] Phase 21: Per Clip textures for Animation States
 - [x] Phase 12.E: Add UI For PlayTest On Level 1, HUD, enemies, Collision, Animation States
-- [x] Phase Critical Errors Fixed: Launches in Play Mode StandAlone Window, parse Updated
+- [x] Phase Critical Errors Restore: Launches in Play Mode StandAlone Window, parse Updated
 - **Active Core**
 - [ ] Phase 12.F: Build The Rest of Level 1, Test Goal Proceed to 12.D test Scene Switch/ Roles are not working yet/ Camera/ test enemies
 - [ ] Phase 12.D: Test: Level 2 Build And Test Play Packaged Exe / Instructions/ Scene Switching
