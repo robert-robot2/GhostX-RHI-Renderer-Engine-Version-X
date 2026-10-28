@@ -453,12 +453,14 @@ float4 SkyPS(SkyPSInput input) : SV_TARGET
 
     float hh = sky[1].w;
     float gb = max(sky[3].w, 0.001f);
-    float groundAmt = 1.0f - smoothstep(hh - gb, hh, d.y);
+    const bool showGround = sky[12].y > 0.5f;
+    float groundAmt = showGround ? 1.0f - smoothstep(hh - gb, hh, d.y) : 0.0f;
+    const float dyEff = showGround ? d.y : hh + abs(d.y - hh);       // no ground: the sky mirrors below the horizon
 
     if (sky[12].x < 0.5f)
     {
         // ---- gradient, dusk band, sun, moon, ground ----
-        float t = saturate((d.y - hh) / max(sky[2].w, 0.01f));
+        float t = saturate((dyEff - hh) / max(sky[2].w, 0.01f));
         t = pow(t, max(sky[7].w, 0.05f));
         float3 col = lerp(sky[2].rgb, sky[1].rgb, t);
 
@@ -466,7 +468,7 @@ float4 SkyPS(SkyPSInput input) : SV_TARGET
         float3 dh = float3(d.x, 0.0f, d.z);
         float shl = length(sh), dhl = length(dh);
         float facing = (shl > 1e-4f && dhl > 1e-4f) ? 0.5f + 0.5f * dot(sh / shl, dh / dhl) : 0.5f;
-        float band = 1.0f - saturate(max(d.y, 0.0f) / 0.45f);
+        float band = 1.0f - saturate(max(dyEff, 0.0f) / 0.45f);
         col = lerp(col, sky[4].rgb, saturate(sky[4].w * band * band * (0.35f + 0.65f * facing)));
 
         float sd = dot(d, sky[0].xyz);

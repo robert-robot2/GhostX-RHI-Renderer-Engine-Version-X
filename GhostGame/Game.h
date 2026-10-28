@@ -10,7 +10,7 @@ extern const GhostGameAPI* G;
 namespace Cfg
 {
     constexpr float Gravity = 25.0f, MaxFall = 30.0f;
-    constexpr float Walk = 4.0f, Run = 7.0f, Jump = 9.0f;
+    constexpr float Walk = 4.0f, Run = 7.0f, Jump = 15.0f;
     constexpr float GroundAccel = 60.0f, AirAccel = 30.0f;
     constexpr float CoyoteTime = 0.10f, JumpBuffer = 0.12f;
     constexpr float EnemySpeed = 1.5f, EnemyPatrol = 3.0f;
@@ -19,7 +19,7 @@ namespace Cfg
     constexpr float FallLimit = -15.0f;
     constexpr float CamDistance = 7.0f, CamPitch = -25.0f, CamTargetHeight = 0.6f;
     constexpr float CamTurnSpeed = 100.0f, CamSmooth = 10.0f;
-    constexpr bool SideScroller = true;        // true: W/S (up/down) don't move the player, only left/right
+    constexpr bool SideScroller = false;        // true: W/S (up/down) don't move the player, only left/right
     constexpr bool SmallBreaksBricks = true;   // false = small Mario only bumps bricks, like the original
 }
 

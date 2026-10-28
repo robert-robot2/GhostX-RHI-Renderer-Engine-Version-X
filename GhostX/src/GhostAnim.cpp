@@ -9,6 +9,8 @@
 #include <string.h>
 #include <math.h>
 
+//GhostAnim.cpp
+
 using json = nlohmann::json;
 namespace fs = std::filesystem;
 

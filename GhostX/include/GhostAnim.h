@@ -1,3 +1,4 @@
+// GhostAnim.h
 #pragma once
 #include "GhostSceneIO.h"        // GhostLoadTexFn
 #include <string>

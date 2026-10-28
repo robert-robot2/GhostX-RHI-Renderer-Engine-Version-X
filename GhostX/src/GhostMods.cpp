@@ -64,6 +64,7 @@ static const GhostParamDesc kSkyParams[] =
     P_FLOAT("Night Black Cutoff",         "Night Layer", 0.03f, 0.0f, 1.0f),
     P_FLOAT("Night Black Softness",       "Night Layer", 0.20f, 0.0f, 1.0f),
     P_BOOL("Night Flip Horizontal",      "Night Layer", 0.0f),
+        P_BOOL("Show Ground",                "Horizon", 0.0f),
 
 
 };
@@ -269,7 +270,7 @@ int GhostSky_Build(const GhostModEntity& e, const std::vector<GhostTextureInfo>&
     F4(7, moonC[0] * mi, moonC[1] * mi, moonC[2] * mi, V(SKY_GRAD_EXP));
     const float glowSize = V(SKY_SUN_GLOW_SIZE) < 0.005f ? 0.005f : V(SKY_SUN_GLOW_SIZE);
     F4(8, V(SKY_SUN_GLOW), 2.0f / glowSize, V(SKY_SUN_INTENSITY), bright);
-
+    F4(12, 0.0f, V(SKY_SHOW_GROUND) > 0.5f ? 1.0f : 0.0f, 0.0f, 0.0f);
     int n = 0;
     memcpy(out[n].sky, common, sizeof common);                     // pass 0 (common[12].x is already 0)
     out[n].textureId = 0;
