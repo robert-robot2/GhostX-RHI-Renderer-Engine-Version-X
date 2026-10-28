@@ -97,15 +97,17 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [x] Phase 21: Per Clip textures for Animation States
 - [x] Phase 12.E: Add UI For PlayTest On Level 1, HUD, enemies, Collision, Animation States
 - [x] Phase Critical Errors Restore: Launches in Play Mode StandAlone Window, parse Updated
+- [x] Phase 17: Super Mario Infinitus Required: Expert Roles Updated
+- [x] Phase 20: Roles Need to be Investigates some are working some are not
 - **Active Core**
 - [ ] Phase 12.F: Build The Rest of Level 1, Test Goal Proceed to 12.D test Scene Switch/ Roles are not working yet/ Camera/ test enemies
 - [ ] Phase 12.D: Test: Level 2 Build And Test Play Packaged Exe / Instructions/ Scene Switching
-- [ ] Phase 17: Super Mario Infinitus Required: Expert Roles/ SkySphere inactive Below Axis For underground
+- [ ] Phase 22: SkySphere inactive Below Axis For underground/ Change Mario Cooked Depth
 - **Active SubCore**
 - [ ] Phase 13.D: A CAD-style set of annotation tools on top of the blueprint grid.
 - [ ] Phase 18: Player Controls Editor
 - **Testing/Game**
-- [ ] Phase 20: Roles Need to be Investigates some are working some are not
+- [ ] Phase : .................
 - **DEBUG/ERRORS**
 - [ ] Phase Errors: Docking Suite Debug Needs reset/ delete xml layout but why?
 - [ ] Phase Errors: AnyCPU cannot find DLL in Debug
