@@ -109,13 +109,19 @@ namespace GhostShell
         public static void ParseArgs(string[] args)
         {
             for (int i = 0; i + 1 < args.Length; i++)
-                if (args[i].Equals("--scene", StringComparison.OrdinalIgnoreCase)) 
+            {
+                if (args[i].Equals("--play", StringComparison.OrdinalIgnoreCase))
                 {
-                    SceneOverride = args[i + 1];
                     IsPlayer = true;
                     ProjectPath = Path.GetFullPath(args[i + 1]);
-                    return;
                 }
+                else if (args[i].Equals("--scene", StringComparison.OrdinalIgnoreCase))
+                {
+                    SceneOverride = args[i + 1];
+                }
+            }
+
+            if (IsPlayer) return;
 
             // A packaged game: no arguments, and Data\<name>.ghostproject sits next to the exe
             try
@@ -126,7 +132,6 @@ namespace GhostShell
             }
             catch { }
         }
-
         // Opens the project, loads its start scene and starts playing. false = failed (the window is closing).
         public static bool Launch(Form form)
         {
