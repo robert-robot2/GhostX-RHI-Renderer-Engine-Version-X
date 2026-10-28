@@ -1690,7 +1690,7 @@ static void DrawViewportOverlay(const GhostMat4& view, const GhostMat4& proj, co
                     const float red[4] = { 1.0f, 0.45f, 0.35f, 1.0f };
                     g_ov.Label(o->position, "LOCKED", red, 15.0f, 0.0f, 26.0f);
                 }
-                if (o->role == GHOST_ROLE_MOVER || o->role == GHOST_ROLE_PROJECTILE)
+                if (o->role == GHOST_ROLE_MOVER || o->role == GHOST_ROLE_PROJECTILE || o->role == GHOST_ROLE_ENEMY)
                 {
                     const GhostVec3 b = o->position + o->pathOffset;
                     const float c[4] = { 1.0f, 0.62f, 0.20f, 0.95f };
@@ -1713,6 +1713,7 @@ static void DrawViewportOverlay(const GhostMat4& view, const GhostMat4& proj, co
                 OverlayDims(*o, eye);
                 if (s.edgeLabels) OverlayFaceEdges(*o, eye);
             }
+
         }
     }
 
@@ -3069,7 +3070,7 @@ static int Api_GetObjectProps(int id, GhostObjectProps* out)
     out->pathMode = o->pathMode;    out->breakEffect = o->breakEffect;
     out->contents = o->contents;    out->portalTrigger = o->portalTrigger;
     out->locked = o->locked ? 1 : 0;
-    out->powerType = o->powerType; out->itemMoves = o->itemMoves; out->coinCount = o->coinCount;
+    out->powerType = o->powerType; out->enemyPathMode = o->enemyPathMode; out->itemMoves = o->itemMoves; out->coinCount = o->coinCount;
     return 1;
 }
 
@@ -3234,7 +3235,9 @@ int GhostEngine_GetGameplay(int objectId, GhostGameplayInfo* out)
              o->colliderOffset.x, o->colliderOffset.y, o->colliderOffset.z,
              o->visible ? 1 : 0,
              o->locked ? 1 : 0, o->pathMode, o->breakEffect, o->contents, o->portalTrigger,
-             o->pathOffset.x, o->pathOffset.y, o->pathOffset.z, o->moveSpeed, o->movePause, o->powerType, o->itemMoves, o->coinCount };
+                         o->pathOffset.x, o->pathOffset.y, o->pathOffset.z, o->moveSpeed, o->movePause, o->powerType, o->itemMoves, o->coinCount,
+             o->enemyPathMode };
+
     return 1;
 }
 
@@ -3262,6 +3265,7 @@ void GhostEngine_SetGameplay(const GhostGameplayInfo* in)
     o->powerType = ci(in->powerType, 0, 4);
     o->itemMoves = ci(in->itemMoves, 0, 2);
     o->coinCount = ci(in->coinCount, 1, 999);
+    o->enemyPathMode = ci(in->enemyPathMode, 0, 3);
 }
 
 int GhostEngine_GetCustomTag(int objectId, char* buf, int bufSize)

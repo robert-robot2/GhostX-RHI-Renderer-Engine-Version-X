@@ -4,7 +4,7 @@
 //Entities.cpp
 
 struct Saved { int id; float pos[3], scale[3], color[3]; char tag[32]; int visible; };
-struct Enemy { int id; float homeX; float dir; float vy; bool alive; float dieTimer; };
+struct Enemy { int id; float a[3], b[3]; float speed, pause, wait; int mode; int dir; float vy; bool alive, done, grounded; float dieTimer; };
 
 static std::vector<Saved> g_saved;
 static std::vector<int>   g_coins, g_enemyIds, g_blocks;
@@ -51,9 +51,23 @@ static void RebuildEnemies()
     for (int id : g_enemyIds)
     {
         Enemy e = {};
-        e.id = id; e.dir = 1.0f; e.alive = true;
-        float p[3];
-        if (G->GetPosition(id, p)) e.homeX = p[0];
+        e.id = id; e.dir = 1; e.alive = true;
+
+        Body bd;                                              // same coordinate space the update loop uses
+        if (LoadBody(id, bd)) memcpy(e.a, bd.pos, sizeof e.a);
+        else G->GetPosition(id, e.a);
+
+        GhostObjectProps pr = {};
+        const bool has = G->GetObjectProps(id, &pr) != 0;
+        float off[3] = { 0, 0, 0 };
+        if (has) memcpy(off, pr.pathOffset, sizeof off);
+        off[1] = 0.0f;                                        // gravity owns Y
+        if (off[0] * off[0] + off[2] * off[2] < 0.0001f) off[2] = Cfg::EnemyPatrol;   // no offset set: old default patrol
+
+        for (int k = 0; k < 3; k++) e.b[k] = e.a[k] + off[k];
+        e.speed = (has && pr.moveSpeed > 0.01f) ? pr.moveSpeed : Cfg::EnemySpeed;
+        e.pause = has ? pr.movePause : 0.0f;
+        e.mode = has ? pr.enemyPathMode : 0;
         g_enemies.push_back(e);
     }
 }
@@ -330,7 +344,21 @@ void Movers_Update(float dt)
         if (!m.platform) Sprite_Play(m.id, "Walk", "Idle");                     // fireballs and the like
     }
 }
-
+// Is there something solid just beyond the enemy's leading edge, a little below its feet?
+static bool GroundAhead(const Body& b, float dx, float dz)
+{
+    const float len = sqrtf(dx * dx + dz * dz);
+    if (len < 0.0001f) return true;
+    const float lead = fmaxf(b.half[0], b.half[2]) + 0.15f;
+    const float cx = b.pos[0] + dx / len * lead, cz = b.pos[2] + dz / len * lead;
+    const float feet = b.pos[1] - b.half[1];
+    const float mn[3] = { cx - 0.05f, feet - 0.4f,  cz - 0.05f };
+    const float mx[3] = { cx + 0.05f, feet - 0.05f, cz + 0.05f };
+    int ids[16];
+    const int n = G->QueryBox(mn, mx, ids, 16);
+    for (int i = 0; i < n; i++) if (ids[i] != b.id && IsSolid(ids[i])) return true;
+    return false;
+}
 
 void Entities_Update(float dt)
 {
@@ -370,7 +398,8 @@ void Entities_Update(float dt)
         if (pos[1] < Cfg::FallLimit) { G->Destroy(p.id); g_pickups.erase(g_pickups.begin() + i); continue; }
         i++;
     }
-    // ---- Enemies: patrol along X, turn at walls and at the patrol limit ----
+    
+    // ---- Enemies: walk A <-> B from their Behavior settings (Enemy Path Mode) ----
     for (Enemy& e : g_enemies)
     {
         if (!e.alive)
@@ -383,19 +412,53 @@ void Entities_Update(float dt)
 
         e.vy -= Cfg::Gravity * dt;
         if (e.vy < -Cfg::MaxFall) e.vy = -Cfg::MaxFall;
-        b.vel[0] = e.dir * Cfg::EnemySpeed;
-        b.vel[1] = e.vy;
+
+        if (e.wait > 0.0f) e.wait -= dt;
+        const bool walking = e.mode != 3 && !e.done && e.wait <= 0.0f;     // mode 3 = stand still
+
+        float vx = 0.0f, vz = 0.0f;
+        bool arrive = false;
+        if (walking)
+        {
+            const float* to = (e.dir > 0) ? e.b : e.a;
+            const float dx = to[0] - b.pos[0], dz = to[2] - b.pos[2];
+            const float dist = sqrtf(dx * dx + dz * dz);
+            arrive = dist <= e.speed * dt;
+            if (dist > 0.0001f)
+            {
+                const float sp = arrive ? dist / dt : e.speed;             // land exactly on the end point
+                vx = dx / dist * sp; vz = dz / dist * sp;
+            }
+            if (e.mode == 1 && e.grounded && !arrive && !GroundAhead(b, vx, vz))
+            {
+                e.dir = -e.dir;                                            // ledge ahead: turn around
+                vx = vz = 0.0f;
+            }
+        }
+        b.vel[0] = vx; b.vel[1] = e.vy; b.vel[2] = vz;
 
         MoveResult r = MoveBody(b, dt);
         e.vy = b.vel[1];
-        if (r.hitX) e.dir = -e.dir;
-        if (b.pos[0] > e.homeX + Cfg::EnemyPatrol) e.dir = -1.0f;
-        else if (b.pos[0] < e.homeX - Cfg::EnemyPatrol) e.dir = 1.0f;
+        e.grounded = r.hitFloor;
+
+        if (walking && (arrive || r.hitX || r.hitZ))                       // reached the end, or a wall stopped it
         {
-            const float yaw = S.camYaw * 0.0174532925f;
-            Sprite_FaceScreen(e.id, e.dir * cosf(yaw));      // enemies walk along X, so the screen direction follows the camera
-            Sprite_Play(e.id, "Walk", "Idle");
+            e.wait = e.pause;
+            if (e.mode == 2) e.done = true;                                // once
+            else e.dir = -e.dir;                                           // ping-pong (both kinds)
         }
+
+        if (b.pos[1] < Cfg::FallLimit)                                     // fell out of the world
+        {
+            e.alive = false;
+            G->SetTag(e.id, "Defeated");
+            G->SetVisible(e.id, 0);
+            continue;
+        }
+
+        const float yaw = S.camYaw * 0.0174532925f;
+        Sprite_FaceScreen(e.id, vx * cosf(yaw) - vz * sinf(yaw));          // same formula the Player uses
+        Sprite_Play(e.id, walking ? "Walk" : "Idle", "Idle");
         StoreBody(b);
     }
 }

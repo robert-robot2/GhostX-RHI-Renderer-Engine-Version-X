@@ -246,12 +246,14 @@ struct GhostObject
     GhostVec3   pathOffset = { 0, 0, 0 };     // movers and projectiles: where B is, relative to A (the placed position)
     float       moveSpeed = 2.0f, movePause = 0.0f;
     int         pathMode = 0;                 // 0 ping-pong, 1 restart at A, 2 once
+    int         enemyPathMode = 0;            // enemies: 0 ping-pong, 1 ping-pong + turn at ledges, 2 once, 3 stand still
     int         breakEffect = 0;              // breakables: 0 vanish, 1 play "Break" then vanish, 2 play "Break" and leave rubble
     int         contents = 0;                 // blocks, breakables: 0 role default, 1 nothing, 2 coin, 3 power-up
     int         portalTrigger = 1;            // 0 touch, 1 press Down
     int powerType = 0;   // blocks: 0 auto, 1 mushroom, 2 fire flower, 3 star, 4 1-up
     int itemMoves = 0;   // 0 by type, 1 moves, 2 stays put
     int coinCount = 1;   // blocks with contents = coin: coins paid before it is empty
+
 };
 // The tag the game module searches by: the role's name, or the custom text
 inline std::string GhostObject_Tag(const GhostObject& o)

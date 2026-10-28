@@ -544,7 +544,8 @@ namespace GhostShell
     internal sealed class ItemMoveConverter : FixedListConverter
     { public static readonly string[] Names = { "By type", "Moves", "Stays put" }; protected override string[] Items => Names; }
 
-
+    internal sealed class EnemyPathConverter : FixedListConverter
+    { public static readonly string[] Names = { "Ping-Pong (A to B and back)", "Ping-Pong, turn at ledges", "Once (stop at B)", "Stand still" }; protected override string[] Items => Names; }
 
     // Details > Gameplay > Behavior: the settings the new roles use
     [TypeConverter(typeof(ExpandableObjectConverter))]
@@ -593,7 +594,12 @@ namespace GhostShell
             get => PathModeConverter.Names[Math.Clamp(Get().pathMode, 0, 2)];
             set { int i = Array.IndexOf(PathModeConverter.Names, value); if (i >= 0) { var g = Get(); g.pathMode = i; Set(g); } }
         }
-
+        [DisplayName("Enemy Path Mode (Role = Enemy)"), TypeConverter(typeof(EnemyPathConverter))]
+        public string EnemyPathMode
+        {
+            get => EnemyPathConverter.Names[Math.Clamp(Get().enemyPathMode, 0, 3)];
+            set { int i = Array.IndexOf(EnemyPathConverter.Names, value); if (i >= 0) { var g = Get(); g.enemyPathMode = i; Set(g); } }
+        }
         [DisplayName("Break Effect"), TypeConverter(typeof(BreakEffectConverter))]
         public string BreakEffect
         {

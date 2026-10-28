@@ -37,6 +37,7 @@ extern "C" {
         int   portalTrigger;   // 0 touch, 1 press Down
         int   locked;
         int   powerType, itemMoves, coinCount;
+        int   enemyPathMode;   // enemies: 0 ping-pong, 1 ping-pong + turn at ledges, 2 once, 3 stand still
     } GhostObjectProps;
 
     typedef struct GhostGameAPI

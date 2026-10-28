@@ -60,6 +60,7 @@ struct GhostGameplayInfo
     int   locked, pathMode, breakEffect, contents, portalTrigger;
     float moveX, moveY, moveZ, moveSpeed, movePause;
     int   powerType, itemMoves, coinCount;
+    int   enemyPathMode;
 };
 struct GhostModParamInfo
 {

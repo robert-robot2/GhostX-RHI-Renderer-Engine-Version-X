@@ -62,6 +62,7 @@ namespace GhostShell
         public int locked, pathMode, breakEffect, contents, portalTrigger;
         public float moveX, moveY, moveZ, moveSpeed, movePause;
         public int powerType, itemMoves, coinCount;
+        public int enemyPathMode;
     }
 
     [StructLayout(LayoutKind.Sequential)]
