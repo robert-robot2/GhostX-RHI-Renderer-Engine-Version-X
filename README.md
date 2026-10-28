@@ -26,6 +26,7 @@
 <img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/cec25a8f-66a0-46a4-8217-a65bb15e44a8" />
 <img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/a827e690-a388-4c26-b3f9-ffa6e0f32869" />
 <img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/0b0fa2e7-8848-4942-88e0-cc3bd8de2ac7" />
+<img width="1920" height="1080" alt="Screenshot 2026-10-28 164908" src="https://github.com/user-attachments/assets/42f31ea5-7816-442d-b1ae-202dd7874180" />
 
 
 
@@ -102,6 +103,7 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [x] Phase 20: Roles Need to be Investigates some are working some are not
 - [x] Phase 23: Enemy Pathways
 - [x] Phase 20.A: Mario Cooked Depth Changed to 50, Power ups changed to flow on z-Axis
+- [x] Phase 20.B: Block Breaking
 - **Active Core**
 - [ ] Phase 12.F: Build The Rest of Level 1, Test Goal Proceed to 12.D test
 - [ ] Phase 12.D: Test: Level 2 Build And Test Play Packaged Exe / Instructions/ Scene Switching
