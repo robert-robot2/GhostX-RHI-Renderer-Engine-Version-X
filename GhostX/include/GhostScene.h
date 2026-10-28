@@ -28,7 +28,7 @@ enum GhostRole {
     GHOST_ROLE_STATIC = 0, GHOST_ROLE_PLAYER, GHOST_ROLE_ENEMY, GHOST_ROLE_COIN,
     GHOST_ROLE_BLOCK, GHOST_ROLE_GOAL, GHOST_ROLE_CUSTOM,
     GHOST_ROLE_PORTAL_ENTRY, GHOST_ROLE_PORTAL_EXIT, GHOST_ROLE_BREAKABLE,
-    GHOST_ROLE_MOVER, GHOST_ROLE_PROJECTILE, GHOST_ROLE_COUNT
+    GHOST_ROLE_MOVER, GHOST_ROLE_PROJECTILE, GHOST_ROLE_BOSS, GHOST_ROLE_HIDDEN, GHOST_ROLE_COUNT
 };
 enum class GhostLightType : int { Directional = 0, Point = 1, RectArea = 2 };
 constexpr unsigned int GHOST_MAX_LIGHTS = 16;
@@ -249,12 +249,15 @@ struct GhostObject
     int         breakEffect = 0;              // breakables: 0 vanish, 1 play "Break" then vanish, 2 play "Break" and leave rubble
     int         contents = 0;                 // blocks, breakables: 0 role default, 1 nothing, 2 coin, 3 power-up
     int         portalTrigger = 1;            // 0 touch, 1 press Down
+    int powerType = 0;   // blocks: 0 auto, 1 mushroom, 2 fire flower, 3 star, 4 1-up
+    int itemMoves = 0;   // 0 by type, 1 moves, 2 stays put
+    int coinCount = 1;   // blocks with contents = coin: coins paid before it is empty
 };
 // The tag the game module searches by: the role's name, or the custom text
 inline std::string GhostObject_Tag(const GhostObject& o)
 {
     static const char* names[GHOST_ROLE_COUNT] = { "", "Player", "Enemy", "Coin", "Block", "Goal", "",
-        "PortalEntry", "PortalExit", "Breakable", "Mover", "Projectile" };
+       "PortalEntry", "PortalExit", "Breakable", "Mover", "Projectile", "Boss", "HiddenBlock" };
     if (o.role == GHOST_ROLE_CUSTOM) return o.customTag;
     if (o.role >= 1 && o.role < GHOST_ROLE_COUNT) return names[o.role];
     return "";

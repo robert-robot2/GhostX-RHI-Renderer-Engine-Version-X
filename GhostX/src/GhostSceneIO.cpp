@@ -10,6 +10,7 @@
 #include <map>
 #include <set>
 
+// GhostSceneIO.cpp
 using json = nlohmann::json;
 namespace fs = std::filesystem;
 
@@ -182,6 +183,7 @@ bool GhostScene_Save(const GhostScene& s, const std::string& root, const std::st
             jo["breakEffect"] = o.breakEffect;
             jo["contents"] = o.contents;
             jo["portalTrigger"] = o.portalTrigger;
+            jo["item"] = json{ { "powerType", o.powerType },{ "moves", o.itemMoves },{ "coins", o.coinCount } };
             jo["shadow"] = json{ { "mode", o.shadowMode },{ "light", o.shadowLightId },{ "receive", o.receiveShadows } };
             if (o.meshId == GHOST_MESH_QUAD)
             {
@@ -455,6 +457,13 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
                 o.breakEffect = Clampi(jo.value("breakEffect", 0), 0, 2);
                 o.contents = Clampi(jo.value("contents", 0), 0, 3);
                 o.portalTrigger = Clampi(jo.value("portalTrigger", 1), 0, 2);
+                if (jo.contains("item") && jo["item"].is_object())
+                {
+                    const json& it = jo["item"];
+                    o.powerType = Clampi(it.value("powerType", 0), 0, 4);
+                    o.itemMoves = Clampi(it.value("moves", 0), 0, 2);
+                    o.coinCount = Clampi(it.value("coins", 1), 1, 999);
+                }
                 if (jo.contains("shadow") && jo["shadow"].is_object())
                 {
                     const json& sh = jo["shadow"];
@@ -658,6 +667,7 @@ unsigned int GhostScene_Hash(const GhostScene& s)
         I(o.shadowMode); I(o.shadowLightId); I(o.receiveShadows ? 1 : 0);
         I(o.locked ? 1 : 0); S(o.link); V(o.pathOffset); F(o.moveSpeed); F(o.movePause);
         I(o.pathMode); I(o.breakEffect); I(o.contents); I(o.portalTrigger);
+        I(o.powerType); I(o.itemMoves); I(o.coinCount);
         const int n = GhostMesh_FaceCount(o.meshId);
         for (int f = 0; f < n; f++) mix(&o.faces[f], sizeof(GhostMaterial));
         if (o.meshId == GHOST_MESH_QUAD)

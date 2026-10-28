@@ -1,13 +1,23 @@
 #include "Game.h"
 #include <vector>
 
+//Entities.cpp
+
 struct Saved { int id; float pos[3], scale[3], color[3]; char tag[32]; int visible; };
 struct Enemy { int id; float homeX; float dir; float vy; bool alive; float dieTimer; };
 
 static std::vector<Saved> g_saved;
 static std::vector<int>   g_coins, g_enemyIds, g_blocks;
 static std::vector<Enemy> g_enemies;
-static std::vector<int>   g_powerups;
+struct Pickup { int id; int type; float dir, vy, riseTo; bool rising, moves; };
+struct BlockMem { int id; int coinsLeft; };
+static std::vector<Pickup>   g_pickups;
+static std::vector<BlockMem> g_blockMem;
+static std::vector<int>      g_hidden;
+static const char* kPickupTag[5] = { "", "Mushroom", "FireFlower", "Star", "OneUp" };
+static const char* kPickupAnim[5] = { "", "Content/Animations/Mushroom.ghostanim", "Content/Animations/FireFlower.ghostanim",
+                                      "Content/Animations/Star.ghostanim", "Content/Animations/OneUp.ghostanim" };
+static const float kPickupColor[5][3] = { { 1,1,1 },{ 1,0.3f,0.3f },{ 1,0.6f,0.1f },{ 1,0.9f,0.2f },{ 0.3f,1,0.4f } };   // used if the .ghostanim is missing
 static float g_spin = 0.0f;
 struct Mover { int id; bool platform; float a[3], b[3]; float speed, pause; int mode; int dir; float wait; bool done; float delta[3]; };
 struct Breaking { int id; float timer; };
@@ -71,7 +81,7 @@ static void RebuildMovers()
 // Records the level exactly as authored, so a restart can put everything back
 void Level_Init()
 {
-    g_saved.clear(); g_coins.clear(); g_enemyIds.clear(); g_blocks.clear(); g_enemies.clear(); g_powerups.clear();
+    g_saved.clear(); g_coins.clear(); g_enemyIds.clear(); g_blocks.clear(); g_enemies.clear(); g_pickups.clear(); g_blockMem.clear(); g_hidden.clear();
     g_breaking.clear(); g_moverIds.clear(); g_projIds.clear(); g_movers.clear();
     Snapshot("Player", nullptr);
     Snapshot("Coin", &g_coins);
@@ -80,6 +90,9 @@ void Level_Init()
     Snapshot("Breakable", nullptr);
     Snapshot("Mover", &g_moverIds);
     Snapshot("Projectile", &g_projIds);
+    Snapshot("HiddenBlock", &g_hidden);
+    for (int id : g_hidden) G->SetVisible(id, 0);          // hidden blocks are invisible while playing
+
     S.totalCoins = (int)g_coins.size();
     S.totalEnemies = (int)g_enemyIds.size();
     RebuildEnemies();
@@ -89,8 +102,8 @@ void Level_Init()
 void Level_Reset()
 {
     g_breaking.clear();
-    for (int id : g_powerups) G->Destroy(id);
-    g_powerups.clear();
+    for (const Pickup& p : g_pickups) G->Destroy(p.id);
+    g_pickups.clear(); g_blockMem.clear();
 
     for (const Saved& s : g_saved)
     {
@@ -101,6 +114,7 @@ void Level_Reset()
         G->SetVisible(s.id, s.visible);
         G->SpriteSetClip(s.id, "");
     }
+    for (int id : g_hidden) G->SetVisible(id, 0);
     RebuildEnemies();
     RebuildMovers();
 }
@@ -108,7 +122,7 @@ void Level_Reset()
 void Coin_Collect(int id)
 {
     G->SetVisible(id, 0);          // hidden objects are skipped by QueryBox
-    S.coins++;
+    Coins_Add(1);
 }
 
 void Enemy_Kill(int id)
@@ -124,26 +138,7 @@ void Enemy_Kill(int id)
         }
 }
 
-void PowerUp_Remove(int id)
-{
-    G->Destroy(id);
-    for (size_t i = 0; i < g_powerups.size(); i++)
-        if (g_powerups[i] == id) { g_powerups.erase(g_powerups.begin() + i); break; }
-}
 
-// The player's head hit this object from below
-static void SpawnPowerUp(const float* mn, const float* mx)
-{
-    float pos[3] = { (mn[0] + mx[0]) * 0.5f, mx[1] + 0.26f, (mn[2] + mx[2]) * 0.5f };
-    int pu = G->Spawn(GHOST_API_MESH_CUBE, pos);
-    if (!pu) return;
-    const float size[3] = { 0.5f, 0.5f, 0.5f };
-    const float green[3] = { 0.2f, 1.0f, 0.4f };
-    G->SetScale(pu, size);
-    G->SetColor(pu, green);
-    G->SetTag(pu, "PowerUp");
-    g_powerups.push_back(pu);
-}
 
 static void BreakBrick(int id, int effect)
 {
@@ -164,42 +159,117 @@ static void BreakBrick(int id, int effect)
     G->SetScale(id, s); G->SetPosition(id, p); G->SetColor(id, ash);
 }
 
+void Coins_Add(int n) { S.coins += n; while (S.coins >= 100) { S.coins -= 100; S.lives++; } }
+void Life_Add() { S.lives++; }
+
+bool Pickup_TypeFromTag(const char* tag, int& type)
+{
+    for (int t = 1; t <= 4; t++) if (strcmp(tag, kPickupTag[t]) == 0) { type = t; return true; }
+    return false;
+}
+
+void PowerUp_Remove(int id)
+{
+    G->Destroy(id);
+    for (size_t i = 0; i < g_pickups.size(); i++)
+        if (g_pickups[i].id == id) { g_pickups.erase(g_pickups.begin() + i); break; }
+}
+
+static void SpawnPickup(int type, const float* mn, const float* mx, bool moves)
+{
+    const float sz = Cfg::PickupSize;
+    float pos[3] = { (mn[0] + mx[0]) * 0.5f, mx[1] - sz * 0.5f, (mn[2] + mx[2]) * 0.5f };   // starts inside the block
+    int id = G->Spawn(GHOST_API_MESH_QUAD, pos);                                             // a sprite, not a cube
+    if (!id) return;
+    const float size[3] = { sz, sz, sz };
+    G->SetScale(id, size);
+    G->SetTag(id, kPickupTag[type]);
+    if (!G->SpriteSetAnim(id, kPickupAnim[type])) G->SetColor(id, kPickupColor[type]);
+    Pickup p = {};
+    p.id = id; p.type = type; p.dir = 1.0f; p.rising = true; p.moves = moves;
+    p.riseTo = mx[1] + sz * 0.5f + 0.01f;
+    g_pickups.push_back(p);
+}
+
+static int& CoinsLeft(int id, int count)
+{
+    for (BlockMem& m : g_blockMem) if (m.id == id) return m.coinsLeft;
+    g_blockMem.push_back({ id, count < 1 ? 1 : count });
+    return g_blockMem.back().coinsLeft;
+}
+
+static void SetUsed(int id)
+{
+    G->SetTag(id, "UsedBlock");                            // still solid, can't be bumped again
+    if (!Sprite_Play(id, "Used", nullptr))
+    {
+        const float brown[3] = { 0.45f, 0.30f, 0.15f };
+        G->SetColor(id, brown);
+    }
+}
+
+static void Pay(int id, const GhostObjectProps& pr, int give, bool isBlock, bool hidden)
+{
+    float mn[3], mx[3];
+    if (!G->GetBounds(id, mn, mx)) return;
+    if (give == 2)                                         // coins: one per hit until empty
+    {
+        Coins_Add(1);
+        if (isBlock) { if (--CoinsLeft(id, pr.coinCount) <= 0) SetUsed(id); }
+        return;
+    }
+    if (isBlock) SetUsed(id);
+    if (give != 3) return;
+    int type = pr.powerType;
+    if (type == 0) type = hidden ? PU_ONEUP : (PowerLevel() == 0 ? PU_MUSHROOM : PU_FLOWER);
+    const bool moves = pr.itemMoves == 1 || (pr.itemMoves == 0 && type != PU_FLOWER);
+    SpawnPickup(type, mn, mx, moves);
+}
+
 // The player's head hit this object from below
 void Blocks_Bump(int id)
 {
     char tag[32];
     if (!G->GetTag(id, tag, sizeof tag)) return;
-    const bool block = strcmp(tag, "Block") == 0, brick = strcmp(tag, "Breakable") == 0;
+    const bool hidden = strcmp(tag, "HiddenBlock") == 0;
+    const bool block = hidden || strcmp(tag, "Block") == 0, brick = strcmp(tag, "Breakable") == 0;
     if (!block && !brick) return;
 
     GhostObjectProps pr = {};
     G->GetObjectProps(id, &pr);
-    float mn[3], mx[3];
-    if (!G->GetBounds(id, mn, mx)) return;
-
     int give = pr.contents;                                // 0 role default, 1 nothing, 2 coin, 3 power-up
-    if (give == 0) give = block ? 3 : 1;                   // a ? block gives a power-up, a brick gives nothing
+    if (give == 0) give = block ? 3 : 1;
 
-    if (brick && give == 1)                                // a plain brick: big Mario breaks it
+    if (brick && give == 1)                                // plain brick: only big Mario breaks it
     {
         if (S.big || Cfg::SmallBreaksBricks) BreakBrick(id, pr.breakEffect);
         return;
     }
-
-    if (brick) BreakBrick(id, pr.breakEffect);             // a brick with contents breaks and pays out
-    else
-    {
-        G->SetTag(id, "UsedBlock");                        // still solid, can't be bumped again
-        if (!Sprite_Play(id, "Used", nullptr))
-        {
-            const float brown[3] = { 0.45f, 0.30f, 0.15f };
-            G->SetColor(id, brown);
-        }
-    }
-
-    if (give == 2 || (give == 3 && S.big)) { S.coins++; return; }    // a coin, or a coin instead of a power-up when already big
-    if (give == 3) SpawnPowerUp(mn, mx);
+    if (brick) BreakBrick(id, pr.breakEffect);             // brick with contents breaks and pays out
+    Pay(id, pr, give, block, hidden);
 }
+
+// Hidden blocks: only trigger when Mario moves UP into them. Call before MoveBody.
+bool Hidden_Try(Body& b, float vy, float dt)
+{
+    if (vy <= 0.0f) return false;
+    const float headNow = b.pos[1] + b.half[1], headNext = headNow + vy * dt;
+    for (int id : g_hidden)
+    {
+        if (G->GetVisible(id)) continue;                   // already revealed
+        float mn[3], mx[3];
+        if (!G->GetBounds(id, mn, mx)) continue;
+        if (!(b.pos[0] - b.half[0] < mx[0] && b.pos[0] + b.half[0] > mn[0] &&
+            b.pos[2] - b.half[2] < mx[2] && b.pos[2] + b.half[2] > mn[2])) continue;
+        if (headNow > mn[1] + 0.02f || headNext < mn[1]) continue;
+        b.pos[1] = mn[1] - b.half[1] - 0.001f;
+        G->SetVisible(id, 1);
+        Blocks_Bump(id);
+        return true;
+    }
+    return false;
+}
+
 
 void Movers_Update(float dt)
 {
@@ -269,8 +339,37 @@ void Entities_Update(float dt)
     if (g_spin > 360.0f) g_spin -= 360.0f;
     const float rot[3] = { 0.0f, g_spin, 0.0f };
     for (int id : g_coins) if (G->GetVisible(id)) G->SetRotation(id, rot);
-    for (int id : g_powerups) G->SetRotation(id, rot);
 
+    for (size_t i = 0; i < g_pickups.size(); )
+    {
+        Pickup& p = g_pickups[i];
+        float pos[3];
+        if (!G->GetPosition(p.id, pos)) { g_pickups.erase(g_pickups.begin() + i); continue; }
+        if (p.rising)
+        {
+            pos[1] += Cfg::PickupRise * dt;
+            if (pos[1] >= p.riseTo) { pos[1] = p.riseTo; p.rising = false; }
+            G->SetPosition(p.id, pos);
+        }
+        else if (p.moves)
+        {
+            Body b;
+            if (LoadBody(p.id, b))
+            {
+                p.vy -= Cfg::Gravity * dt;
+                if (p.vy < -Cfg::MaxFall) p.vy = -Cfg::MaxFall;
+                b.vel[0] = p.dir * Cfg::PickupSpeed; b.vel[1] = p.vy; b.vel[2] = 0.0f;
+                MoveResult r = MoveBody(b, dt);
+                p.vy = b.vel[1];
+                if (r.hitX) p.dir = -p.dir;
+                if (p.type == PU_STAR && r.hitFloor) p.vy = Cfg::StarBounce;
+                StoreBody(b);
+                pos[1] = b.pos[1];
+            }
+        }
+        if (pos[1] < Cfg::FallLimit) { G->Destroy(p.id); g_pickups.erase(g_pickups.begin() + i); continue; }
+        i++;
+    }
     // ---- Enemies: patrol along X, turn at walls and at the patrol limit ----
     for (Enemy& e : g_enemies)
     {

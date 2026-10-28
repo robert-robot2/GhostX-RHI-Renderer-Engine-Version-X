@@ -1,5 +1,7 @@
 #include "Game.h"
 
+//Player.cpp
+
 static float g_vel[3];
 static float g_coyote, g_jumpBuf;
 static bool  g_grounded;
@@ -15,30 +17,55 @@ static float Approach(float v, float target, float maxStep)
 
 void Player_Init() { G->GetScale(S.player, g_baseScale); }
 
+static const char* kPowerAnim[3] = { "Content/Animations/MarioSmall.ghostanim",   // set [0] to the file your Player uses today
+                                     "Content/Animations/MarioBig.ghostanim",
+                                     "Content/Animations/MarioFire.ghostanim" };
+
 void Player_Reset()
 {
     memset(g_vel, 0, sizeof g_vel);
     g_coyote = g_jumpBuf = 0.0f;
     g_grounded = false;
     S.error = nullptr;
+    G->SpriteSetAnim(S.player, kPowerAnim[0]);
 }
 
-static void Grow(Body& b)
+
+
+static void SetPower(Body& b, int level)
 {
-    if (S.big) { S.coins++; return; }              // already big: the power-up is worth a coin
-    S.big = true;
-    float s[3] = { g_baseScale[0] * Cfg::GrowFactor, g_baseScale[1] * Cfg::GrowFactor, g_baseScale[2] * Cfg::GrowFactor };
-    G->SetScale(S.player, s);
-    b.pos[1] += b.half[1] * (Cfg::GrowFactor - 1.0f) + 0.01f;      // feet stay where they were
-    for (int i = 0; i < 3; i++) b.off[i] *= Cfg::GrowFactor;
+    const int old = PowerLevel();
+    if (old == level) return;
+    const float kx = Cfg::PowerScaleX[level] / Cfg::PowerScaleX[old];
+    const float ky = Cfg::PowerScaleY[level] / Cfg::PowerScaleY[old];
+    S.big = level >= 1; S.fire = level == 2;
+    const float s[3] = { g_baseScale[0] * Cfg::PowerScaleX[level], g_baseScale[1] * Cfg::PowerScaleY[level],
+                         g_baseScale[2] * Cfg::PowerScaleX[level] };
+    G->SetScale(S.player, s);                              // the collider follows the scale
+    G->SpriteSetAnim(S.player, kPowerAnim[level]);         // whole animation set swaps
+    b.pos[1] += b.half[1] * (ky - 1.0f) + (ky > 1.0f ? 0.01f : 0.0f);   // feet stay put
+    b.half[0] *= kx; b.half[2] *= kx; b.half[1] *= ky;
+    b.off[0] *= kx;  b.off[2] *= kx;  b.off[1] *= ky;
 }
 
-static void Shrink(Body& b)
+static void Collect(Body& b, int type)
 {
-    S.big = false;
-    G->SetScale(S.player, g_baseScale);
-    b.pos[1] -= b.half[1] * (1.0f - 1.0f / Cfg::GrowFactor);
-    for (int i = 0; i < 3; i++) b.off[i] /= Cfg::GrowFactor;
+    switch (type)
+    {
+    case PU_MUSHROOM: if (PowerLevel() == 0) SetPower(b, 1); else Coins_Add(1); break;
+    case PU_FLOWER:   if (PowerLevel() < 2) SetPower(b, PowerLevel() + 1); else Coins_Add(1); break;   // small -> big, big -> fire
+    case PU_STAR:     S.starTime = Cfg::StarTime; break;                                              // a second star resets the timer
+    case PU_ONEUP:    Life_Add(); break;
+    }
+}
+
+// true = Mario died (caller returns)
+static bool Hurt(Body& b)
+{
+    if (S.starTime > 0.0f || S.invuln > 0.0f) return false;
+    if (S.big) { SetPower(b, 0); S.invuln = Cfg::Invulnerable; S.hurt = 0.45f; g_vel[1] = 6.0f; return false; }
+    Game_Restart(true);
+    return true;
 }
 
 // Stand on or touch an Entry, then press its trigger. A Link ID pairs an Entry with an Exit.
@@ -112,6 +139,7 @@ void Player_Update(float dt)
     // ---- Move ----
     const float feetBefore = b.pos[1] - b.half[1];
     const float preVy = g_vel[1];
+    if (Hidden_Try(b, g_vel[1], dt)) g_vel[1] = 0.0f;
     memcpy(b.vel, g_vel, sizeof g_vel);
     MoveResult r = MoveBody(b, dt);
     memcpy(g_vel, b.vel, sizeof g_vel);
@@ -123,33 +151,24 @@ void Player_Update(float dt)
     int n = QueryBody(b, ids, 32);
     for (int i = 0; i < n; i++)
     {
+        int ptype = 0;   // declare at the top of the loop body
         char tag[32];
         if (!G->GetTag(ids[i], tag, sizeof tag)) continue;
 
         if (strcmp(tag, "Coin") == 0) Coin_Collect(ids[i]);
         else if (strcmp(tag, "Goal") == 0) S.complete = true;
-        else if (strcmp(tag, "PowerUp") == 0) { PowerUp_Remove(ids[i]); Grow(b); }
-        else if (strcmp(tag, "Projectile") == 0 && S.invuln <= 0.0f)           // fireballs hurt and can't be stomped
-        {
-            if (S.big) { Shrink(b); S.invuln = Cfg::Invulnerable; S.hurt = 0.45f; g_vel[1] = 6.0f; }
-            else { Game_Restart(true); return; }
-        }
+        else if (Pickup_TypeFromTag(tag, ptype)) { PowerUp_Remove(ids[i]); Collect(b, ptype); } 
+        else if (strcmp(tag, "Projectile") == 0) { if (Hurt(b)) return; }
+      
         else if (strcmp(tag, "Enemy") == 0)
         {
             float emn[3], emx[3];
             if (!G->GetBounds(ids[i], emn, emx)) continue;
 
-            const bool stomp = preVy < 0.0f && feetBefore >= emx[1] - 0.12f;     // we were above it and falling
-            if (stomp)
-            {
-                Enemy_Kill(ids[i]);
-                g_vel[1] = G->KeyDown(VK_SPACE) ? Cfg::StompBounceHeld : Cfg::StompBounce;
-            }
-            else if (S.invuln <= 0.0f)
-            {
-                if (S.big) { Shrink(b); S.invuln = Cfg::Invulnerable; S.hurt = 0.45f; g_vel[1] = 6.0f; }
-                else { Game_Restart(true); return; }
-            }
+            if (S.starTime > 0.0f) { Enemy_Kill(ids[i]); continue; }                 // star: kills on contact
+            const bool stomp = preVy < 0.0f && feetBefore >= emx[1] - 0.25f;         // wider than before, so fast falls still count
+            if (stomp) { Enemy_Kill(ids[i]); g_vel[1] = G->KeyDown(VK_SPACE) ? Cfg::StompBounceHeld : Cfg::StompBounce; }
+            else if (Hurt(b)) return;
         }
     }
 
@@ -190,6 +209,14 @@ void Player_Update(float dt)
 
         G->SpriteSetSpeed(S.player, (g_grounded && planar > 0.4f && G->KeyDown(VK_SHIFT)) ? 1.6f : 1.0f);   // running looks faster
         if (S.hurt > 0.0f) S.hurt -= dt;
+    }
+
+    if (S.starTime > 0.0f)
+    {
+        S.starTime -= dt;
+        const bool on = S.starTime > 0.0f && (((int)(S.starTime * 16.0f)) & 1);
+        const float yellow[3] = { 1.0f, 0.9f, 0.2f }, white[3] = { 1, 1, 1 };
+        G->SetColor(S.player, on ? yellow : white);
     }
     // ---- Blink while invulnerable ----
     if (S.invuln > 0.0f)

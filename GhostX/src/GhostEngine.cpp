@@ -2607,7 +2607,7 @@ static int Api_SetTag(int id, const char* tag)
     if (!o) return 0;
     std::string t = tag ? tag : "";
     static const char* names[GHOST_ROLE_COUNT] = { "", "Player", "Enemy", "Coin", "Block", "Goal", nullptr,
-        "PortalEntry", "PortalExit", "Breakable", "Mover", "Projectile" };
+        "PortalEntry", "PortalExit", "Breakable", "Mover", "Projectile", "Boss", "HiddenBlock" };
     o->role = GHOST_ROLE_CUSTOM;
     for (int i = 0; i < GHOST_ROLE_COUNT; i++) if (names[i] && t == names[i]) { o->role = i; break; }
     if (o->role == GHOST_ROLE_CUSTOM) { if (t.size() > 31) t.resize(31); o->customTag = t; }
@@ -3069,6 +3069,7 @@ static int Api_GetObjectProps(int id, GhostObjectProps* out)
     out->pathMode = o->pathMode;    out->breakEffect = o->breakEffect;
     out->contents = o->contents;    out->portalTrigger = o->portalTrigger;
     out->locked = o->locked ? 1 : 0;
+    out->powerType = o->powerType; out->itemMoves = o->itemMoves; out->coinCount = o->coinCount;
     return 1;
 }
 
@@ -3233,7 +3234,7 @@ int GhostEngine_GetGameplay(int objectId, GhostGameplayInfo* out)
              o->colliderOffset.x, o->colliderOffset.y, o->colliderOffset.z,
              o->visible ? 1 : 0,
              o->locked ? 1 : 0, o->pathMode, o->breakEffect, o->contents, o->portalTrigger,
-             o->pathOffset.x, o->pathOffset.y, o->pathOffset.z, o->moveSpeed, o->movePause };
+             o->pathOffset.x, o->pathOffset.y, o->pathOffset.z, o->moveSpeed, o->movePause, o->powerType, o->itemMoves, o->coinCount };
     return 1;
 }
 
@@ -3258,6 +3259,9 @@ void GhostEngine_SetGameplay(const GhostGameplayInfo* in)
     o->pathOffset = { cf(in->moveX, -10000.0f, 10000.0f), cf(in->moveY, -10000.0f, 10000.0f), cf(in->moveZ, -10000.0f, 10000.0f) };
     o->moveSpeed = cf(in->moveSpeed, 0.01f, 100.0f);
     o->movePause = cf(in->movePause, 0.0f, 60.0f);
+    o->powerType = ci(in->powerType, 0, 4);
+    o->itemMoves = ci(in->itemMoves, 0, 2);
+    o->coinCount = ci(in->coinCount, 1, 999);
 }
 
 int GhostEngine_GetCustomTag(int objectId, char* buf, int bufSize)

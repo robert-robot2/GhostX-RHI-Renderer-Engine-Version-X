@@ -1,4 +1,5 @@
 #include "Game.h"
+//Collision.cpp
 
 static const float SKIN = 0.001f;      // pushes land a hair outside the surface, so resting contact never counts as overlap
 
@@ -7,7 +8,7 @@ bool IsSolid(int id)
     char tag[32];
     if (!G->GetTag(id, tag, sizeof tag)) return false;
     return !(strcmp(tag, "Player") == 0 || strcmp(tag, "Enemy") == 0 || strcmp(tag, "Coin") == 0 ||
-        strcmp(tag, "Goal") == 0 || strcmp(tag, "PowerUp") == 0 || strcmp(tag, "Defeated") == 0 ||
+        strcmp(tag, "Goal") == 0 || strcmp(tag, "Mushroom") == 0 || strcmp(tag, "FireFlower") == 0 || strcmp(tag, "Star") == 0 || strcmp(tag, "OneUp") == 0 || strcmp(tag, "Defeated") == 0 ||
         strcmp(tag, "Projectile") == 0 || strcmp(tag, "Broken") == 0);
 }
 

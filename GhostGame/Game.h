@@ -5,6 +5,8 @@
 #include <stdio.h>
 #include "../GhostX/include/GhostGameAPI.h"
 
+//Game.h
+
 extern const GhostGameAPI* G;
 
 namespace Cfg
@@ -20,7 +22,10 @@ namespace Cfg
     constexpr float CamDistance = 7.0f, CamPitch = -25.0f, CamTargetHeight = 0.6f;
     constexpr float CamTurnSpeed = 100.0f, CamSmooth = 10.0f;
     constexpr bool SideScroller = false;        // true: W/S (up/down) don't move the player, only left/right
-    constexpr bool SmallBreaksBricks = true;   // false = small Mario only bumps bricks, like the original
+    constexpr bool SmallBreaksBricks = false;   // false = small Mario only bumps bricks, like the original
+    constexpr float StarTime = 10.0f, PickupSize = 0.6f, PickupRise = 1.5f, PickupSpeed = 2.0f, StarBounce = 9.0f;
+    constexpr float PowerScaleX[3] = { 1.0f, 1.0f, 1.0f };   // small, big, fire: match your art's width ratio
+    constexpr float PowerScaleY[3] = { 1.0f, 2.0f, 2.0f };   // 16x16 -> 16x32 art = 2.0. The collider follows the scale.
 }
 
 struct GameState
@@ -43,9 +48,11 @@ struct GameState
     bool  lastLevel = true;
     float advance = 0.0f;              // seconds since the Goal, for auto-advancing
     float portalCool = 0.0f;
+    bool fire = false; float starTime = 0.0f; int lives = 3;
 };
 extern GameState S;
-
+enum { PU_NONE = 0, PU_MUSHROOM, PU_FLOWER, PU_STAR, PU_ONEUP };
+inline int PowerLevel() { return S.big ? (S.fire ? 2 : 1) : 0; }
 // ---- Collision.cpp ----
 struct Body
 {
@@ -79,7 +86,10 @@ void Enemy_Kill(int id);
 void Blocks_Bump(int id);
 void PowerUp_Remove(int id);
 void Movers_Update(float dt);
-
+void Coins_Add(int n);
+void Life_Add();
+bool Pickup_TypeFromTag(const char* tag, int& type);
+bool Hidden_Try(Body& b, float vy, float dt);
 
 // ---- Game.cpp ----
 void Game_Restart(bool died);

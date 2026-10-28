@@ -4,6 +4,8 @@
 #include <vector>
 #include <utility>
 
+// GhostAnim.h
+
 struct GhostClip
 {
     std::string      name;

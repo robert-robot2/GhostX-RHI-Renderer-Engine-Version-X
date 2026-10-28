@@ -404,7 +404,7 @@ namespace GhostShell
     internal class RoleConverter : FixedListConverter
     {
         public static readonly string[] Names = { "Static", "Player", "Enemy", "Coin", "Block", "Goal", "Custom",
-            "Portal Entry", "Portal Exit", "Breakable", "Moving Object", "Projectile" };
+            "Portal Entry", "Portal Exit", "Breakable", "Moving Object", "Projectile", "Boss", "Hidden Block"};
         protected override string[] Items => Names;
     }
 
@@ -539,6 +539,13 @@ namespace GhostShell
     internal sealed class PortalTriggerConverter : FixedListConverter
     { public static readonly string[] Names = { "Touch (walk through)", "Press Down", "Press F" }; protected override string[] Items => Names; }
 
+    internal sealed class PowerTypeConverter : FixedListConverter
+    { public static readonly string[] Names = { "Auto (mushroom, then flower)", "Mushroom", "Fire Flower", "Star", "1-Up" }; protected override string[] Items => Names; }
+    internal sealed class ItemMoveConverter : FixedListConverter
+    { public static readonly string[] Names = { "By type", "Moves", "Stays put" }; protected override string[] Items => Names; }
+
+
+
     // Details > Gameplay > Behavior: the settings the new roles use
     [TypeConverter(typeof(ExpandableObjectConverter))]
     internal sealed class BehaviorEdit
@@ -602,6 +609,22 @@ namespace GhostShell
         }
 
         public override string ToString() => "(role settings)";
+
+        [DisplayName("Power-Up Type (contents = Power-up)"), TypeConverter(typeof(PowerTypeConverter))]
+        public string PowerType
+        {
+            get => PowerTypeConverter.Names[Math.Clamp(Get().powerType, 0, 4)];
+            set { int i = Array.IndexOf(PowerTypeConverter.Names, value); if (i >= 0) { var g = Get(); g.powerType = i; Set(g); } }
+        }
+        [DisplayName("Pickup Movement"), TypeConverter(typeof(ItemMoveConverter))]
+        public string PickupMovement
+        {
+            get => ItemMoveConverter.Names[Math.Clamp(Get().itemMoves, 0, 2)];
+            set { int i = Array.IndexOf(ItemMoveConverter.Names, value); if (i >= 0) { var g = Get(); g.itemMoves = i; Set(g); } }
+        }
+        [DisplayName("Coin Count (contents = Coin)")]
+        public int CoinCount { get => Get().coinCount; set { var g = Get(); g.coinCount = Math.Clamp(value, 1, 999); Set(g); } }
+
     }
 
 

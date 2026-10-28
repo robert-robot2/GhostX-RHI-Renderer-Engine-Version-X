@@ -36,6 +36,7 @@ extern "C" {
         int   contents;        // 0 role default, 1 nothing, 2 coin, 3 power-up
         int   portalTrigger;   // 0 touch, 1 press Down
         int   locked;
+        int   powerType, itemMoves, coinCount;
     } GhostObjectProps;
 
     typedef struct GhostGameAPI

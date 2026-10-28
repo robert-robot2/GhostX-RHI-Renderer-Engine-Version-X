@@ -1,5 +1,7 @@
 #include "Game.h"
 
+//Game.cpp
+
 const GhostGameAPI* G = nullptr;
 GameState S;
 
@@ -29,8 +31,9 @@ static int g_ui = 0;                // handle of Content/UI/HUD.ghostui (0 = fai
 
 void Game_Restart(bool died)
 {
-    if (died) S.deaths++;
+    if (died) { S.deaths++; if (--S.lives <= 0) S.lives = 3; }   // real game over comes later
     S.coins = 0; S.enemiesDown = 0;
+    S.big = false; S.fire = false; S.starTime = 0.0f; S.advance = 0.0f; S.invuln = 0.0f; S.hurt = 0.0f; S.complete = false;
     S.big = false; S.advance = 0.0f; S.invuln = 0.0f; S.hurt = 0.0f; S.complete = false;
     S.portalCool = 0.0f;
     Level_Reset();
