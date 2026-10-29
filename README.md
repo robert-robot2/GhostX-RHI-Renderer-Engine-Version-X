@@ -108,6 +108,8 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [ ] Phase 12.F: Build The Rest of Level 1, Test Goal Proceed to 12.D test
 - [ ] Phase 12.D: Test: Level 2 Build And Test Play Packaged Exe / Instructions/ Scene Switching
 - [ ] Phase 20.C: Main Menu, Game Over, HUD, Add/Polish
+- [ ] Phase 24: Check All Editor Windows/ Move To window Palette/ Add DropDowns
+- [ ] Phase : Controls, Right Clicker, User Friendly, copy paste
 - **Active SubCore**
 - [ ] Phase 13.D: A CAD-style set of annotation tools on top of the blueprint grid.
 - [ ] Phase 18: Player Controls Editor
@@ -126,20 +128,18 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [ ] Phase : RHI Vulkan Backend
 - **Pending**
 - [ ] Phase : Gamepad
-- [ ] Phase : Check All Editor Windows/ Move To window Palette/ Add DropDowns
 - [ ] Phase : Audio
-- [ ] Phase : Expert Primitives
+- [ ] Phase : Vertical Sync, Rendering Polish
+- [ ] Phase : Antialiasing MSAA/SMAA/FXAA/TAA
 - [ ] Phase : Co-op Multiplayer
 - [ ] Phase : Online Multiplayer
-- [ ] Phase : Vertical Sync, Rendering Polish
-- [ ] Phase : Controls, Right Clicker, User Friendly, copy paste
+- [ ] Phase : Expert Primitives
 - [ ] Phase : Master Object Roles
 - [ ] Phase : Advanced Chaos
 - [ ] Phase : Multi Ext Mesh import gltf, obj etc.. textures, normal/specular maps, shadows
 - [ ] Phase : Spot Light / Ray Casting / Global Illumination / Bloom / Subsurface Scattering
 - [ ] Phase : Shadows: Directional Light
 - [ ] Phase : All camera types and features
-- [ ] Phase : Antialiasing MSAA/SMAA/FXAA/TAA
 - [ ] Phase : MetaHuman 
 - [ ] Phase : Tile Map
 - [ ] Phase : Shadows: Tile Map
