@@ -103,10 +103,11 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [x] Phase 23: Enemy Pathways
 - [x] Phase 20.A: Mario Cooked Depth Changed to 50, Power ups changed to flow on z-Axis
 - [x] Phase 20.B: Block Breaking / Journeyman Chaos
+- [x] Phase 22: Sky Sphere Night Only Below Axis For underground
 - **Active Core**
-- [ ] Phase 22: Sky Sphere Night Only Below Axis For underground
 - [ ] Phase 12.F: Build The Rest of Level 1, Test Goal Proceed to 12.D test
 - [ ] Phase 12.D: Test: Level 2 Build And Test Play Packaged Exe / Instructions/ Scene Switching
+- [ ] Phase 20.C: Main Menu, Game Over, HUD, Add/Polish
 - **Active SubCore**
 - [ ] Phase 13.D: A CAD-style set of annotation tools on top of the blueprint grid.
 - [ ] Phase 18: Player Controls Editor
@@ -115,6 +116,7 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - **DEBUG/ERRORS**
 - [ ] Phase Errors: Docking Suite Debug Needs reset/ delete xml layout but why?
 - [ ] Phase Errors: AnyCPU cannot find DLL in Debug
+- [ ] Phase Errors: Sprite Sheet Editor Needs Adjustment
 - **Publish/Release**
 - [ ] Phase : Install Shield Wizard/ Packaged Install for Download
 - [ ] Phase : Install Wizard Setup for Standalone Game
