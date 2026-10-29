@@ -51,9 +51,11 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 ---
 ## Definate Errors:
 - **FLAWLESS VICTORY**
-## Possible Encountered Errors:
+## Possible Encountered Errors When Release Updates:
 - **Projects Not loading Scenes sometimes?**
 - **Imported Textures Not showing on Content Broswer**
+- **Not all Assets Working With Previous Updates Minor Changes Required**
+## General Possible Encountered Errors:
 - **Sprite Sheet Editor Display Frames of SLightly in Editor But not in game? The AI warned me this would happen....**
 ## Capacity
 - **To Be filled**
