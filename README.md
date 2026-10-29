@@ -51,6 +51,7 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - (Test Phase 12.D.)** Two Level Game Does generate Packaged Folder with exe**
 - **Does Not Have Standalone Install Shield Wizard Setup Package Yet**
 - **Does Not Have Standalone Install Wizard for Built Games only Generate Files.**
+- **Certain Parameters Only Work With Certain Roles Under Behavior When Choosing Object Role Needs Advanced Menu Addition**
 ---
 ## Definate Errors:
 - **FLAWLESS VICTORY**
