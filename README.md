@@ -55,11 +55,10 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 ## Possible Encountered Errors:
 - **Projects Not loading Scenes sometimes?**
 - **Imported Textures Not showing on Content Broswer**
-- **Not All Roles are Working as expected yet**
 - **Sprite Sheet Editor Display Frames of SLightly in Editor But not in game? The AI warned me this would happen....**
 ## Capacity
 - **To Be filled**
-- **One million vertices Scene Limit**
+- **One million vertices Per Mesh Limit**
 - **2048 Max Scene Objects**
 ## Requirements
 - 4 Mhz DOS OS Computer with OnBoard GPU
