@@ -118,6 +118,12 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [ ] Phase : Install Shield Wizard/ Packaged Install for Download
 - [ ] Phase : Install Wizard Setup for Standalone Game
 - [ ] Phase : Program Launcher
+- [ ] Phase : Gamepad
+- [ ] Phase : Audio
+- [ ] Phase : Vertical Sync, Rendering Polish
+- [ ] Phase : Antialiasing MSAA/SMAA/FXAA/TAA
+- [ ] Phase : Co-op Multiplayer
+- [ ] Phase : Online Multiplayer
 - [ ] Phase 13.D: A CAD-style set of annotation tools on top of the blueprint grid.
 - [ ] Phase 18: Player Controls Editor
 - **Testing/Game**
@@ -131,12 +137,6 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [ ] Phase : Live Updates
 - [ ] Phase : RHI Vulkan Backend
 - **Pending**
-- [ ] Phase : Gamepad
-- [ ] Phase : Audio
-- [ ] Phase : Vertical Sync, Rendering Polish
-- [ ] Phase : Antialiasing MSAA/SMAA/FXAA/TAA
-- [ ] Phase : Co-op Multiplayer
-- [ ] Phase : Online Multiplayer
 - [ ] Phase : Expert Primitives
 - [ ] Phase : Master Object Roles
 - [ ] Phase : Advanced Chaos
