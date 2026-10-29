@@ -26,6 +26,9 @@ namespace Cfg
     constexpr float StarTime = 10.0f, PickupSize = 0.6f, PickupRise = 1.5f, PickupSpeed = 2.0f, StarBounce = 9.0f;
     constexpr float PowerScaleX[3] = { 1.0f, 1.0f, 1.0f };   // small, big, fire: match your art's width ratio
     constexpr float PowerScaleY[3] = { 1.0f, 2.0f, 2.0f };   // 16x16 -> 16x32 art = 2.0. The collider follows the scale.
+    constexpr float NightDepth = -2.0f;      // Mario below this Y: the sky goes to night
+    constexpr float NightHour = 22.0f;
+    constexpr float NightFadeSpeed = 8.0f;   // hours per second (8 = about 1.2 s to night). Use 1000 to snap instantly.
 }
 
 struct GameState
@@ -90,6 +93,8 @@ void Coins_Add(int n);
 void Life_Add();
 bool Pickup_TypeFromTag(const char* tag, int& type);
 bool Hidden_Try(Body& b, float vy, float dt);
+void Sky_Update(float dt);
+
 
 // ---- Game.cpp ----
 void Game_Restart(bool died);

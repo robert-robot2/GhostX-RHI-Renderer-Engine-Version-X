@@ -193,6 +193,7 @@ GHOST_GAME_EXPORT void GhostGame_Update(float dt)
         }
     }
     Entities_Update(dt);
+    Sky_Update(dt);
     Camera_Update(dt);
     Hud();
 }

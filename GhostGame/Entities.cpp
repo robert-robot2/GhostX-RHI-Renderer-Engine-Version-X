@@ -28,6 +28,9 @@ static std::vector<int>      g_moverIds, g_projIds;
 struct Debris { int id; float vel[3]; float life; };
 static std::vector<Debris> g_debris;
 
+static float g_skyBase = 12.0f, g_skyCur = 12.0f;   // the level's own hour, and the hour we are showing
+
+
 static void Snapshot(const char* tag, std::vector<int>* idsOut)
 {
     int ids[512];
@@ -112,6 +115,7 @@ void Level_Init()
     S.totalEnemies = (int)g_enemyIds.size();
     RebuildEnemies();
     RebuildMovers();
+    g_skyBase = g_skyCur = G->SkyGetTime();         // remember the authored time of day
 }
 
 void Level_Reset()
@@ -134,6 +138,8 @@ void Level_Reset()
     for (int id : g_hidden) G->SetVisible(id, 0);
     RebuildEnemies();
     RebuildMovers();
+    g_skyCur = g_skyBase;                           // respawn: back to the level's own sky
+    G->SkySetTime(g_skyBase);
 }
 
 void Coin_Collect(int id)
@@ -382,6 +388,29 @@ static bool GroundAhead(const Body& b, float dx, float dz)
     for (int i = 0; i < n; i++) if (ids[i] != b.id && IsSolid(ids[i])) return true;
     return false;
 }
+
+// Below Cfg::NightDepth the sky eases to Cfg::NightHour; above it, back to the level's own hour.
+void Sky_Update(float dt)
+{
+    if (!S.player) return;
+    float p[3];
+    if (!G->GetPosition(S.player, p)) return;       // object position, not the collider center: fine for a 48-unit spacer
+
+    const bool  night = p[1] < Cfg::NightDepth;
+    const float target = night ? Cfg::NightHour : g_skyBase;
+    if (!night && g_skyCur == g_skyBase) return;    // normal play: leave the sky alone
+
+    float d = fmodf(target - g_skyCur, 24.0f);      // shortest way round the 24 h clock
+    if (d > 12.0f) d -= 24.0f;
+    if (d < -12.0f) d += 24.0f;
+
+    const float step = Cfg::NightFadeSpeed * dt;
+    if (fabsf(d) <= step) g_skyCur = target;
+    else g_skyCur = fmodf(g_skyCur + (d > 0.0f ? step : -step) + 24.0f, 24.0f);
+
+    G->SkySetTime(g_skyCur);                        // set every frame while night, so it holds even if Cycle Speed is not 0
+}
+
 
 void Entities_Update(float dt)
 {
