@@ -115,6 +115,9 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [ ] Phase 24: Check All Editor Windows/ Move To window Palette/ Add DropDowns
 - [ ] Phase : Controls, Right Clicker, User Friendly, copy paste
 - **Active SubCore**
+- [ ] Phase : Install Shield Wizard/ Packaged Install for Download
+- [ ] Phase : Install Wizard Setup for Standalone Game
+- [ ] Phase : Program Launcher
 - [ ] Phase 13.D: A CAD-style set of annotation tools on top of the blueprint grid.
 - [ ] Phase 18: Player Controls Editor
 - **Testing/Game**
@@ -124,9 +127,6 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [ ] Phase Errors: AnyCPU cannot find DLL in Debug
 - [ ] Phase Errors: Sprite Sheet Editor Needs Adjustment
 - **Publish/Release**
-- [ ] Phase : Install Shield Wizard/ Packaged Install for Download
-- [ ] Phase : Install Wizard Setup for Standalone Game
-- [ ] Phase : Program Launcher
 - [ ] Phase : Blazor Wasm Interactive Docs
 - [ ] Phase : Live Updates
 - [ ] Phase : RHI Vulkan Backend
