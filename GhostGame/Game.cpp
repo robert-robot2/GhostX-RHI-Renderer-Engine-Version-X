@@ -27,15 +27,19 @@ void Sprite_FaceScreen(int id, float v)
     if (v > 0.2f) G->SpriteSetFlip(id, 0);
     else if (v < -0.2f) G->SpriteSetFlip(id, 1);
 }
+
 static int g_ui = 0;                // handle of Content/UI/HUD.ghostui (0 = failed to load)
+static int  g_menuUi = 0, g_overUi = 0;
+static bool g_started = false;     // lives outside S, so a level change doesn't bring the menu back
 
 void Game_Restart(bool died)
 {
-    if (died) { S.deaths++; if (--S.lives <= 0) S.lives = 3; }   // real game over comes later
+    if (died) { S.deaths++; if (--S.lives <= 0) { S.lives = 0; S.mode = MODE_OVER; return; } }   // freeze on the Game Over screen
     S.coins = 0; S.enemiesDown = 0;
     S.big = false; S.fire = false; S.starTime = 0.0f; S.advance = 0.0f; S.invuln = 0.0f; S.hurt = 0.0f; S.complete = false;
     S.big = false; S.advance = 0.0f; S.invuln = 0.0f; S.hurt = 0.0f; S.complete = false;
     S.portalCool = 0.0f;
+    S.timeLeft = Cfg::TimeStart; S.stompChain = S.starChain = 0; S.timeBonus = 0;
     Level_Reset();
     Player_Reset();
     S.camSnap = true;
@@ -117,6 +121,14 @@ static void Hud()
     snprintf(t, sizeof t, "Coins %d / %d", S.coins, S.totalCoins);           G->UISetText(g_ui, "CoinText", t);
     snprintf(t, sizeof t, "Enemies %d / %d", S.enemiesDown, S.totalEnemies); G->UISetText(g_ui, "EnemyText", t);
     snprintf(t, sizeof t, "Deaths %d", S.deaths);                            G->UISetText(g_ui, "DeathText", t);
+    const float white[4] = { 1, 1, 1, 1 };
+    snprintf(t, sizeof t, "Points %06d", S.score);          G->UISetText(g_ui, "Points", t);
+    snprintf(t, sizeof t, "Lives: %d", S.lives);            G->UISetText(g_ui, "Lives", t);
+    const int lv = S.level < 0 ? 0 : S.level;               // 4 stages per world, like SMB
+    snprintf(t, sizeof t, "World %d-%d", lv / 4 + 1, lv % 4 + 1);   G->UISetText(g_ui, "World", t);
+    snprintf(t, sizeof t, "Timer %d", (int)ceilf(S.timeLeft));      G->UISetText(g_ui, "Timer", t);
+    G->UISetColor(g_ui, "Timer", S.timeLeft < 100.0f ? red : white);   // turns red under 100
+
     G->UISetProgress(g_ui, "CoinBar", S.totalCoins > 0 ? (float)S.coins / (float)S.totalCoins : 0.0f);
 
     G->UISetText(g_ui, "SizeText", S.big ? "BIG" : "small");
@@ -129,8 +141,8 @@ static void Hud()
     G->UISetVisible(g_ui, "CompletePanel", S.complete ? 1 : 0);
     if (S.complete)
     {
-        snprintf(t, sizeof t, "Coins %d / %d      Enemies %d / %d      Deaths %d",
-            S.coins, S.totalCoins, S.enemiesDown, S.totalEnemies, S.deaths);
+        snprintf(t, sizeof t, "Score %06d    Time Bonus %d    Coins %d    Deaths %d",
+            S.score, S.timeBonus, S.coins, S.deaths);
         G->UISetText(g_ui, "CompleteStats", t);
         // Order of this could be off
         G->UISetText(g_ui, "CompleteTitle", S.lastLevel ? "YOU WIN!" : "LEVEL COMPLETE!");
@@ -147,6 +159,9 @@ GHOST_GAME_EXPORT int GhostGame_Init(const GhostGameAPI* api)
     S.level = FindLevelIndex();
     S.lastLevel = (S.level < 0 || S.level >= kLevelCount - 1);
     g_ui = G->UILoad("Content/UI/HUD.ghostui");
+    g_menuUi = G->UILoad("Content/UI/MainMenu.ghostui");
+    g_overUi = G->UILoad("Content/UI/GameOver.ghostui");
+    S.mode = g_started ? MODE_PLAY : MODE_MENU;
     S.player = G->FindByTag("Player");
     if (!S.player) { G->Log("Adventures of Cube: no object with Role = Player"); return 1; }
 
@@ -163,10 +178,74 @@ GHOST_GAME_EXPORT int GhostGame_Init(const GhostGameAPI* api)
     return 1;
 }
 
+static void Timer_Update(float dt)
+{
+    if (S.complete || !S.player || S.error) return;
+    S.timeLeft -= dt / Cfg::TimeTick;
+    if (S.timeLeft <= 0.0f) { S.timeLeft = 0.0f; Game_Restart(true); }   // time up = lose a life
+}
+
+// Returns true while a menu screen owns the frame (the game is frozen)
+static bool Screens_Update()
+{
+    const bool menu = (S.mode == MODE_MENU), over = (S.mode == MODE_OVER);
+    if (g_menuUi) G->UIShow(g_menuUi, menu ? 1 : 0);
+    if (g_overUi) G->UIShow(g_overUi, over ? 1 : 0);
+
+    if (menu)
+    {
+        if (g_ui) G->UIShow(g_ui, 0);
+        if (g_menuUi && G->UIButtonClicked(g_menuUi, "StartButton"))
+        {
+            g_started = true;
+            S.mode = MODE_PLAY;
+            Game_Restart(false);               // fresh timer and positions
+        }
+        if (g_menuUi && G->UIButtonClicked(g_menuUi, "QuitButton")) G->Quit();
+        return true;
+    }
+
+    if (over)
+    {
+        if (g_ui) G->UIShow(g_ui, 0);
+        if (g_overUi)
+        {
+            char t[128];
+            snprintf(t, sizeof t, "Score %06d      Coins %d      Deaths %d", S.score, S.coins, S.deaths);
+            G->UISetText(g_overUi, "GameOverStats", t);
+
+            char p[200];
+            snprintf(p, sizeof p, "Scenes/%s", kLevels[0]);
+
+            if (G->UIButtonClicked(g_overUi, "RestartButton"))
+            {
+                if (S.level <= 0 || !G->LoadScene(p))      // same pattern as your Play Again button
+                {
+                    S.lives = 3; S.score = 0; S.deaths = 0;
+                    S.mode = MODE_PLAY;
+                    Game_Restart(false);
+                }
+            }
+            if (G->UIButtonClicked(g_overUi, "MenuButton"))
+            {
+                g_started = false;                         // Init will show the menu after the scene reloads
+                if (S.level <= 0 || !G->LoadScene(p))
+                {
+                    S.lives = 3; S.score = 0; S.deaths = 0;
+                    Game_Restart(false);
+                    S.mode = MODE_MENU;
+                }
+            }
+        }
+        return true;
+    }
+    return false;
+}
+
 GHOST_GAME_EXPORT void GhostGame_Update(float dt)
 {
     if (!S.player) { S.error = "No object with Role = Player in this scene"; Hud(); return; }
-
+    if (Screens_Update()) { Camera_Update(dt); return; }
     if (G->KeyPressed('R')) Game_Restart(false);
     if (g_ui && S.complete)
     {
@@ -179,6 +258,7 @@ GHOST_GAME_EXPORT void GhostGame_Update(float dt)
         if (G->UIButtonClicked(g_ui, "QuitButton")) G->Quit();
     }
     Movers_Update(dt);
+    Timer_Update(dt);
     if (!S.complete) Player_Update(dt);
     else Sprite_Play(S.player, "Idle", nullptr);
     if (S.complete && !S.lastLevel)                      // go to the next level after 2.5 seconds

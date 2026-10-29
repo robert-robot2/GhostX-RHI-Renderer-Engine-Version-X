@@ -146,6 +146,7 @@ void Coin_Collect(int id)
 {
     G->SetVisible(id, 0);          // hidden objects are skipped by QueryBox
     Coins_Add(1);
+    Score_Add(200);
 }
 
 void Enemy_Kill(int id)
@@ -155,6 +156,7 @@ void Enemy_Kill(int id)
         {
             e.alive = false;
             S.enemiesDown++;
+            Score_Enemy(S.starTime > 0.0f);
             G->SetTag(id, "Defeated");                       // no longer hurts you or blocks you
             if (Sprite_Play(id, "Die", "Hurt")) e.dieTimer = 0.5f;   // a sprite plays its Die clip for a moment
             else G->SetVisible(id, 0);                       // a plain cube just vanishes
@@ -185,6 +187,7 @@ static void SpawnDebris(int brickId)
 
 static void BreakBrick(int id, int effect)
 {
+    Score_Add(50);
     G->SetTag(id, "Broken");                               // no longer solid
     if (effect == 0) { G->SetVisible(id, 0); return; }
     if (Sprite_Play(id, "Break", nullptr))                 // a sprite plays its Break clip
@@ -204,6 +207,25 @@ static void BreakBrick(int id, int effect)
 
 void Coins_Add(int n) { S.coins += n; while (S.coins >= 100) { S.coins -= 100; S.lives++; } }
 void Life_Add() { S.lives++; }
+
+void Score_Add(int pts) { S.score += pts; }
+
+// SMB1 chain: 100,200,400,500,800,1000,2000,4000,5000,8000, then a 1UP per kill
+void Score_Enemy(bool star)
+{
+    static const int kChain[10] = { 100, 200, 400, 500, 800, 1000, 2000, 4000, 5000, 8000 };
+    int& c = star ? S.starChain : S.stompChain;
+    if (c < 10) Score_Add(kChain[c]); else Life_Add();
+    c++;
+}
+
+void Goal_Reached()
+{
+    S.complete = true;
+    S.timeBonus = (int)S.timeLeft * 50;
+    Score_Add(S.timeBonus);
+}
+
 
 bool Pickup_TypeFromTag(const char* tag, int& type)
 {
@@ -258,6 +280,7 @@ static void Pay(int id, const GhostObjectProps& pr, int give, bool isBlock, bool
     if (give == 2)                                         // coins: one per hit until empty
     {
         Coins_Add(1);
+        Score_Add(200);
         if (isBlock) { if (--CoinsLeft(id, pr.coinCount) <= 0) SetUsed(id); }
         return;
     }

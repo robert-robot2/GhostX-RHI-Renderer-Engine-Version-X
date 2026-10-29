@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include "../GhostX/include/GhostGameAPI.h"
 
-//Game.h
+
 
 extern const GhostGameAPI* G;
 
@@ -29,7 +29,11 @@ namespace Cfg
     constexpr float NightDepth = -2.0f;      // Mario below this Y: the sky goes to night
     constexpr float NightHour = 22.0f;
     constexpr float NightFadeSpeed = 8.0f;   // hours per second (8 = about 1.2 s to night). Use 1000 to snap instantly.
+    constexpr float TimeStart = 300.0f;   // matches your HUD's "Timer 300"
+    constexpr float TimeTick = 1.0f;     // real seconds per timer unit (SMB1 = 0.4)
 }
+
+enum { MODE_MENU = 0, MODE_PLAY, MODE_OVER };
 
 struct GameState
 {
@@ -52,6 +56,9 @@ struct GameState
     float advance = 0.0f;              // seconds since the Goal, for auto-advancing
     float portalCool = 0.0f;
     bool fire = false; float starTime = 0.0f; int lives = 3;
+    int score = 0, stompChain = 0, starChain = 0, timeBonus = 0;
+    float timeLeft = Cfg::TimeStart;
+    int mode = MODE_MENU;
 };
 extern GameState S;
 enum { PU_NONE = 0, PU_MUSHROOM, PU_FLOWER, PU_STAR, PU_ONEUP };
@@ -94,7 +101,9 @@ void Life_Add();
 bool Pickup_TypeFromTag(const char* tag, int& type);
 bool Hidden_Try(Body& b, float vy, float dt);
 void Sky_Update(float dt);
-
+void Score_Add(int pts);
+void Score_Enemy(bool star);
+void Goal_Reached();
 
 // ---- Game.cpp ----
 void Game_Restart(bool died);

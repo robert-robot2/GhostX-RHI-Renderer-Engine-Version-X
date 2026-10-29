@@ -50,11 +50,12 @@ static void SetPower(Body& b, int level)
 
 static void Collect(Body& b, int type)
 {
+    if (type != PU_ONEUP) Score_Add(1000);
     switch (type)
     {
     case PU_MUSHROOM: if (PowerLevel() == 0) SetPower(b, 1); else Coins_Add(1); break;
     case PU_FLOWER:   if (PowerLevel() < 2) SetPower(b, PowerLevel() + 1); else Coins_Add(1); break;   // small -> big, big -> fire
-    case PU_STAR:     S.starTime = Cfg::StarTime; break;                                              // a second star resets the timer
+    case PU_STAR:     S.starTime = Cfg::StarTime; S.starChain = 0; break;                                            // a second star resets the timer
     case PU_ONEUP:    Life_Add(); break;
     }
 }
@@ -144,6 +145,7 @@ void Player_Update(float dt)
     MoveResult r = MoveBody(b, dt);
     memcpy(g_vel, b.vel, sizeof g_vel);
     g_grounded = r.hitFloor;
+    if (g_grounded) S.stompChain = 0;      // landing resets the stomp chain
     if (r.hitCeiling) Blocks_Bump(r.ceilingId);
 
     // ---- What are we touching? ----
@@ -156,7 +158,7 @@ void Player_Update(float dt)
         if (!G->GetTag(ids[i], tag, sizeof tag)) continue;
 
         if (strcmp(tag, "Coin") == 0) Coin_Collect(ids[i]);
-        else if (strcmp(tag, "Goal") == 0) S.complete = true;
+        else if (strcmp(tag, "Goal") == 0) { if (!S.complete) Goal_Reached(); }
         else if (Pickup_TypeFromTag(tag, ptype)) { PowerUp_Remove(ids[i]); Collect(b, ptype); } 
         else if (strcmp(tag, "Projectile") == 0) { if (Hurt(b)) return; }
       
