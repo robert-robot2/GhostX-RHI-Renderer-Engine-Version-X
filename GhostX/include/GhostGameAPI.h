@@ -38,6 +38,8 @@ extern "C" {
         int   locked;
         int   powerType, itemMoves, coinCount;
         int   enemyPathMode;   // enemies: 0 ping-pong, 1 ping-pong + turn at ledges, 2 once, 3 stand still
+        int flying;   // 1 = not affected by gravity
+        int enemyDeathEffect;
     } GhostObjectProps;
 
     typedef struct GhostGameAPI

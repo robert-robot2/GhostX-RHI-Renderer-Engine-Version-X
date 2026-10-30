@@ -61,6 +61,8 @@ struct GhostGameplayInfo
     float moveX, moveY, moveZ, moveSpeed, movePause;
     int   powerType, itemMoves, coinCount;
     int   enemyPathMode;
+    int   flying;
+    int enemyDeathEffect;
 };
 struct GhostModParamInfo
 {

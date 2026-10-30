@@ -56,10 +56,15 @@ struct GameState
     bool  lastLevel = true;
     float advance = 0.0f;              // seconds since the Goal, for auto-advancing
     float portalCool = 0.0f;
-    bool fire = false; float starTime = 0.0f; int lives = 3;
+    bool fire = false; float starTime = 0.0f; float attackCool = 0.0f; int   heldShell = 0;        // id of shell Mario is holding, 0 = none
+    bool  shellSliding = false; int lives = 3;
     int score = 0, stompChain = 0, starChain = 0, timeBonus = 0;
     float timeLeft = Cfg::TimeStart;
     int mode = MODE_MENU;
+    bool  onPole = false;
+    float poleSlide = 0.0f;   // how far Mario has slid down
+    int   poleId = 0;
+    float poleTop = 0.0f, poleBot = 0.0f;
 };
 extern GameState S;
 enum { PU_NONE = 0, PU_MUSHROOM, PU_FLOWER, PU_STAR, PU_ONEUP };
@@ -98,13 +103,14 @@ void Blocks_Bump(int id);
 void PowerUp_Remove(int id);
 void Movers_Update(float dt);
 void Coins_Add(int n);
+void Fireball_Spawn();
 void Life_Add();
 bool Pickup_TypeFromTag(const char* tag, int& type);
 bool Hidden_Try(Body& b, float vy, float dt);
 void Sky_Update(float dt);
 void Score_Add(int pts);
 void Score_Enemy(bool star);
-void Goal_Reached();
+void Goal_Reached(int poleId, float hitY, float poleTop, float poleBot);
 
 // ---- Game.cpp ----
 void Game_Restart(bool died);

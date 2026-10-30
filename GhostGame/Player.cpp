@@ -158,7 +158,27 @@ void Player_Update(float dt)
         if (!G->GetTag(ids[i], tag, sizeof tag)) continue;
 
         if (strcmp(tag, "Coin") == 0) Coin_Collect(ids[i]);
-        else if (strcmp(tag, "Goal") == 0) { if (!S.complete) Goal_Reached(); }
+        else if (strcmp(tag, "Shell") == 0 && S.heldShell == 0 && G->KeyDown(VK_SHIFT))
+        {
+            S.heldShell = ids[i];
+            G->SetTag(ids[i], "HeldShell");
+            Score_Add(500);
+        }
+        else if (strcmp(tag, "HeldShell") == 0 && ids[i] == S.heldShell)
+        {
+            // keep shell attached to Mario
+            float mp[3]; G->GetPosition(S.player, mp);
+            mp[0] += 0.5f; mp[1] += 0.0f;
+            G->SetPosition(S.heldShell, mp);
+        }
+        else if (strcmp(tag, "Goal") == 0 && !S.complete)
+        {
+            float mn[3], mx[3];
+            if (G->GetBounds(ids[i], mn, mx))
+                Goal_Reached(ids[i], b.pos[1], mx[1], mn[1]);
+            else
+                Goal_Reached(ids[i], b.pos[1], b.pos[1] + 4.0f, b.pos[1]);
+        }
         else if (Pickup_TypeFromTag(tag, ptype)) { PowerUp_Remove(ids[i]); Collect(b, ptype); } 
         else if (strcmp(tag, "Projectile") == 0) { if (Hurt(b)) return; }
       
@@ -194,6 +214,38 @@ void Player_Update(float dt)
     // ---- Falling off the world ----
     if (b.pos[1] < Cfg::FallLimit) { Game_Restart(true); return; }
 
+    if (S.attackCool > 0.0f) S.attackCool -= dt;
+
+    if (S.heldShell && G->KeyReleased(VK_SHIFT))
+    {
+        G->SetTag(S.heldShell, "SlidingShell");
+        S.shellSliding = true;
+        S.heldShell = 0;
+    }
+
+    if (G->KeyPressed(VK_LBUTTON) && S.attackCool <= 0.0f)
+    {
+        S.attackCool = 0.4f;
+        if (PowerLevel() == 0)      Sprite_Play(S.player, "SpinAttack", "Idle");
+        else if (PowerLevel() == 1) Sprite_Play(S.player, "Punch", "Idle");
+        else if (PowerLevel() == 2) Fireball_Spawn();
+    }
+    if (S.onPole && S.poleId)
+    {
+        // slide Mario down the pole
+        float pp[3]; G->GetPosition(S.poleId, pp);
+        float mp[3]; G->GetPosition(S.player, mp);
+        mp[0] = pp[0];
+        mp[1] -= 2.0f * dt;   // slide speed
+        if (mp[1] <= S.poleBot + 0.5f)
+        {
+            mp[1] = S.poleBot + 0.5f;
+            S.onPole = false;
+        }
+        G->SetPosition(S.player, mp);
+        Sprite_Play(S.player, "Walk", "Idle");
+        return;   // skip normal movement while on pole
+    }
     StoreBody(b);
     // ---- Sprite animation (does nothing if the Player is a plain cube) ----
     {

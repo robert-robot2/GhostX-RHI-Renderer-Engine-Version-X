@@ -547,6 +547,14 @@ namespace GhostShell
     internal sealed class EnemyPathConverter : FixedListConverter
     { public static readonly string[] Names = { "Ping-Pong (A to B and back)", "Ping-Pong, turn at ledges", "Once (stop at B)", "Stand still" }; protected override string[] Items => Names; }
 
+    internal sealed class EnemyDeathEffectConverter : FixedListConverter
+    { public static readonly string[] Names = { "Vanish", "Bounce off screen", "Flatten" }; protected override string[] Items => Names; }
+
+    internal sealed class FlyingEnemyConverter : FixedListConverter
+    { public static readonly string[] Names = { "No", "Yes (no gravity)" }; protected override string[] Items => Names; }
+
+
+
     // Details > Gameplay > Behavior: the settings the new roles use
     [TypeConverter(typeof(ExpandableObjectConverter))]
     internal sealed class BehaviorEdit
@@ -599,6 +607,18 @@ namespace GhostShell
         {
             get => EnemyPathConverter.Names[Math.Clamp(Get().enemyPathMode, 0, 3)];
             set { int i = Array.IndexOf(EnemyPathConverter.Names, value); if (i >= 0) { var g = Get(); g.enemyPathMode = i; Set(g); } }
+        }
+        [DisplayName("Flying Enemy (no gravity)"), TypeConverter(typeof(FlyingEnemyConverter))]
+        public string FlyingEnemy
+        {
+            get => FlyingEnemyConverter.Names[Math.Clamp(Get().flying, 0, 1)];
+            set { int i = Array.IndexOf(FlyingEnemyConverter.Names, value); if (i >= 0) { var g = Get(); g.flying = i; Set(g); } }
+        }
+        [DisplayName("Enemy Death Effect"), TypeConverter(typeof(EnemyDeathEffectConverter))]
+        public string EnemyDeathEffect
+        {
+            get => EnemyDeathEffectConverter.Names[Math.Clamp(Get().enemyDeathEffect, 0, 2)];
+            set { int i = Array.IndexOf(EnemyDeathEffectConverter.Names, value); if (i >= 0) { var g = Get(); g.enemyDeathEffect = i; Set(g); } }
         }
         [DisplayName("Break Effect"), TypeConverter(typeof(BreakEffectConverter))]
         public string BreakEffect

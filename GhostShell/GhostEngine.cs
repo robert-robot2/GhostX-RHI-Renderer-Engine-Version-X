@@ -63,6 +63,8 @@ namespace GhostShell
         public float moveX, moveY, moveZ, moveSpeed, movePause;
         public int powerType, itemMoves, coinCount;
         public int enemyPathMode;
+        public int flying;
+        public int enemyDeathEffect;
     }
 
     [StructLayout(LayoutKind.Sequential)]

@@ -24,7 +24,8 @@ struct Breaking { int id; float timer; };
 static std::vector<Mover>    g_movers;
 static std::vector<Breaking> g_breaking;
 static std::vector<int>      g_moverIds, g_projIds;
-
+struct Fireball { int id; float vel[3]; float life; bool facingRight; };
+static std::vector<Fireball> g_fireballs;
 struct Debris { int id; float vel[3]; float life; };
 static std::vector<Debris> g_debris;
 
@@ -132,6 +133,8 @@ void Level_Reset()
     g_breaking.clear();
     for (const Pickup& p : g_pickups) G->Destroy(p.id);
     g_pickups.clear(); g_blockMem.clear();
+    for (const Fireball& fb : g_fireballs) G->Destroy(fb.id);
+    g_fireballs.clear();
 
     for (const Saved& s : g_saved)
     {
@@ -165,9 +168,46 @@ void Enemy_Kill(int id)
             e.alive = false;
             S.enemiesDown++;
             Score_Enemy(S.starTime > 0.0f);
-            G->SetTag(id, "Defeated");                       // no longer hurts you or blocks you
-            if (Sprite_Play(id, "Die", "Hurt")) e.dieTimer = 0.5f;   // a sprite plays its Die clip for a moment
-            else G->SetVisible(id, 0);                       // a plain cube just vanishes
+            char tag[32];
+            G->GetTag(id, tag, sizeof tag);
+
+            // Shell enemies: turtle, spike, blackolive — check custom tag
+            const bool dropsShell = (strcmp(tag, "ShellEnemy") == 0);
+            if (dropsShell)
+            {
+                G->SetTag(id, "Shell");   // becomes a pickup
+                float pos[3]; G->GetPosition(id, pos);
+                pos[1] += 0.1f; G->SetPosition(id, pos);
+                Sprite_Play(id, "Shell", "Shell");
+            }
+            else
+            {
+                GhostObjectProps dpr = {};
+                G->GetObjectProps(id, &dpr);
+                G->SetTag(id, "Defeated");
+                if (dpr.enemyDeathEffect == 1)
+                {
+                    // bounce off screen
+                    e.vy = Cfg::StompBounce * 1.5f;
+                    e.alive = false;
+                    // leave visible, gravity + vy will carry it off screen naturally
+                    if (!Sprite_Play(id, "Die", "Hurt")) {}
+                }
+                else if (dpr.enemyDeathEffect == 2)
+                {
+                    // flatten squash
+                    float s[3], p[3];
+                    G->GetScale(id, s); G->GetPosition(id, p);
+                    p[1] -= s[1] * 0.5f * 0.7f; s[1] *= 0.2f;
+                    G->SetScale(id, s); G->SetPosition(id, p);
+                    e.dieTimer = 0.6f;
+                }
+                else
+                {
+                    if (Sprite_Play(id, "Die", "Hurt")) e.dieTimer = 0.5f;
+                    else G->SetVisible(id, 0);
+                }
+            }
         }
 }
 
@@ -227,11 +267,32 @@ void Score_Enemy(bool star)
     c++;
 }
 
-void Goal_Reached()
+void Goal_Reached(int poleId, float hitY, float poleTop, float poleBot)
 {
+    if (S.complete) return;
     S.complete = true;
+    S.onPole = true;
+    S.poleId = poleId;
+    S.poleTop = poleTop;
+    S.poleBot = poleBot;
+
+    // height score: higher = more points, max 5000
+    const float range = poleTop - poleBot;
+    const float ratio = range > 0.1f ? (hitY - poleBot) / range : 0.0f;
+    const int heightBonus = (int)(ratio * 5000.0f);
     S.timeBonus = (int)S.timeLeft * 50;
-    Score_Add(S.timeBonus);
+    Score_Add(S.timeBonus + heightBonus);
+
+    // drop the flag: find object tagged "Flag" linked to this pole
+    int flags[8];
+    int n = G->FindAllByTag("Flag", flags, 8);
+    for (int i = 0; i < n; i++)
+    {
+        float fp[3]; G->GetPosition(flags[i], fp);
+        fp[1] = poleBot + 0.5f;
+        G->SetPosition(flags[i], fp);
+    }
+    Sprite_Play(S.player, "Idle", nullptr);
 }
 
 
@@ -442,6 +503,34 @@ void Sky_Update(float dt)
     G->SkySetTime(g_skyCur);                        // set every frame while night, so it holds even if Cycle Speed is not 0
 }
 
+void Fireball_Spawn()
+{
+    if (!S.player) return;
+    float pos[3];
+    G->GetPosition(S.player, pos);
+
+    // offset in front of Mario based on sprite facing
+    const float dir = S.fire ? 1.0f : 1.0f; // always forward for now; tie to flip later
+    pos[0] += dir * 0.6f;
+    pos[1] += 0.3f;
+
+    int id = G->Spawn(GHOST_API_MESH_QUAD, pos);
+    if (!id) return;
+
+    const float sz[3] = { Cfg::PickupSize, Cfg::PickupSize, Cfg::PickupSize };
+    G->SetScale(id, sz);
+    G->SetTag(id, "Fireball");
+    G->SpriteSetAnim(id, "Content/Animations/Fireball.ghostanim");
+
+    Fireball f = {};
+    f.id = id;
+    f.vel[0] = dir * 8.0f;
+    f.vel[1] = 3.0f;
+    f.vel[2] = 0.0f;
+    f.life = 3.0f;
+    g_fireballs.push_back(f);
+}
+
 
 void Entities_Update(float dt)
 {
@@ -507,19 +596,112 @@ void Entities_Update(float dt)
         if (d.life <= 0.0f) { G->Destroy(d.id); g_debris.erase(g_debris.begin() + i); continue; }
         i++;
     }
+    for (size_t i = 0; i < g_fireballs.size(); )
+    {
+        Fireball& fb = g_fireballs[i];
+        float pos[3];
+        if (!G->GetPosition(fb.id, pos)) { g_fireballs.erase(g_fireballs.begin() + i); continue; }
+
+        fb.vel[1] -= Cfg::Gravity * dt;
+        if (fb.vel[1] < -Cfg::MaxFall) fb.vel[1] = -Cfg::MaxFall;
+
+        Body b;
+        if (LoadBody(fb.id, b))
+        {
+            b.vel[0] = fb.vel[0]; b.vel[1] = fb.vel[1]; b.vel[2] = fb.vel[2];
+            MoveResult r = MoveBody(b, dt);
+            if (r.hitFloor) fb.vel[1] = 5.0f;   // bounce!
+            if (r.hitX) { G->Destroy(fb.id); g_fireballs.erase(g_fireballs.begin() + i); continue; }
+            fb.vel[0] = b.vel[0]; fb.vel[1] = b.vel[1]; fb.vel[2] = b.vel[2];
+            StoreBody(b);
+        }
+        else for (int k = 0; k < 3; k++) pos[k] += fb.vel[k] * dt;
+
+        // Check enemy hits
+        Body fb2;
+        if (LoadBody(fb.id, fb2))
+        {
+            int hits[8]; int n = QueryBody(fb2, hits, 8);
+            for (int j = 0; j < n; j++)
+            {
+                char tag[32];
+                if (!G->GetTag(hits[j], tag, sizeof tag)) continue;
+                if (strcmp(tag, "Enemy") == 0)
+                {
+                    Enemy_Kill(hits[j]);
+                    Score_Add(200);
+                    G->Destroy(fb.id);
+                    g_fireballs.erase(g_fireballs.begin() + i);
+                    goto next_fireball;
+                }
+            }
+        }
+
+        fb.life -= dt;
+        if (fb.life <= 0.0f || pos[1] < Cfg::FallLimit)
+        {
+            G->Destroy(fb.id); g_fireballs.erase(g_fireballs.begin() + i); continue;
+        }
+        i++;
+    next_fireball:;
+    }
+
+
+    {
+        int shells[16];
+        int n = G->FindAllByTag("SlidingShell", shells, 16);
+        for (int i = 0; i < n; i++)
+        {
+            Body b;
+            if (!LoadBody(shells[i], b)) continue;
+            b.vel[0] = 10.0f; b.vel[1] = 0.0f; b.vel[2] = 0.0f;
+            MoveResult r = MoveBody(b, dt);
+            StoreBody(b);
+            if (r.hitX) G->SetVisible(shells[i], 0);
+
+            // Kill enemies on contact
+            int hits[8]; int hn = QueryBody(b, hits, 8);
+            for (int j = 0; j < hn; j++)
+            {
+                char tag[32];
+                if (G->GetTag(hits[j], tag, sizeof tag) && strcmp(tag, "Enemy") == 0)
+                {
+                    Enemy_Kill(hits[j]); Score_Add(200);
+                }
+            }
+        }
+    }
+
     // ---- Enemies: walk A <-> B from their Behavior settings (Enemy Path Mode) ----
     for (Enemy& e : g_enemies)
     {
         if (!e.alive)
         {
             if (e.dieTimer > 0.0f) { e.dieTimer -= dt; if (e.dieTimer <= 0.0f) G->SetVisible(e.id, 0); }
+            if (!e.alive && e.vy != 0.0f)
+            {
+                Body db;
+                if (LoadBody(e.id, db))
+                {
+                    e.vy -= Cfg::Gravity * dt;
+                    db.vel[0] = 0.0f; db.vel[1] = e.vy; db.vel[2] = 0.0f;
+                    MoveBody(db, dt);
+                    StoreBody(db);
+                    if (db.pos[1] < Cfg::FallLimit) { G->SetVisible(e.id, 0); e.vy = 0.0f; }
+                }
+            }
             continue;
         }
         Body b;
         if (!LoadBody(e.id, b)) continue;
 
-        e.vy -= Cfg::Gravity * dt;
-        if (e.vy < -Cfg::MaxFall) e.vy = -Cfg::MaxFall;
+        GhostObjectProps epr = {};
+        const bool isFlying = G->GetObjectProps(e.id, &epr) && epr.flying;
+        if (!isFlying)
+        {
+            e.vy -= Cfg::Gravity * dt;
+            if (e.vy < -Cfg::MaxFall) e.vy = -Cfg::MaxFall;
+        }
 
         if (e.wait > 0.0f) e.wait -= dt;
         const bool walking = e.mode != 3 && !e.done && e.wait <= 0.0f;     // mode 3 = stand still

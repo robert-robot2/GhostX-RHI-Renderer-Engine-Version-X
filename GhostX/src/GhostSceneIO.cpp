@@ -180,6 +180,8 @@ bool GhostScene_Save(const GhostScene& s, const std::string& root, const std::st
             jo["locked"] = o.locked;
             jo["link"] = o.link;
             jo["move"] = json{ { "offset", V3(o.pathOffset) },{ "speed", o.moveSpeed },{ "pause", o.movePause },{ "mode", o.pathMode },{ "enemyMode", o.enemyPathMode } };
+            jo["flying"] = o.flying;
+            jo["enemyDeathEffect"] = o.enemyDeathEffect;
             jo["breakEffect"] = o.breakEffect;
             jo["contents"] = o.contents;
             jo["portalTrigger"] = o.portalTrigger;
@@ -454,6 +456,8 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
                     o.movePause = mv.value("pause", 0.0f);
                     o.pathMode = Clampi(mv.value("mode", 0), 0, 2);
                     o.enemyPathMode = Clampi(mv.value("enemyMode", 0), 0, 3);
+                    o.flying = jo.value("flying", false);
+                    o.enemyDeathEffect = Clampi(jo.value("enemyDeathEffect", 0), 0, 2);
                 }
                 o.breakEffect = Clampi(jo.value("breakEffect", 0), 0, 2);
                 o.contents = Clampi(jo.value("contents", 0), 0, 3);
@@ -667,7 +671,7 @@ unsigned int GhostScene_Hash(const GhostScene& s)
         I(o.role); S(o.customTag); I(o.collider ? 1 : 0); V(o.colliderSize); V(o.colliderOffset); I(o.visible ? 1 : 0);
         I(o.shadowMode); I(o.shadowLightId); I(o.receiveShadows ? 1 : 0);
         I(o.locked ? 1 : 0); S(o.link); V(o.pathOffset); F(o.moveSpeed); F(o.movePause);
-        I(o.pathMode); I(o.enemyPathMode); I(o.breakEffect); I(o.contents); I(o.portalTrigger);
+        I(o.pathMode); I(o.enemyPathMode); I(o.flying ? 1 : 0); I(o.enemyDeathEffect); I(o.breakEffect); I(o.contents); I(o.portalTrigger);
         I(o.powerType); I(o.itemMoves); I(o.coinCount);
         const int n = GhostMesh_FaceCount(o.meshId);
         for (int f = 0; f < n; f++) mix(&o.faces[f], sizeof(GhostMaterial));

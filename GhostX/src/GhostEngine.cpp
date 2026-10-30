@@ -3070,7 +3070,7 @@ static int Api_GetObjectProps(int id, GhostObjectProps* out)
     out->pathMode = o->pathMode;    out->breakEffect = o->breakEffect;
     out->contents = o->contents;    out->portalTrigger = o->portalTrigger;
     out->locked = o->locked ? 1 : 0;
-    out->powerType = o->powerType; out->enemyPathMode = o->enemyPathMode; out->itemMoves = o->itemMoves; out->coinCount = o->coinCount;
+    out->powerType = o->powerType; out->enemyPathMode = o->enemyPathMode; out->flying = o->flying ? 1 : 0; out->enemyDeathEffect = o->enemyDeathEffect; out->itemMoves = o->itemMoves; out->coinCount = o->coinCount;
     return 1;
 }
 
@@ -3236,8 +3236,8 @@ int GhostEngine_GetGameplay(int objectId, GhostGameplayInfo* out)
              o->visible ? 1 : 0,
              o->locked ? 1 : 0, o->pathMode, o->breakEffect, o->contents, o->portalTrigger,
                          o->pathOffset.x, o->pathOffset.y, o->pathOffset.z, o->moveSpeed, o->movePause, o->powerType, o->itemMoves, o->coinCount,
-             o->enemyPathMode };
-
+             o->enemyPathMode, o->flying ? 1 : 0, o->enemyDeathEffect };
+        
     return 1;
 }
 
@@ -3266,6 +3266,8 @@ void GhostEngine_SetGameplay(const GhostGameplayInfo* in)
     o->itemMoves = ci(in->itemMoves, 0, 2);
     o->coinCount = ci(in->coinCount, 1, 999);
     o->enemyPathMode = ci(in->enemyPathMode, 0, 3);
+    o->flying = ci(in->flying, 0, 1);
+    o->enemyDeathEffect = ci(in->enemyDeathEffect, 0, 2);
 }
 
 int GhostEngine_GetCustomTag(int objectId, char* buf, int bufSize)

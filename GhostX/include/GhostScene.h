@@ -247,6 +247,8 @@ struct GhostObject
     float       moveSpeed = 2.0f, movePause = 0.0f;
     int         pathMode = 0;                 // 0 ping-pong, 1 restart at A, 2 once
     int         enemyPathMode = 0;            // enemies: 0 ping-pong, 1 ping-pong + turn at ledges, 2 once, 3 stand still
+    int flying = 0;   // 0 = normal, 1 = no gravity
+    int enemyDeathEffect = 0;   // 0 vanish, 1 bounce off screen, 2 flatten
     int         breakEffect = 0;              // breakables: 0 vanish, 1 play "Break" then vanish, 2 play "Break" and leave rubble
     int         contents = 0;                 // blocks, breakables: 0 role default, 1 nothing, 2 coin, 3 power-up
     int         portalTrigger = 1;            // 0 touch, 1 press Down
