@@ -118,7 +118,7 @@ static void Hud()
     const float green[4] = { 0.4f, 1.0f, 0.5f, 1.0f }, grey[4] = { 0.8f, 0.8f, 0.8f, 1.0f };
     char t[160];
 
-    snprintf(t, sizeof t, "Coins %d / %d", S.coins, S.totalCoins);           G->UISetText(g_ui, "CoinText", t);
+    snprintf(t, sizeof t, "Coins %d / %d", S.coins, S.playerMaxCoins);         G->UISetText(g_ui, "CoinText", t);
     snprintf(t, sizeof t, "Enemies %d / %d", S.enemiesDown, S.totalEnemies); G->UISetText(g_ui, "EnemyText", t);
     snprintf(t, sizeof t, "Deaths %d", S.deaths);                            G->UISetText(g_ui, "DeathText", t);
     const float white[4] = { 1, 1, 1, 1 };
@@ -129,7 +129,7 @@ static void Hud()
     snprintf(t, sizeof t, "Timer %d", (int)ceilf(S.timeLeft));      G->UISetText(g_ui, "Timer", t);
     G->UISetColor(g_ui, "Timer", S.timeLeft < 100.0f ? red : white);   // turns red under 100
 
-    G->UISetProgress(g_ui, "CoinBar", S.totalCoins > 0 ? (float)S.coins / (float)S.totalCoins : 0.0f);
+    G->UISetProgress(g_ui, "CoinBar", (float)S.coins / (float)S.playerMaxCoins);
 
     G->UISetText(g_ui, "SizeText", S.big ? "BIG" : "small");
     G->UISetColor(g_ui, "SizeText", S.big ? green : grey);

@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include "../GhostX/include/GhostGameAPI.h"
 
-
+// Game.h
 
 extern const GhostGameAPI* G;
 
@@ -45,6 +45,7 @@ struct GameState
     bool  orbit = false;               // the engine moves the camera (Orbit mode)
     float hurt = 0.0f;                 // seconds left of the Hurt pose
     int   coins = 0, totalCoins = 0;
+    int   playerMaxCoins = 100;   // ADD THIS — 1-UP threshold, never touched by level data
     int   enemiesDown = 0, totalEnemies = 0;
     int   deaths = 0;
     bool  big = false;

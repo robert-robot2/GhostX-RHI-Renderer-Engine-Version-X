@@ -112,6 +112,13 @@ void Level_Init()
     for (int id : g_hidden) G->SetVisible(id, 0);          // hidden blocks are invisible while playing
 
     S.totalCoins = (int)g_coins.size();
+    for (int pass = 0; pass < 2; pass++)                    // coins stored inside ? blocks count toward the total too
+        for (int id : (pass == 0 ? g_blocks : g_hidden))
+        {
+            GhostObjectProps pr = {};
+            if (G->GetObjectProps(id, &pr) && pr.contents == 2)
+                S.totalCoins += pr.coinCount < 1 ? 1 : pr.coinCount;
+        }
     S.totalEnemies = (int)g_enemyIds.size();
     RebuildEnemies();
     RebuildMovers();
@@ -144,7 +151,8 @@ void Level_Reset()
 
 void Coin_Collect(int id)
 {
-    G->SetVisible(id, 0);          // hidden objects are skipped by QueryBox
+    if (!G->GetVisible(id)) return;   // never count the same coin twice
+    G->SetVisible(id, 0);
     Coins_Add(1);
     Score_Add(200);
 }
@@ -205,7 +213,7 @@ static void BreakBrick(int id, int effect)
     G->SetScale(id, s); G->SetPosition(id, p); G->SetColor(id, ash);
 }
 
-void Coins_Add(int n) { S.coins += n; while (S.coins >= 100) { S.coins -= 100; S.lives++; } }
+void Coins_Add(int n) { S.coins += n; while (S.coins >= S.playerMaxCoins) { S.coins -= S.playerMaxCoins; S.lives++; } }
 void Life_Add() { S.lives++; }
 
 void Score_Add(int pts) { S.score += pts; }
@@ -441,7 +449,21 @@ void Entities_Update(float dt)
     g_spin += 180.0f * dt;
     if (g_spin > 360.0f) g_spin -= 360.0f;
     const float rot[3] = { 0.0f, g_spin, 0.0f };
-    for (int id : g_coins) if (G->GetVisible(id)) G->SetRotation(id, rot);
+    Body pbody;
+    const bool havePlayerBody = S.player && !S.complete && LoadBody(S.player, pbody);
+    for (int id : g_coins)
+    {
+        if (!G->GetVisible(id)) continue;
+        G->SetRotation(id, rot);
+        if (!havePlayerBody) continue;
+        float cp[3];                                         // fallback pickup: works even if the coin has no collider
+        if (!G->GetPosition(id, cp)) continue;
+        const float m = 0.5f;
+        if (fabsf(cp[0] - pbody.pos[0]) < pbody.half[0] + m &&
+            fabsf(cp[1] - pbody.pos[1]) < pbody.half[1] + m &&
+            fabsf(cp[2] - pbody.pos[2]) < pbody.half[2] + m)
+            Coin_Collect(id);
+    }
 
     for (size_t i = 0; i < g_pickups.size(); )
     {
