@@ -24,10 +24,8 @@
 ![Blender](https://img.shields.io/badge/3D-Blender-F5792A?style=flat-square&logo=blender&logoColor=white)
 ![GIMP](https://img.shields.io/badge/Graphics-GIMP-5C5543?style=flat-square&logo=gimp&logoColor=white)
 <img width="1920" height="1080" alt="Screenshot 2026-10-29 144951" src="https://github.com/user-attachments/assets/a063112b-2c6c-4a26-b1d0-93294b16c2a4" />
-<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/a827e690-a388-4c26-b3f9-ffa6e0f32869" />
-<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/0b0fa2e7-8848-4942-88e0-cc3bd8de2ac7" />
-<img width="1920" height="1080" alt="Screenshot 2026-10-28 164908" src="https://github.com/user-attachments/assets/42f31ea5-7816-442d-b1ae-202dd7874180" />
-<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/97a8aeb0-117b-4353-9d5d-841fca473e72" />
+<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/597317ff-5ef6-441c-99af-ddb3e5a81947" />
+
 
 </div>
 
