@@ -548,7 +548,7 @@ namespace GhostShell
     { public static readonly string[] Names = { "Ping-Pong (A to B and back)", "Ping-Pong, turn at ledges", "Once (stop at B)", "Stand still" }; protected override string[] Items => Names; }
 
     internal sealed class EnemyDeathEffectConverter : FixedListConverter
-    { public static readonly string[] Names = { "Vanish", "Bounce off screen", "Flatten" }; protected override string[] Items => Names; }
+    { public static readonly string[] Names = { "Vanish", "Bounce off screen", "Flatten", "Drop Shell" }; protected override string[] Items => Names; }
 
     internal sealed class FlyingEnemyConverter : FixedListConverter
     { public static readonly string[] Names = { "No", "Yes (no gravity)" }; protected override string[] Items => Names; }
@@ -617,7 +617,7 @@ namespace GhostShell
         [DisplayName("Enemy Death Effect"), TypeConverter(typeof(EnemyDeathEffectConverter))]
         public string EnemyDeathEffect
         {
-            get => EnemyDeathEffectConverter.Names[Math.Clamp(Get().enemyDeathEffect, 0, 2)];
+            get => EnemyDeathEffectConverter.Names[Math.Clamp(Get().enemyDeathEffect, 0, 3)];
             set { int i = Array.IndexOf(EnemyDeathEffectConverter.Names, value); if (i >= 0) { var g = Get(); g.enemyDeathEffect = i; Set(g); } }
         }
         [DisplayName("Break Effect"), TypeConverter(typeof(BreakEffectConverter))]

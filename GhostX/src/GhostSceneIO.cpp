@@ -456,8 +456,8 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
                     o.movePause = mv.value("pause", 0.0f);
                     o.pathMode = Clampi(mv.value("mode", 0), 0, 2);
                     o.enemyPathMode = Clampi(mv.value("enemyMode", 0), 0, 3);
-                    o.flying = jo.value("flying", false);
-                    o.enemyDeathEffect = Clampi(jo.value("enemyDeathEffect", 0), 0, 2);
+                    o.flying = jo.value("flying", 0);
+                    o.enemyDeathEffect = Clampi(jo.value("enemyDeathEffect", 0), 0, 3);
                 }
                 o.breakEffect = Clampi(jo.value("breakEffect", 0), 0, 2);
                 o.contents = Clampi(jo.value("contents", 0), 0, 3);

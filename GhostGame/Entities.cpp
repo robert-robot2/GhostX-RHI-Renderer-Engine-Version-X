@@ -105,6 +105,7 @@ void Level_Init()
     Snapshot("Player", nullptr);
     Snapshot("Coin", &g_coins);
     Snapshot("Enemy", &g_enemyIds);
+    Snapshot("ShellEnemy", &g_enemyIds);
     Snapshot("Block", &g_blocks);
     Snapshot("Breakable", nullptr);
     Snapshot("Mover", &g_moverIds);
@@ -172,12 +173,22 @@ void Enemy_Kill(int id)
             G->GetTag(id, tag, sizeof tag);
 
             // Shell enemies: turtle, spike, blackolive — check custom tag
-            const bool dropsShell = (strcmp(tag, "ShellEnemy") == 0);
+            GhostObjectProps dpr = {};
+            G->GetObjectProps(id, &dpr);
+            const bool dropsShell = (dpr.enemyDeathEffect == 3);
             if (dropsShell)
             {
-                G->SetTag(id, "Shell");   // becomes a pickup
+                G->SetTag(id, "Shell");
                 float pos[3]; G->GetPosition(id, pos);
                 pos[1] += 0.1f; G->SetPosition(id, pos);
+
+                // use Link ID as the shell animation path if set
+                char shellAnim[32] = {};
+                if (G->GetObjectProps(id, &dpr) && dpr.link[0] != '\0')
+                    G->SpriteSetAnim(id, dpr.link);
+                else
+                    G->SpriteSetAnim(id, "Content/Animations/Shell.ghostanim");
+
                 Sprite_Play(id, "Shell", "Shell");
             }
             else

@@ -225,7 +225,18 @@ namespace GhostShell
             get => RoleConverter.Names[Math.Clamp(Gp().role, 0, RoleConverter.Names.Length - 1)];
             set { int i = Array.IndexOf(RoleConverter.Names, value); if (i >= 0) { var g = Gp(); g.role = i; SetGp(g); } }
         }
-
+        [Category("Gameplay"), DisplayName("Custom Tag (when Role = Custom)")]
+        public string CustomTag
+        {
+            get
+            {
+                var b = new byte[64];
+                GhostEngine.GhostEngine_GetCustomTag(_id, b, b.Length);
+                int n = Array.IndexOf(b, (byte)0);
+                return Encoding.UTF8.GetString(b, 0, n < 0 ? b.Length : n);
+            }
+            set => GhostEngine.GhostEngine_SetCustomTag(_id, value ?? "");
+        }
         [Category("Gameplay")] public bool Collider { get => Gp().collider != 0; set { var g = Gp(); g.collider = value ? 1 : 0; SetGp(g); } }
         [Category("Gameplay"), DisplayName("Collider Size")] public Vec3Edit ColliderSize { get; }
         [Category("Gameplay"), DisplayName("Collider Offset")] public Vec3Edit ColliderOffset { get; }

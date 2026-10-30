@@ -3267,7 +3267,7 @@ void GhostEngine_SetGameplay(const GhostGameplayInfo* in)
     o->coinCount = ci(in->coinCount, 1, 999);
     o->enemyPathMode = ci(in->enemyPathMode, 0, 3);
     o->flying = ci(in->flying, 0, 1);
-    o->enemyDeathEffect = ci(in->enemyDeathEffect, 0, 2);
+    o->enemyDeathEffect = ci(in->enemyDeathEffect, 0, 3);
 }
 
 int GhostEngine_GetCustomTag(int objectId, char* buf, int bufSize)
