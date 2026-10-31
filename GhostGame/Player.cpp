@@ -22,6 +22,12 @@ static const char* kPowerAnim[3] = { "Content/Animations/MarioSmall.ghostanim",
                                      "Content/Animations/MarioBig.ghostanim",
                                      "Content/Animations/MarioFire.ghostanim" };
 
+static const char* kLuigiAnim[3] = { "Content/Animations/LuigiSmall.ghostanim",
+                                     "Content/Animations/LuigiBig.ghostanim",
+                                     "Content/Animations/MarioFire.ghostanim" };
+static const char* PowerAnim(int level) { return (S.character == 1 ? kLuigiAnim : kPowerAnim)[level]; }
+
+
 void Player_Reset()
 {
     memset(g_vel, 0, sizeof g_vel);
@@ -30,7 +36,7 @@ void Player_Reset()
     S.error = nullptr;
     S.heldShell = 0;
     S.shellSliding = false;
-    G->SpriteSetAnim(S.player, kPowerAnim[0]);
+    G->SpriteSetAnim(S.player, PowerAnim(0));
 }
 
 static void SetPower(Body& b, int level)
@@ -43,7 +49,7 @@ static void SetPower(Body& b, int level)
     const float s[3] = { g_baseScale[0] * Cfg::PowerScaleX[level], g_baseScale[1] * Cfg::PowerScaleY[level],
                          g_baseScale[2] * Cfg::PowerScaleX[level] };
     G->SetScale(S.player, s);
-    G->SpriteSetAnim(S.player, kPowerAnim[level]);
+    G->SpriteSetAnim(S.player, PowerAnim(level));
     b.pos[1] += b.half[1] * (ky - 1.0f) + (ky > 1.0f ? 0.01f : 0.0f);
     b.half[0] *= kx; b.half[2] *= kx; b.half[1] *= ky;
     b.off[0] *= kx;  b.off[2] *= kx;  b.off[1] *= ky;

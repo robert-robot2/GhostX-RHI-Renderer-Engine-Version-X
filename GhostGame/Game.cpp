@@ -32,6 +32,60 @@ static int g_ui = 0;                // handle of Content/UI/HUD.ghostui (0 = fai
 static int  g_menuUi = 0, g_overUi = 0;
 static bool g_started = false;     // lives outside S, so a level change doesn't bring the menu back
 
+static int  g_selUi = 0, g_optUi = 0;
+static bool g_menuOptions = false;
+
+static void Carry_Save(bool started, int lives, int score, int coins)
+{
+    char t[96];
+    snprintf(t, sizeof t, "%d %d %d %d %d %d", started ? 1 : 0, lives, score, coins, S.character, S.twoPlayer ? 1 : 0);
+    SetEnvironmentVariableA("GHOSTGAME_CARRY", t);
+}
+static void Carry_Clear() { SetEnvironmentVariableA("GHOSTGAME_CARRY", nullptr); }
+
+static void Carry_Load()
+{
+    char t[96];
+    if (!GetEnvironmentVariableA("GHOSTGAME_CARRY", t, sizeof t)) return;
+    Carry_Clear();
+    int started = 0, lives = 3, score = 0, coins = 0, ch = 0, tp = 0;
+    if (sscanf_s(t, "%d %d %d %d %d %d", &started, &lives, &score, &coins, &ch, &tp) != 6) return;
+    g_started = (started != 0);
+    S.lives = lives; S.score = score; S.coins = coins;
+    S.character = ch; S.twoPlayer = (tp != 0);
+}
+
+// Restart the whole game from World 1-1 (keeps the character choice)
+static void Game_FullRestart()
+{
+    char p[200];
+    snprintf(p, sizeof p, "Scenes/%s", kLevels[0]);
+    Carry_Save(true, 3, 0, 0);
+    if (S.level <= 0 || !G->LoadScene(p))
+    {
+        Carry_Clear();
+        if (S.twoPlayer) S.character = 0;
+        S.lives = 3; S.score = 0; S.deaths = 0;
+        S.mode = MODE_PLAY;
+        Game_Restart(false);
+    }
+}
+
+static void Game_ToMenu()
+{
+    char p[200];
+    snprintf(p, sizeof p, "Scenes/%s", kLevels[0]);
+    g_started = false;
+    Carry_Clear();
+    if (S.level <= 0 || !G->LoadScene(p))
+    {
+        S.twoPlayer = false; S.character = 0;
+        S.lives = 3; S.score = 0; S.deaths = 0;
+        Game_Restart(false);
+        S.mode = MODE_MENU;
+    }
+}
+
 void Game_Restart(bool died)
 {
     if (died) { S.deaths++; if (--S.lives <= 0) { S.lives = 0; S.mode = MODE_OVER; return; } }   // freeze on the Game Over screen
@@ -132,12 +186,14 @@ static void Hud()
 
     G->UISetProgress(g_ui, "CoinBar", (float)S.coins / (float)S.playerMaxCoins);
 
-    G->UISetText(g_ui, "SizeText", S.big ? "BIG" : "small");
-    G->UISetColor(g_ui, "SizeText", S.big ? green : grey);
+    const int pl = PowerLevel();
+    G->UISetText(g_ui, "SizeText", pl == 2 ? "FIRE" : (pl == 1 ? "BIG" : "small"));
+    G->UISetColor(g_ui, "SizeText", pl == 2 ? red : (pl == 1 ? green : grey));
 
     G->UISetText(g_ui, "HintText", S.orbit
-        ? "WASD move    Shift run    Space jump    Right-drag orbit    Wheel zoom    R restart"
-        : "WASD move    Shift run    Space jump    Q/E camera    R restart");
+        ? "WASD move    Shift run    Space jump    Click attack    Right-drag orbit    Wheel zoom    Esc options"
+        : "WASD move    Shift run    Space jump    Click attack    Q/E camera    F10 options");
+    G->UISetText(g_ui, "Character", S.character == 1 ? "Luigi" : "Mario");
 
     G->UISetVisible(g_ui, "CompletePanel", S.complete ? 1 : 0);
     if (S.complete)
@@ -157,12 +213,21 @@ GHOST_GAME_EXPORT int GhostGame_Init(const GhostGameAPI* api)
     if (!api || api->version != GHOST_GAME_API_VERSION || api->size < (int)sizeof(GhostGameAPI)) return 0;
     G = api;
     S = GameState();
+    Carry_Load();
     S.level = FindLevelIndex();
     S.lastLevel = (S.level < 0 || S.level >= kLevelCount - 1);
+    if (S.twoPlayer) S.character = S.level < 0 ? 0 : (S.level & 1);   // Mario on even levels, Luigi on odd
     g_ui = G->UILoad("Content/UI/HUD.ghostui");
     g_menuUi = G->UILoad("Content/UI/MainMenu.ghostui");
     g_overUi = G->UILoad("Content/UI/GameOver.ghostui");
+    g_selUi = G->UILoad("Content/UI/CharSelect.ghostui");
+    g_optUi = G->UILoad("Content/UI/PlayerOptions.ghostui");
     S.mode = g_started ? MODE_PLAY : MODE_MENU;
+    if (g_menuUi) G->UIShow(g_menuUi, g_started ? 0 : 1);
+    if (g_overUi) G->UIShow(g_overUi, 0);
+    if (g_ui)     G->UIShow(g_ui, g_started ? 1 : 0);
+    if (g_selUi) G->UIShow(g_selUi, 0);
+    if (g_optUi) G->UIShow(g_optUi, 0);
     S.player = G->FindByTag("Player");
     if (!S.player) { G->Log("Adventures of Cube: no object with Role = Player"); return 1; }
 
@@ -190,19 +255,67 @@ static void Timer_Update(float dt)
 static bool Screens_Update()
 {
     const bool menu = (S.mode == MODE_MENU), over = (S.mode == MODE_OVER);
+    const bool sel = (S.mode == MODE_SELECT), opt = (S.mode == MODE_OPTIONS);
     if (g_menuUi) G->UIShow(g_menuUi, menu ? 1 : 0);
     if (g_overUi) G->UIShow(g_overUi, over ? 1 : 0);
+    if (g_selUi)  G->UIShow(g_selUi, sel ? 1 : 0);
+    if (g_optUi)  G->UIShow(g_optUi, opt ? 1 : 0);
 
     if (menu)
     {
         if (g_ui) G->UIShow(g_ui, 0);
-        if (g_menuUi && G->UIButtonClicked(g_menuUi, "StartButton"))
+        if (g_menuUi)
         {
-            g_started = true;
-            S.mode = MODE_PLAY;
-            Game_Restart(false);               // fresh timer and positions
+            G->UISetVisible(g_menuUi, "OptionsPanel", g_menuOptions ? 1 : 0);
+            if (g_menuOptions)
+            {
+                if (G->UIButtonClicked(g_menuUi, "OptionsBackButton")) g_menuOptions = false;
+                return true;                                  // the buttons behind the panel stay dead
+            }
+            if (G->UIButtonClicked(g_menuUi, "StartButton")) { S.twoPlayer = false; S.mode = MODE_SELECT; }
+            if (G->UIButtonClicked(g_menuUi, "TwoPlayerButton"))
+            {
+                S.twoPlayer = true; S.character = 0;          // 1-1 is Mario; later levels pick in Init
+                g_started = true;
+                S.mode = MODE_PLAY;
+                Game_Restart(false);
+            }
+            if (G->UIButtonClicked(g_menuUi, "OptionsButton")) g_menuOptions = true;
+            if (G->UIButtonClicked(g_menuUi, "QuitButton")) G->Quit();
         }
-        if (g_menuUi && G->UIButtonClicked(g_menuUi, "QuitButton")) G->Quit();
+        return true;
+    }
+
+    if (sel)
+    {
+        if (g_ui) G->UIShow(g_ui, 0);
+        if (g_selUi)
+        {
+            if (G->UIButtonClicked(g_selUi, "MarioButton")) S.character = 0;
+            if (G->UIButtonClicked(g_selUi, "LuigiButton")) S.character = 1;
+            const float lit[4] = { 1, 1, 1, 1 }, dim[4] = { 0.45f, 0.45f, 0.45f, 1 };
+            G->UISetColor(g_selUi, "MarioButton", S.character == 0 ? lit : dim);
+            G->UISetColor(g_selUi, "LuigiButton", S.character == 1 ? lit : dim);
+            G->UISetText(g_selUi, "SelectedText", S.character == 1 ? "LUIGI" : "MARIO");
+            if (G->UIButtonClicked(g_selUi, "StartButton"))
+            {
+                g_started = true;
+                S.mode = MODE_PLAY;
+                Game_Restart(false);
+            }
+            if (G->UIButtonClicked(g_selUi, "BackButton")) S.mode = MODE_MENU;
+        }
+        return true;
+    }
+
+    if (opt)                                                  // the HUD stays visible behind the panel
+    {
+        if (g_optUi)
+        {
+            if (G->UIButtonClicked(g_optUi, "ResumeButton")) S.mode = MODE_PLAY;
+            if (G->UIButtonClicked(g_optUi, "RestartButton")) { S.mode = MODE_PLAY; Game_FullRestart(); }
+            if (G->UIButtonClicked(g_optUi, "MenuButton")) Game_ToMenu();
+        }
         return true;
     }
 
@@ -247,7 +360,11 @@ GHOST_GAME_EXPORT void GhostGame_Update(float dt)
 {
     if (!S.player) { S.error = "No object with Role = Player in this scene"; Hud(); return; }
     if (Screens_Update()) { Camera_Update(dt); return; }
-    if (G->KeyPressed('R')) Game_Restart(false);
+    if (G->KeyPressed(VK_F10))                             // Esc opens and closes the options panel
+    {
+        if (S.mode == MODE_PLAY && !S.complete && !S.onPole) S.mode = MODE_OPTIONS;
+        else if (S.mode == MODE_OPTIONS) S.mode = MODE_PLAY;
+    }
     if (g_ui && S.complete)
     {
         if (G->UIButtonClicked(g_ui, "AgainButton"))
@@ -270,6 +387,7 @@ GHOST_GAME_EXPORT void GhostGame_Update(float dt)
             char p[200];
             snprintf(p, sizeof p, "Scenes/%s", kLevels[S.level + 1]);
             G->LoadScene(p);
+            Carry_Save(true, S.lives, S.score, S.coins);
             S.advance = -1000.0f;
         }
     }

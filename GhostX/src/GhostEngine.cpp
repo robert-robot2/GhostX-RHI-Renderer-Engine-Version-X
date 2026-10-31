@@ -322,8 +322,11 @@ static void BuildSceneCB(const GhostScene& s, GhostSceneCB& out)
     const float d2r = GHOST_PI / 180.0f;
     out = {};
 
+    float amb = s.ambientIntensity;
+    for (const GhostModEntity& m : s.mods)
+        if (m.typeId == GHOST_MOD_SKY) { amb = GhostSky_AmbientIntensity(m, amb); break; }
     for (int i = 0; i < 3; i++)
-        out.ambient[i] = s.ambientColor[i] * s.ambientIntensity;
+        out.ambient[i] = s.ambientColor[i] * amb;
 
     for (const GhostLight& l : s.lights)
     {

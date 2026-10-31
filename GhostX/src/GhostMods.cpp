@@ -65,6 +65,11 @@ static const GhostParamDesc kSkyParams[] =
     P_FLOAT("Night Black Softness",       "Night Layer", 0.20f, 0.0f, 1.0f),
     P_BOOL("Night Flip Horizontal",      "Night Layer", 0.0f),
         P_BOOL("Show Ground",                "Horizon", 0.0f),
+            P_BOOL("Ambient Follows Time",        "Ambient", 0.0f),
+    P_FLOAT("Ambient Night Start (hour)", "Ambient", 18.0f, 0.0f, 24.0f),
+    P_FLOAT("Ambient Night End (hour)",   "Ambient", 6.0f, 0.0f, 24.0f),
+    P_FLOAT("Ambient Fade Length (hours)","Ambient", 2.0f, 0.1f, 12.0f),
+    P_FLOAT("Night Ambient Intensity",    "Ambient", 0.05f, 0.0f, 1.0f),
 
 
 };
@@ -223,6 +228,29 @@ void GhostSky_Speeds(const GhostModEntity& e, float& day, float& night)
     const int b = GhostMods_ParamOffset(GHOST_MOD_SKY, SKY_NIGHT_SCROLL);
     if ((size_t)a < e.values.size()) day = e.values[(size_t)a];
     if ((size_t)b < e.values.size()) night = e.values[(size_t)b];
+}
+
+float GhostSky_AmbientIntensity(const GhostModEntity& e, float base)
+{
+    if (e.values.size() < (size_t)GhostMods_ValueCount(GHOST_MOD_SKY)) return base;
+    auto V = [&](int p) { return e.values[(size_t)GhostMods_ParamOffset(GHOST_MOD_SKY, p)]; };
+    if (V(SKY_AMB_ENABLE) < 0.5f) return base;
+
+    float t = fmodf(GhostSky_GetTime(e), 24.0f);
+    if (t < 0.0f) t += 24.0f;
+
+    const float start = V(SKY_AMB_START), end = V(SKY_AMB_END);
+    float len = fmodf(end - start + 24.0f, 24.0f);          // length of the night window, wraps past midnight
+    if (len < 0.01f) len = 24.0f;
+    const float pos = fmodf(t - start + 24.0f, 24.0f);      // hours since the night began
+    if (pos >= len) return base;                            // daytime
+
+    float fade = V(SKY_AMB_FADE);
+    if (fade > len * 0.5f) fade = len * 0.5f;
+    if (fade < 0.01f) fade = 0.01f;
+
+    const float k = fminf(Smooth(0.0f, fade, pos), Smooth(0.0f, fade, len - pos));   // fade in at dusk, out at dawn
+    return Mix(base, fminf(base, V(SKY_AMB_LEVEL)), k);
 }
 
 int GhostSky_Build(const GhostModEntity& e, const std::vector<GhostTextureInfo>& textures,

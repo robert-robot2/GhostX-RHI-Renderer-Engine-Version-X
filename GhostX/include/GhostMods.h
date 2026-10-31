@@ -18,6 +18,7 @@ enum SkyParam
     SKY_NIGHT_TEX, SKY_NIGHT_LAYOUT, SKY_NIGHT_OPACITY, SKY_NIGHT_BRIGHT, SKY_NIGHT_TINT, SKY_NIGHT_YAW,
     SKY_NIGHT_SCROLL, SKY_NIGHT_BLACK, SKY_NIGHT_CUTOFF, SKY_NIGHT_SOFT, SKY_NIGHT_FLIP,
     SKY_SHOW_GROUND,
+    SKY_AMB_ENABLE, SKY_AMB_START, SKY_AMB_END, SKY_AMB_FADE, SKY_AMB_LEVEL,
     SKY_PARAM_COUNT
 };
 
@@ -52,3 +53,4 @@ float GhostSky_GetTime(const GhostModEntity& e);
 void  GhostSky_SetTime(GhostModEntity& e, float hours);
 void  GhostSky_AdvanceTime(GhostModEntity& e, float dtSeconds);
 void  GhostSky_Speeds(const GhostModEntity& e, float& dayDegPerSec, float& nightDegPerSec);
+float GhostSky_AmbientIntensity(const GhostModEntity& e, float baseIntensity);

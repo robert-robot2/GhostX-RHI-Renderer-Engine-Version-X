@@ -40,7 +40,7 @@ namespace Cfg
     constexpr float CastleFlagSpeed = 0.5f;   // units per second it rises
 }
 
-enum { MODE_MENU = 0, MODE_PLAY, MODE_OVER };
+enum { MODE_MENU = 0, MODE_PLAY, MODE_OVER, MODE_SELECT, MODE_OPTIONS };
 
 struct GameState
 {
@@ -68,6 +68,8 @@ struct GameState
     int score = 0, stompChain = 0, starChain = 0, timeBonus = 0;
     float timeLeft = Cfg::TimeStart;
     int mode = MODE_MENU;
+    int  character = 0;                // 0 Mario, 1 Luigi
+    bool twoPlayer = false;            // alternates Mario / Luigi per level
     bool  onPole = false;
     float poleSlide = 0.0f;   // how far Mario has slid down
     int   poleId = 0;
