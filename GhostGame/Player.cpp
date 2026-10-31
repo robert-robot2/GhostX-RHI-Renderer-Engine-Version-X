@@ -248,13 +248,11 @@ void Player_Update(float dt)
         if (!G->GetTag(ids[i], tag, sizeof tag)) continue;
 
         if (strcmp(tag, "Coin") == 0) Coin_Collect(ids[i]);
-        else if (strcmp(tag, "Goal") == 0 && !S.complete)
+        else if (strcmp(tag, "Goal") == 0 && !S.complete && !S.onPole)
         {
             float mn[3], mx[3];
             if (G->GetBounds(ids[i], mn, mx))
-                Goal_Reached(ids[i], b.pos[1], mx[1], mn[1]);
-            else
-                Goal_Reached(ids[i], b.pos[1], b.pos[1] + 4.0f, b.pos[1]);
+                Goal_Reached(ids[i], b.pos[1] - b.half[1], mx[1], mn[1]);
         }
         else if (Pickup_TypeFromTag(tag, ptype)) { PowerUp_Remove(ids[i]); Collect(b, ptype); }
         else if (strcmp(tag, "Projectile") == 0) { if (Hurt(b)) return; }
@@ -297,19 +295,41 @@ void Player_Update(float dt)
         else if (PowerLevel() == 2) Fireball_Spawn();
     }
 
-    if (S.onPole && S.poleId)
+    if (S.onPole)
     {
-        float pp[3]; G->GetPosition(S.poleId, pp);
-        float mp[3]; G->GetPosition(S.player, mp);
-        mp[0] = pp[0];
-        mp[1] -= 2.0f * dt;
-        if (mp[1] <= S.poleBot + 0.5f)
+        float mn[3], mx[3];
+        if (G->GetBounds(S.poleId, mn, mx)) { b.pos[0] = (mn[0] + mx[0]) * 0.5f; b.pos[2] = (mn[2] + mx[2]) * 0.5f; }
+        memset(g_vel, 0, sizeof g_vel);
+
+        const float floorY = S.poleBot + b.half[1] + 0.02f;
+        if (b.pos[1] > floorY)
         {
-            mp[1] = S.poleBot + 0.5f;
-            S.onPole = false;
+            b.pos[1] -= Cfg::PoleSlide * dt;
+            if (b.pos[1] < floorY) b.pos[1] = floorY;
+            Sprite_Play(S.player, "Climb", "Idle");
         }
-        G->SetPosition(S.player, mp);
-        Sprite_Play(S.player, "Walk", "Idle");
+        else
+        {
+            Sprite_Play(S.player, "Idle", nullptr);
+            S.poleSlide += dt;
+            if (S.poleSlide >= 0.6f)              // short beat at the bottom, then the level completes
+            {
+                S.onPole = false;
+                S.complete = true;
+                S.timeBonus = (int)S.timeLeft * 50;
+                Score_Add(S.timeBonus);
+            }
+        }
+
+        const int flag = G->FindByTag("Flag");    // the flag drops a bit faster than Mario
+        if (flag)
+        {
+            float fp[3], fs[3];
+            G->GetPosition(flag, fp); G->GetScale(flag, fs);
+            const float stop = S.poleBot + fs[1] * 0.5f + 0.05f;
+            if (fp[1] > stop) { fp[1] -= Cfg::PoleSlide * 1.5f * dt; if (fp[1] < stop) fp[1] = stop; G->SetPosition(flag, fp); }
+        }
+        StoreBody(b);
         return;
     }
     StoreBody(b);

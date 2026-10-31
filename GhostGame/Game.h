@@ -35,6 +35,7 @@ namespace Cfg
     constexpr float NightFadeSpeed = 8.0f;   // hours per second (8 = about 1.2 s to night). Use 1000 to snap instantly.
     constexpr float TimeStart = 300.0f;   // matches your HUD's "Timer 300"
     constexpr float TimeTick = 1.0f;     // real seconds per timer unit (SMB1 = 0.4)
+    constexpr float PoleSlide = 4.0f;   // units per second Mario slides down the pole
 }
 
 enum { MODE_MENU = 0, MODE_PLAY, MODE_OVER };

@@ -318,6 +318,9 @@ namespace GhostShell
         [Category("Camera"), DisplayName("FOV (deg)")]
         public float Fov { get => Get().fovDeg; set { var i = Get(); i.fovDeg = value; Set(i); } }
 
+        [Category("Camera"), DisplayName("Fly Speed (units/s)")]
+        public float FlySpeed { get => Get().moveSpeed; set { var i = Get(); i.moveSpeed = value; Set(i); } }
+
         [Category("Transform")] public Vec3Edit Position { get; }
 
         [Category("Camera"), DisplayName("Resolution")]

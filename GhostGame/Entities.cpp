@@ -154,6 +154,7 @@ void Level_Init()
     Snapshot("Mover", &g_moverIds);
     Snapshot("Projectile", &g_projIds);
     Snapshot("HiddenBlock", &g_hidden);
+    Snapshot("Flag", nullptr);
     for (int id : g_hidden) G->SetVisible(id, 0);          // hidden blocks are invisible while playing
 
     S.totalCoins = (int)g_coins.size();
@@ -336,30 +337,18 @@ void Score_Enemy(bool star)
 
 void Goal_Reached(int poleId, float hitY, float poleTop, float poleBot)
 {
-    if (S.complete) return;
-    S.complete = true;
+    if (S.complete || S.onPole) return;
     S.onPole = true;
     S.poleId = poleId;
     S.poleTop = poleTop;
     S.poleBot = poleBot;
+    S.poleSlide = 0.0f;                       // reused as the pause timer at the bottom
 
-    // height score: higher = more points, max 5000
     const float range = poleTop - poleBot;
-    const float ratio = range > 0.1f ? (hitY - poleBot) / range : 0.0f;
-    const int heightBonus = (int)(ratio * 5000.0f);
-    S.timeBonus = (int)S.timeLeft * 50;
-    Score_Add(S.timeBonus + heightBonus);
-
-    // drop the flag: find object tagged "Flag" linked to this pole
-    int flags[8];
-    int n = G->FindAllByTag("Flag", flags, 8);
-    for (int i = 0; i < n; i++)
-    {
-        float fp[3]; G->GetPosition(flags[i], fp);
-        fp[1] = poleBot + 0.5f;
-        G->SetPosition(flags[i], fp);
-    }
-    Sprite_Play(S.player, "Idle", nullptr);
+    float t = range > 0.1f ? (hitY - poleBot) / range : 0.0f;
+    t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+    static const int kPoleScore[5] = { 100, 400, 800, 2000, 5000 };   // low to high, like SMB
+    Score_Add(kPoleScore[(int)(t * 4.999f)]);
 }
 
 

@@ -181,7 +181,7 @@ GHOST_GAME_EXPORT int GhostGame_Init(const GhostGameAPI* api)
 
 static void Timer_Update(float dt)
 {
-    if (S.complete || !S.player || S.error) return;
+    if (S.complete || S.onPole || !S.player || S.error) return;
     S.timeLeft -= dt / Cfg::TimeTick;
     if (S.timeLeft <= 0.0f) { S.timeLeft = 0.0f; Game_Restart(true); }   // time up = lose a life
 }

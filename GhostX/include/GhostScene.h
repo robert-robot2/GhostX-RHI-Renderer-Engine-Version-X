@@ -309,6 +309,7 @@ struct GhostCamera
     float       smoothing = 10.0f;                // 0 = snap
     GhostVec3   orbitPos = { 0, 0, 0 };           // runtime only, not saved
     bool        orbitValid = false;               // runtime only
+    float moveSpeed = 3.5f;   // editor fly speed (units/s)
 };
 
 // ---- Mods: data-driven entity types (the first one is the Sky Sphere) ----

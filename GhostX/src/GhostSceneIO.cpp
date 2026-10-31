@@ -264,6 +264,7 @@ bool GhostScene_Save(const GhostScene& s, const std::string& root, const std::st
             jc["minPitch"] = c.minPitchDeg;
             jc["maxPitch"] = c.maxPitchDeg;
             jc["smoothing"] = c.smoothing;
+            jc["moveSpeed"] = c.moveSpeed;
             cams.push_back(jc);
         }
         j["cameras"] = cams;
@@ -567,6 +568,8 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
                 c.minPitchDeg = jc.value("minPitch", -70.0f);
                 c.maxPitchDeg = jc.value("maxPitch", 40.0f);
                 c.smoothing = jc.value("smoothing", 10.0f);
+                c.moveSpeed = jc.value("moveSpeed", 3.5f);
+                c.moveSpeed = c.moveSpeed < 0.1f ? 0.1f : (c.moveSpeed > 200.0f ? 200.0f : c.moveSpeed);
                 s.cameras.push_back(c);
             }
 
@@ -698,6 +701,7 @@ unsigned int GhostScene_Hash(const GhostScene& s)
         I(c.mode); I(c.targetId); S(c.targetTag);
         F(c.distance); F(c.heightOffset); F(c.minDist); F(c.maxDist);
         F(c.minPitchDeg); F(c.maxPitchDeg); F(c.smoothing);
+        F(c.moveSpeed);
         if (c.id != s.activeCameraId)               // flying the main camera isn't an edit
         {
             if (c.mode != 1) V(c.position);         // an orbit camera's position is computed, so it isn't an edit either

@@ -50,6 +50,7 @@ namespace GhostShell
         public int mode, targetId;
         public float distance, heightOffset, minDist, maxDist;
         public float minPitchDeg, maxPitchDeg, smoothing;
+        public float moveSpeed;
     }
 
     [StructLayout(LayoutKind.Sequential)]

@@ -2063,7 +2063,7 @@ void GhostEngine_Tick()
     const bool flyEnabled = g_inputEnabled && g_playState == GhostPlayState::Editing;   // the editor fly cam is off while playing
     // ---- Mouse look ----
     const float lookSens = 0.0025f;
-    const float moveSpeed = 3.5f;
+    const float moveSpeed = cam ? cam->moveSpeed : 3.5f;
 
     const bool orbitCam = cam && cam->mode == 1;
     const bool editing = g_playState == GhostPlayState::Editing;
@@ -2331,7 +2331,7 @@ int GhostEngine_GetCamera(int id, GhostCameraInfo* out)
                      c.resW, c.resH,
                      c.mode, c.targetId,
                      c.distance, c.heightOffset, c.minDist, c.maxDist,
-                     c.minPitchDeg, c.maxPitchDeg, c.smoothing };
+                     c.minPitchDeg, c.maxPitchDeg, c.smoothing, c.moveSpeed };
             return 1;
         }
     return 0;
@@ -2360,6 +2360,7 @@ void GhostEngine_SetCamera(const GhostCameraInfo* in)
             c.minPitchDeg = clampf(in->minPitchDeg, -88.0f, 88.0f);
             c.maxPitchDeg = clampf(in->maxPitchDeg, c.minPitchDeg, 88.0f);
             c.smoothing = clampf(in->smoothing, 0.0f, 50.0f);
+            c.moveSpeed = clampf(in->moveSpeed, 0.1f, 200.0f);
             return;
         }
 }

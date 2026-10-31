@@ -48,6 +48,7 @@ struct GhostCameraInfo
     int   mode, targetId;                 // mode: 0 free, 1 orbit
     float distance, heightOffset, minDist, maxDist;
     float minPitchDeg, maxPitchDeg, smoothing;
+    float moveSpeed;                      // editor fly speed (units/s)
 };
 struct GhostGameplayInfo
 {
