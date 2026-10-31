@@ -119,7 +119,7 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [x] Phase 20.I: Start Screen Updated for level change, Carry over Updated for level change, HUD update Fire Mario
 - [x] Phase 20.J: Mod Upgrade: Sky Sphere parameters to Automato Adjust ambience over selected time period.
 - **Active Core**
-- [ ] Phase 20.K: Full HUD Rework,
+- [ ] Phase 20.K: Full HUD Rework, 2 Player, Options, Options Menu, Character Select Luigi
 - [ ] Phase 20.F: Collision, Level 2 Build, // Instruction Set 2 Complete 
 - [ ] Phase 20.G: Play Packaged Exe //Instruction Set 3
 - [ ] Phase 24: Check All Editor Windows/ Move To window Palette/ Add DropDowns
