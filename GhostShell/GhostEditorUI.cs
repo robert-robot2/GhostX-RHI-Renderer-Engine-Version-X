@@ -577,7 +577,7 @@ namespace GhostShell
         {
             get
             {
-                var b = new byte[64];
+                var b = new byte[128];
                 GhostEngine.GhostEngine_GetLinkId(_id, b, b.Length);
                 int n = Array.IndexOf(b, (byte)0);
                 return Encoding.UTF8.GetString(b, 0, n < 0 ? b.Length : n);

@@ -242,7 +242,7 @@ struct GhostObject
     std::string missingMesh, missingMeshFile, missingFaces;
     bool      useVertexColor = false;
     bool        locked = false;               // can't be moved in the viewport
-    std::string link;                         // portals: an Entry and an Exit with the same link are a pair (max 31 chars)
+    std::string link;   // portals: ... (max 63 chars)
     GhostVec3   pathOffset = { 0, 0, 0 };     // movers and projectiles: where B is, relative to A (the placed position)
     float       moveSpeed = 2.0f, movePause = 0.0f;
     int         pathMode = 0;                 // 0 ping-pong, 1 restart at A, 2 once

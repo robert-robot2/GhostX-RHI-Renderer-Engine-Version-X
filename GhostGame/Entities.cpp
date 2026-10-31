@@ -30,6 +30,49 @@ struct Debris { int id; float vel[3]; float life; };
 static std::vector<Debris> g_debris;
 
 static float g_skyBase = 12.0f, g_skyCur = 12.0f;   // the level's own hour, and the hour we are showing
+extern float g_faceDir;
+
+struct ShellState { int id; float dx, dz, vy, cool; };
+static std::vector<ShellState> g_shells;
+static std::vector<int>        g_shellSwapped;     // enemies whose anim set was swapped to the shell art
+static const float kShellSpeed = 10.0f;
+// The anim set a shell-dropping enemy goes back to on restart. Set this to your turtle's .ghostanim.
+static const char* kEnemyAnimDefault = "Content/Animations/Turtle.ghostanim";
+
+static ShellState& ShellOf(int id)
+{
+    for (ShellState& s : g_shells) if (s.id == id) return s;
+    ShellState n = {}; n.id = id;
+    g_shells.push_back(n);
+    return g_shells.back();
+}
+
+bool Shell_Ready(int id)
+{
+    char tag[32];
+    if (!G->GetTag(id, tag, sizeof tag) || strcmp(tag, "Shell") != 0) return false;
+    return ShellOf(id).cool <= 0.0f;
+}
+
+void Shell_Hold(int id)
+{
+    ShellState& s = ShellOf(id);
+    s.dx = s.dz = s.vy = 0.0f;
+    G->SetTag(id, "HeldShell");
+    Sprite_Play(id, "Shell", "Shell");
+}
+
+void Shell_Kick(int id, float dx, float dz)
+{
+    const float l = sqrtf(dx * dx + dz * dz);
+    if (l < 0.0001f) { dx = 1.0f; dz = 0.0f; }
+    else { dx /= l; dz /= l; }
+    ShellState& s = ShellOf(id);
+    s.dx = dx; s.dz = dz; s.vy = 0.0f; s.cool = 0.0f;
+    G->SetTag(id, "SlidingShell");
+    G->SpriteSetClip(id, "");
+    Sprite_Play(id, "Slide", "Shell");
+}
 
 
 static void Snapshot(const char* tag, std::vector<int>* idsOut)
@@ -101,7 +144,7 @@ static void RebuildMovers()
 void Level_Init()
 {
     g_saved.clear(); g_coins.clear(); g_enemyIds.clear(); g_blocks.clear(); g_enemies.clear(); g_pickups.clear(); g_blockMem.clear(); g_hidden.clear();
-    g_breaking.clear(); g_moverIds.clear(); g_projIds.clear(); g_movers.clear(); g_debris.clear();
+    g_breaking.clear(); g_moverIds.clear(); g_projIds.clear(); g_movers.clear(); g_debris.clear();    g_shells.clear(); g_shellSwapped.clear();
     Snapshot("Player", nullptr);
     Snapshot("Coin", &g_coins);
     Snapshot("Enemy", &g_enemyIds);
@@ -129,6 +172,13 @@ void Level_Init()
 
 void Level_Reset()
 {
+    g_shells.clear();
+    for (int id : g_shellSwapped)
+    {
+        G->SpriteSetAnim(id, kEnemyAnimDefault);   // turtle art back, not the shell art
+        G->SpriteSetFlip(id, 0);
+    }
+    g_shellSwapped.clear();
     for (const Debris& d : g_debris) G->Destroy(d.id);
     g_debris.clear();
     g_breaking.clear();
@@ -178,17 +228,23 @@ void Enemy_Kill(int id)
             const bool dropsShell = (dpr.enemyDeathEffect == 3);
             if (dropsShell)
             {
+                e.vy = 0.0f;                               // stops the "dead enemy" gravity block fighting the shell logic
+                e.dieTimer = 0.0f;
                 G->SetTag(id, "Shell");
                 float pos[3]; G->GetPosition(id, pos);
                 pos[1] += 0.1f; G->SetPosition(id, pos);
 
-                // use Link ID as the shell animation path if set
-                char shellAnim[32] = {};
-                if (G->GetObjectProps(id, &dpr) && dpr.link[0] != '\0')
-                    G->SpriteSetAnim(id, dpr.link);
-                else
-                    G->SpriteSetAnim(id, "Content/Animations/Shell.ghostanim");
+                G->SpriteSetClip(id, "");                  // clear the walk/die clip
+                if (dpr.link[0] != '\0') G->SpriteSetAnim(id, dpr.link);
+                else G->SpriteSetAnim(id, "Content/Animations/Shell.ghostanim");
 
+                bool known = false;
+                for (int sid : g_shellSwapped) if (sid == id) known = true;
+                if (!known) g_shellSwapped.push_back(id);
+
+                ShellState& ss = ShellOf(id);
+                ss.dx = ss.dz = ss.vy = 0.0f;
+                ss.cool = 0.5f;                            // grace time so the stomp doesn't instantly kick/grab it
                 Sprite_Play(id, "Shell", "Shell");
             }
             else
@@ -520,9 +576,8 @@ void Fireball_Spawn()
     float pos[3];
     G->GetPosition(S.player, pos);
 
-    // offset in front of Mario based on sprite facing
-    const float dir = S.fire ? 1.0f : 1.0f; // always forward for now; tie to flip later
-    pos[0] += dir * 0.6f;
+    extern float g_faceDir;   // defined in Player.cpp
+    pos[2] += g_faceDir * 0.6f;
     pos[1] += 0.3f;
 
     int id = G->Spawn(GHOST_API_MESH_QUAD, pos);
@@ -535,10 +590,9 @@ void Fireball_Spawn()
 
     Fireball f = {};
     f.id = id;
-    f.vel[0] = dir * 8.0f;
+    f.vel[0] = 0.0f;
     f.vel[1] = 3.0f;
-    f.vel[2] = 0.0f;
-    f.life = 3.0f;
+    f.vel[2] = g_faceDir * 8.0f;   // Z axis, direction Mario faces
     g_fireballs.push_back(f);
 }
 
@@ -621,8 +675,8 @@ void Entities_Update(float dt)
         {
             b.vel[0] = fb.vel[0]; b.vel[1] = fb.vel[1]; b.vel[2] = fb.vel[2];
             MoveResult r = MoveBody(b, dt);
-            if (r.hitFloor) fb.vel[1] = 5.0f;   // bounce!
-            if (r.hitX) { G->Destroy(fb.id); g_fireballs.erase(g_fireballs.begin() + i); continue; }
+            if (r.hitFloor) fb.vel[1] = 5.0f;
+            if (r.hitZ) { G->Destroy(fb.id); g_fireballs.erase(g_fireballs.begin() + i); continue; }
             fb.vel[0] = b.vel[0]; fb.vel[1] = b.vel[1]; fb.vel[2] = b.vel[2];
             StoreBody(b);
         }
@@ -658,38 +712,64 @@ void Entities_Update(float dt)
     }
 
 
+    // ---- Shells: gravity for loose shells, sliding for kicked/thrown ones ----
+    for (size_t i = 0; i < g_shells.size(); )
     {
-        int shells[16];
-        int n = G->FindAllByTag("SlidingShell", shells, 16);
-        for (int i = 0; i < n; i++)
-        {
-            Body b;
-            if (!LoadBody(shells[i], b)) continue;
-            b.vel[0] = 10.0f; b.vel[1] = 0.0f; b.vel[2] = 0.0f;
-            MoveResult r = MoveBody(b, dt);
-            StoreBody(b);
-            if (r.hitX) G->SetVisible(shells[i], 0);
+        const int sid = g_shells[i].id;
+        char tag[32];
+        if (!G->GetTag(sid, tag, sizeof tag)) { g_shells.erase(g_shells.begin() + i); continue; }
+        const bool sliding = strcmp(tag, "SlidingShell") == 0;
+        if (!sliding && strcmp(tag, "Shell") != 0) { i++; continue; }      // held / anything else: not ours
 
-            // Kill enemies on contact
-            int hits[8]; int hn = QueryBody(b, hits, 8);
-            for (int j = 0; j < hn; j++)
+        ShellState& s = g_shells[i];
+        if (s.cool > 0.0f) s.cool -= dt;
+
+        Body b;
+        if (!LoadBody(sid, b)) { i++; continue; }
+
+        s.vy -= Cfg::Gravity * dt;
+        if (s.vy < -Cfg::MaxFall) s.vy = -Cfg::MaxFall;
+        b.vel[0] = sliding ? s.dx * kShellSpeed : 0.0f;
+        b.vel[1] = s.vy;
+        b.vel[2] = sliding ? s.dz * kShellSpeed : 0.0f;
+
+        MoveResult r = MoveBody(b, dt);
+        s.vy = b.vel[1];
+        if (r.hitX) s.dx = -s.dx;                                           // bounce off walls
+        if (r.hitZ) s.dz = -s.dz;
+        StoreBody(b);
+
+        if (b.pos[1] < Cfg::FallLimit)
+        {
+            G->SetTag(sid, "Defeated");
+            G->SetVisible(sid, 0);
+            g_shells.erase(g_shells.begin() + i);
+            continue;
+        }
+
+        int kills[8]; int kn = 0;
+        if (sliding)
+        {
+            int hits[8]; const int hn = QueryBody(b, hits, 8);
+            for (int j = 0; j < hn && kn < 8; j++)
             {
-                char tag[32];
-                if (G->GetTag(hits[j], tag, sizeof tag) && strcmp(tag, "Enemy") == 0)
-                {
-                    Enemy_Kill(hits[j]); Score_Add(200);
-                }
+                char ht[32];
+                if (G->GetTag(hits[j], ht, sizeof ht) && strcmp(ht, "Enemy") == 0) kills[kn++] = hits[j];
             }
         }
+        Sprite_Play(sid, sliding ? "Slide" : "Shell", "Shell");
+        i++;                                                                // done with 's' (Enemy_Kill may grow g_shells)
+        for (int k = 0; k < kn; k++) { Enemy_Kill(kills[k]); Score_Add(200); }
     }
 
     // ---- Enemies: walk A <-> B from their Behavior settings (Enemy Path Mode) ----
     for (Enemy& e : g_enemies)
     {
+        char tag2[32];
         if (!e.alive)
         {
             if (e.dieTimer > 0.0f) { e.dieTimer -= dt; if (e.dieTimer <= 0.0f) G->SetVisible(e.id, 0); }
-            if (!e.alive && e.vy != 0.0f)
+            if (!e.alive && e.vy != 0.0f && G->GetTag(e.id, tag2, sizeof tag2) && strcmp(tag2, "Defeated") == 0)
             {
                 Body db;
                 if (LoadBody(e.id, db))

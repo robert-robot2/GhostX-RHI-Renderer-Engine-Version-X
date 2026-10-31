@@ -28,7 +28,7 @@ extern "C" {
     // Settings from Details > Gameplay > Behavior
     typedef struct GhostObjectProps
     {
-        char  link[32];
+        char  link[64];
         float pathOffset[3];
         float moveSpeed, movePause;
         int   pathMode;        // 0 ping-pong, 1 restart at A, 2 once

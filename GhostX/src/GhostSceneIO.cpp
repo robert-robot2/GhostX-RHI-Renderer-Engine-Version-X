@@ -447,7 +447,7 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
                 o.visible = jo.value("visible", true);
                 o.locked = jo.value("locked", false);
                 o.link = jo.value("link", std::string());
-                if (o.link.size() > 31) o.link.resize(31);
+                if (o.link.size() > 63) o.link.resize(63);
                 if (jo.contains("move") && jo["move"].is_object())
                 {
                     const json& mv = jo["move"];

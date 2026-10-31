@@ -6,6 +6,7 @@ static float g_vel[3];
 static float g_coyote, g_jumpBuf;
 static bool  g_grounded;
 static float g_baseScale[3] = { 1, 1, 1 };
+float g_faceDir = 1.0f;
 
 static float Approach(float v, float target, float maxStep)
 {
@@ -17,7 +18,7 @@ static float Approach(float v, float target, float maxStep)
 
 void Player_Init() { G->GetScale(S.player, g_baseScale); }
 
-static const char* kPowerAnim[3] = { "Content/Animations/MarioSmall.ghostanim",   // set [0] to the file your Player uses today
+static const char* kPowerAnim[3] = { "Content/Animations/MarioSmall.ghostanim",
                                      "Content/Animations/MarioBig.ghostanim",
                                      "Content/Animations/MarioFire.ghostanim" };
 
@@ -27,10 +28,10 @@ void Player_Reset()
     g_coyote = g_jumpBuf = 0.0f;
     g_grounded = false;
     S.error = nullptr;
+    S.heldShell = 0;
+    S.shellSliding = false;
     G->SpriteSetAnim(S.player, kPowerAnim[0]);
 }
-
-
 
 static void SetPower(Body& b, int level)
 {
@@ -41,9 +42,9 @@ static void SetPower(Body& b, int level)
     S.big = level >= 1; S.fire = level == 2;
     const float s[3] = { g_baseScale[0] * Cfg::PowerScaleX[level], g_baseScale[1] * Cfg::PowerScaleY[level],
                          g_baseScale[2] * Cfg::PowerScaleX[level] };
-    G->SetScale(S.player, s);                              // the collider follows the scale
-    G->SpriteSetAnim(S.player, kPowerAnim[level]);         // whole animation set swaps
-    b.pos[1] += b.half[1] * (ky - 1.0f) + (ky > 1.0f ? 0.01f : 0.0f);   // feet stay put
+    G->SetScale(S.player, s);
+    G->SpriteSetAnim(S.player, kPowerAnim[level]);
+    b.pos[1] += b.half[1] * (ky - 1.0f) + (ky > 1.0f ? 0.01f : 0.0f);
     b.half[0] *= kx; b.half[2] *= kx; b.half[1] *= ky;
     b.off[0] *= kx;  b.off[2] *= kx;  b.off[1] *= ky;
 }
@@ -54,8 +55,8 @@ static void Collect(Body& b, int type)
     switch (type)
     {
     case PU_MUSHROOM: if (PowerLevel() == 0) SetPower(b, 1); else Coins_Add(1); break;
-    case PU_FLOWER:   if (PowerLevel() < 2) SetPower(b, PowerLevel() + 1); else Coins_Add(1); break;   // small -> big, big -> fire
-    case PU_STAR:     S.starTime = Cfg::StarTime; S.starChain = 0; break;                                            // a second star resets the timer
+    case PU_FLOWER:   if (PowerLevel() < 2) SetPower(b, PowerLevel() + 1); else Coins_Add(1); break;
+    case PU_STAR:     S.starTime = Cfg::StarTime; S.starChain = 0; break;
     case PU_ONEUP:    Life_Add(); break;
     }
 }
@@ -69,8 +70,6 @@ static bool Hurt(Body& b)
     return true;
 }
 
-// Stand on or touch an Entry, then press its trigger. A Link ID pairs an Entry with an Exit.
-// A Link ID ending in .ghostscene loads that scene instead.
 static bool TryPortal(Body& b, int entry)
 {
     GhostObjectProps pr = {};
@@ -97,14 +96,105 @@ static bool TryPortal(Body& b, int entry)
         b.pos[2] = cz;
         memset(g_vel, 0, sizeof g_vel);
         S.camSnap = true;
-
-      
         S.portalCool = 0.4f;
-
-
         return true;
     }
     return false;
+}
+
+// ---------------------------------------------------------------------------
+// Shells: grab (hold Shift near one), throw (release Shift), kick (walk into it)
+// ---------------------------------------------------------------------------
+
+// World-space direction Mario faces = screen-right axis * facing sign (works for any camera yaw)
+static void FaceVec(float& fx, float& fz)
+{
+    const float yaw = S.camYaw * 0.0174532925f;
+    fx = cosf(yaw) * g_faceDir;
+    fz = -sinf(yaw) * g_faceDir;
+}
+
+// Close enough to grab / bump? Uses a padded box so "near" counts, not only exact overlap
+static bool ShellNear(int id, const Body& b)
+{
+    const float padXZ = 0.35f, padY = 0.1f;
+    float mn[3], mx[3];
+    if (!G->GetBounds(id, mn, mx))
+    {
+        float p[3];
+        if (!G->GetPosition(id, p)) return false;
+        for (int i = 0; i < 3; i++) { mn[i] = p[i] - 0.4f; mx[i] = p[i] + 0.4f; }
+    }
+    for (int i = 0; i < 3; i++)
+    {
+        const float pad = (i == 1) ? padY : padXZ;
+        if (b.pos[i] - b.half[i] - pad > mx[i]) return false;
+        if (b.pos[i] + b.half[i] + pad < mn[i]) return false;
+    }
+    return true;
+}
+
+static void Shells_Update(const Body& b)
+{
+    float fx, fz;
+    FaceVec(fx, fz);
+    const bool shift = G->KeyDown(VK_SHIFT);
+
+    // ---- Holding a shell ----
+    if (S.heldShell)
+    {
+        char tag[32];
+        if (!G->GetTag(S.heldShell, tag, sizeof tag) || strcmp(tag, "HeldShell") != 0)
+        {
+            S.heldShell = 0;            // destroyed or changed by something else
+            return;
+        }
+        if (!shift)                     // Shift released: throw
+        {
+            Shell_Kick(S.heldShell, fx, fz);
+            S.shellSliding = true;
+            S.heldShell = 0;
+            return;
+        }
+        float mp[3];
+        if (G->GetPosition(S.player, mp))
+        {
+            mp[0] += fx * 0.8f;
+            mp[2] += fz * 0.8f;
+            G->SetPosition(S.heldShell, mp);
+        }
+        Sprite_Play(S.heldShell, "Shell", "Shell");
+        return;
+    }
+
+    // ---- Not holding: grab (Shift) or kick (no Shift) ----
+    int ids[32];
+    const int n = G->FindAllByTag("Shell", ids, 32);
+    for (int i = 0; i < n; i++)
+    {
+        if (!Shell_Ready(ids[i]) || !ShellNear(ids[i], b)) continue;
+
+        if (shift)
+        {
+            Shell_Hold(ids[i]);
+            S.heldShell = ids[i];
+            Score_Add(500);
+            return;
+        }
+
+        // Kick away from Mario along the dominant horizontal axis
+        float sp[3];
+        if (!G->GetPosition(ids[i], sp)) continue;
+        const float dx = sp[0] - b.pos[0], dz = sp[2] - b.pos[2];
+        float kx = fx, kz = fz;
+        if (fabsf(dx) > 0.05f || fabsf(dz) > 0.05f)
+        {
+            if (fabsf(dx) >= fabsf(dz)) { kx = dx >= 0.0f ? 1.0f : -1.0f; kz = 0.0f; }
+            else { kz = dz >= 0.0f ? 1.0f : -1.0f; kx = 0.0f; }
+        }
+        Shell_Kick(ids[i], kx, kz);
+        return;
+    }
 }
 
 void Player_Update(float dt)
@@ -118,7 +208,7 @@ void Player_Update(float dt)
     float iz = Cfg::SideScroller ? 0.0f : ((G->KeyDown('W') ? 1.0f : 0.0f) - (G->KeyDown('S') ? 1.0f : 0.0f));
     float yaw = S.camYaw * 0.0174532925f;
     float sy = sinf(yaw), cy = cosf(yaw);
-    float dx = sy * iz + cy * ix;                  // forward = (sin, cos), right = (cos, -sin)
+    float dx = sy * iz + cy * ix;
     float dz = cy * iz - sy * ix;
     float len = sqrtf(dx * dx + dz * dz);
     if (len > 1.0f) { dx /= len; dz /= len; }
@@ -128,7 +218,7 @@ void Player_Update(float dt)
     g_vel[0] = Approach(g_vel[0], dx * speed, accel);
     g_vel[2] = Approach(g_vel[2], dz * speed, accel);
 
-    // ---- Jump: buffered, with coyote time and variable height ----
+    // ---- Jump ----
     g_jumpBuf = G->KeyPressed(VK_SPACE) ? Cfg::JumpBuffer : g_jumpBuf - dt;
     g_coyote = g_grounded ? Cfg::CoyoteTime : g_coyote - dt;
     if (g_jumpBuf > 0.0f && g_coyote > 0.0f) { g_vel[1] = Cfg::Jump; g_jumpBuf = 0.0f; g_coyote = 0.0f; }
@@ -145,7 +235,7 @@ void Player_Update(float dt)
     MoveResult r = MoveBody(b, dt);
     memcpy(g_vel, b.vel, sizeof g_vel);
     g_grounded = r.hitFloor;
-    if (g_grounded) S.stompChain = 0;      // landing resets the stomp chain
+    if (g_grounded) S.stompChain = 0;
     if (r.hitCeiling) Blocks_Bump(r.ceilingId);
 
     // ---- What are we touching? ----
@@ -153,24 +243,11 @@ void Player_Update(float dt)
     int n = QueryBody(b, ids, 32);
     for (int i = 0; i < n; i++)
     {
-        int ptype = 0;   // declare at the top of the loop body
+        int ptype = 0;
         char tag[32];
         if (!G->GetTag(ids[i], tag, sizeof tag)) continue;
 
         if (strcmp(tag, "Coin") == 0) Coin_Collect(ids[i]);
-        else if (strcmp(tag, "Shell") == 0 && S.heldShell == 0 && G->KeyDown(VK_SHIFT))
-        {
-            S.heldShell = ids[i];
-            G->SetTag(ids[i], "HeldShell");
-            Score_Add(500);
-        }
-        else if (strcmp(tag, "HeldShell") == 0 && ids[i] == S.heldShell)
-        {
-            // keep shell attached to Mario
-            float mp[3]; G->GetPosition(S.player, mp);
-            mp[0] += 0.5f; mp[1] += 0.0f;
-            G->SetPosition(S.heldShell, mp);
-        }
         else if (strcmp(tag, "Goal") == 0 && !S.complete)
         {
             float mn[3], mx[3];
@@ -179,28 +256,25 @@ void Player_Update(float dt)
             else
                 Goal_Reached(ids[i], b.pos[1], b.pos[1] + 4.0f, b.pos[1]);
         }
-        else if (Pickup_TypeFromTag(tag, ptype)) { PowerUp_Remove(ids[i]); Collect(b, ptype); } 
+        else if (Pickup_TypeFromTag(tag, ptype)) { PowerUp_Remove(ids[i]); Collect(b, ptype); }
         else if (strcmp(tag, "Projectile") == 0) { if (Hurt(b)) return; }
-      
         else if (strcmp(tag, "Enemy") == 0)
         {
             float emn[3], emx[3];
             if (!G->GetBounds(ids[i], emn, emx)) continue;
 
-            if (S.starTime > 0.0f) { Enemy_Kill(ids[i]); continue; }                 // star: kills on contact
-            const bool stomp = preVy < 0.0f && feetBefore >= emx[1] - 0.25f;         // wider than before, so fast falls still count
+            if (S.starTime > 0.0f) { Enemy_Kill(ids[i]); continue; }
+            const bool stomp = preVy < 0.0f && feetBefore >= emx[1] - 0.25f;
             if (stomp) { Enemy_Kill(ids[i]); g_vel[1] = G->KeyDown(VK_SPACE) ? Cfg::StompBounceHeld : Cfg::StompBounce; }
             else if (Hurt(b)) return;
         }
     }
 
-    
-    
     if (S.portalCool > 0.0f) S.portalCool -= dt;
     else
     {
         Body e = b;
-        for (int i = 0; i < 3; i++) e.half[i] += 0.1f;       // a slightly bigger box, so standing on a pipe still counts
+        for (int i = 0; i < 3; i++) e.half[i] += 0.1f;
         int pid[16];
         const int pn = QueryBody(e, pid, 16);
         for (int i = 0; i < pn; i++)
@@ -209,19 +283,11 @@ void Player_Update(float dt)
             if (G->GetTag(pid[i], t, sizeof t) && strcmp(t, "PortalEntry") == 0 && TryPortal(b, pid[i])) break;
         }
     }
-    
 
     // ---- Falling off the world ----
     if (b.pos[1] < Cfg::FallLimit) { Game_Restart(true); return; }
 
     if (S.attackCool > 0.0f) S.attackCool -= dt;
-
-    if (S.heldShell && G->KeyReleased(VK_SHIFT))
-    {
-        G->SetTag(S.heldShell, "SlidingShell");
-        S.shellSliding = true;
-        S.heldShell = 0;
-    }
 
     if (G->KeyPressed(VK_LBUTTON) && S.attackCool <= 0.0f)
     {
@@ -230,13 +296,13 @@ void Player_Update(float dt)
         else if (PowerLevel() == 1) Sprite_Play(S.player, "Punch", "Idle");
         else if (PowerLevel() == 2) Fireball_Spawn();
     }
+
     if (S.onPole && S.poleId)
     {
-        // slide Mario down the pole
         float pp[3]; G->GetPosition(S.poleId, pp);
         float mp[3]; G->GetPosition(S.player, mp);
         mp[0] = pp[0];
-        mp[1] -= 2.0f * dt;   // slide speed
+        mp[1] -= 2.0f * dt;
         if (mp[1] <= S.poleBot + 0.5f)
         {
             mp[1] = S.poleBot + 0.5f;
@@ -244,13 +310,22 @@ void Player_Update(float dt)
         }
         G->SetPosition(S.player, mp);
         Sprite_Play(S.player, "Walk", "Idle");
-        return;   // skip normal movement while on pole
+        return;
     }
     StoreBody(b);
-    // ---- Sprite animation (does nothing if the Player is a plain cube) ----
+
+    // Shells run AFTER StoreBody so the held shell uses Mario's current position (no 1-frame lag)
+    Shells_Update(b);
+
+    // ---- Sprite animation ----
     {
         const float yaw2 = S.camYaw * 0.0174532925f;
-        Sprite_FaceScreen(S.player, g_vel[0] * cosf(yaw2) - g_vel[2] * sinf(yaw2));   // left / right as seen on screen
+        {
+            float screenVx = g_vel[0] * cosf(yaw2) - g_vel[2] * sinf(yaw2);
+            Sprite_FaceScreen(S.player, screenVx);
+            if (screenVx > 0.2f)  g_faceDir = 1.0f;
+            if (screenVx < -0.2f) g_faceDir = -1.0f;
+        }
 
         const float planar = sqrtf(g_vel[0] * g_vel[0] + g_vel[2] * g_vel[2]);
         const bool shift = G->KeyDown(VK_SHIFT);
@@ -259,9 +334,9 @@ void Player_Update(float dt)
         else if (!g_grounded)     Sprite_Play(S.player, g_vel[1] > 0.0f ? "Jump" : "Fall", "Jump");
         else if (planar > 0.4f) { if (shift) Sprite_Play(S.player, "Run", "Walk"); else Sprite_Play(S.player, "Walk", "Idle"); }
         else if (crouch)          Sprite_Play(S.player, "Crouch", "Idle");
-        else                      Sprite_Play(S.player, "Idle", nullptr);   
+        else                      Sprite_Play(S.player, "Idle", nullptr);
 
-        G->SpriteSetSpeed(S.player, (g_grounded && planar > 0.4f && G->KeyDown(VK_SHIFT)) ? 1.6f : 1.0f);   // running looks faster
+        G->SpriteSetSpeed(S.player, (g_grounded && planar > 0.4f && G->KeyDown(VK_SHIFT)) ? 1.6f : 1.0f);
         if (S.hurt > 0.0f) S.hurt -= dt;
     }
 

@@ -4157,6 +4157,6 @@ void GhostEngine_SetLinkId(int id, const char* t)
     GhostObject* o = FindObject(id);
     if (!o) return;
     std::string s = t ? t : "";
-    if (s.size() > 31) s.resize(31);
+    if (s.size() > 63) s.resize(63);
     o->link = s;
 }

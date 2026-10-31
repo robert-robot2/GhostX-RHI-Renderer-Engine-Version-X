@@ -8,8 +8,11 @@ bool IsSolid(int id)
     char tag[32];
     if (!G->GetTag(id, tag, sizeof tag)) return false;
     return !(strcmp(tag, "Player") == 0 || strcmp(tag, "Enemy") == 0 || strcmp(tag, "Coin") == 0 ||
-        strcmp(tag, "Goal") == 0 || strcmp(tag, "Mushroom") == 0 || strcmp(tag, "FireFlower") == 0 || strcmp(tag, "Star") == 0 || strcmp(tag, "OneUp") == 0 || strcmp(tag, "Defeated") == 0 ||
-        strcmp(tag, "Projectile") == 0 || strcmp(tag, "Broken") == 0);
+        strcmp(tag, "Goal") == 0 || strcmp(tag, "Mushroom") == 0 || strcmp(tag, "FireFlower") == 0 ||
+        strcmp(tag, "Star") == 0 || strcmp(tag, "OneUp") == 0 || strcmp(tag, "Defeated") == 0 ||
+        strcmp(tag, "Projectile") == 0 || strcmp(tag, "Broken") == 0 ||
+        strcmp(tag, "Shell") == 0 || strcmp(tag, "HeldShell") == 0 ||      // ADD THIS LINE
+        strcmp(tag, "SlidingShell") == 0);                                 
 }
 
 bool LoadBody(int id, Body& b)
