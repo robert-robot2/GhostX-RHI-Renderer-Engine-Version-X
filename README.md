@@ -112,19 +112,20 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [x] Phase 20.C: Main Menu, Game Over, HUD, Add/Polish
 - [x] Phase 20.D: Patch: Coin Display for Max Coins/ Portal Check
 - [x] Phase 20.E: GamePlay Finitus, Fireballs, Flying Enemies, Shell Drops
-- [x] Phase 12.F: Build The Rest of Level 1, Test Goal Proceed to 12.D test
+- [x] Phase 12.F: Build The Rest of Level 1, Test Goal Proceed to 12.D test  Instruction Set 1 Complete
+- [x] Phase 12.D: Test: Flag Pole, Goal / Scene Switching/ HUD Map/ Instruction Set 2
 - **Active Core**
-- [ ] Phase 12.D: Test: Flag Pole, Goal, Castle Flag, Masrio Dance, Level 2 Build And Test Play Packaged Exe / Instructions/ Scene Switching
-- [ ] Phase 20.F: GamePlay Finitus, Camera, Ambience, Map, Collision
+- [ ] Phase 20.F: GamePlay Finitus, Flag Pole Slide, Castle Flag Raise, Mario Dance, Camera, Ambience, Collision, Level 2 Build/ Instruction Set 2
+- [ ] Phase 20.G: Play Packaged Exe Instruction Set 2
 - [ ] Phase 24: Check All Editor Windows/ Move To window Palette/ Add DropDowns
-- **Active SubCore**
-- [ ] Phase : Install Shield Wizard/ Packaged Install for Download
-- [ ] Phase : Install Wizard Setup for Standalone Game
-- [ ] Phase : Program Launcher
 - [ ] Phase : Gamepad
 - [ ] Phase : Audio
 - [ ] Phase : Vertical Sync, Rendering Polish
 - [ ] Phase : Antialiasing MSAA/SMAA/FXAA/TAA
+- **Active SubCore**
+- [ ] Phase : Install Shield Wizard/ Packaged Install for Download
+- [ ] Phase : Install Wizard Setup for Standalone Game
+- [ ] Phase : Program Launcher
 - [ ] Phase : Co-op Multiplayer
 - [ ] Phase : Online Multiplayer
 - [ ] Phase 13.D: A CAD-style set of annotation tools on top of the blueprint grid.
@@ -497,14 +498,14 @@ To package an existing Release build:
 
 ### Level 2 and Gameplay
 - [ ] Build Level 2.
-- [ ] Test Touch Goal Of Level 1.
-- [ ] Level 2 loads after touching the Level 1 Goal.
-- [ ] Level 2 uses its own camera and layout.
+- [x] Test Touch Goal Of Level 1.
+- [x] Level 2 loads after touching the Level 1 Goal.
+- [x] Level 2 uses its own camera and layout.
 - [ ] Win screen appears after completing Level 2.
 - [ ] Play Again loads Level 1.
-- [ ] Quit stops gameplay.
-- [ ] Stopping Play mode restores the editor state.
-- [ ] Standalone Play works as expected.
+- [x] Quit stops gameplay.
+- [x] Stopping Play mode restores the editor state.
+- [x] Standalone Play works as expected.
 
 ### Packaging
 
