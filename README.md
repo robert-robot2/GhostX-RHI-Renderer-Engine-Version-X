@@ -118,14 +118,14 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [x] Phase 20.H: Flag Pole Slide, Castle Flag Raise
 - [x] Phase 20.I: Start Screen Updated for level change, Carry over Updated for level change, HUD update Fire Mario
 - [x] Phase 20.J: Mod Upgrade: Sky Sphere parameters to Automato Adjust ambience over selected time period.
+- [x] Phase 20.K: Full HUD Rework, 2 Player, Options, Options Menu, Character Select Luigi
 - **Active Core**
-- [ ] Phase 20.K: Full HUD Rework, 2 Player, Options, Options Menu, Character Select Luigi
-- [ ] Phase 20.F: Collision, Level 2 Build, // Instruction Set 2 Complete 
+- [ ] Phase 28: Animations: Mario/Luigi Flag Slide Down, Death, Transform, Swimming
+- [ ] Phase 20.F: Collision, Boss, Polish, Level 2 Build // Instruction Set 2 Complete 
 - [ ] Phase 20.G: Play Packaged Exe //Instruction Set 3
 - [ ] Phase 24: Check All Editor Windows/ Move To window Palette/ Add DropDowns
-- [ ] Phase 26:  Mario Dance
+- [ ] Phase 26: Mario Dance
 - [ ] Phase 27: Editor Upgrade to Quat Camera
-- [ ] Phase : Character Select Screen Luigi
 - [ ] Phase : Gamepad
 - [ ] Phase : Audio
 - [ ] Phase : Vertical Sync, Rendering Polish
