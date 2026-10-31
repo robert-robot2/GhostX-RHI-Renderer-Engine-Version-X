@@ -496,6 +496,7 @@ To package an existing Release build:
 - [x] New Window Play Mode Test.
 
 ### Level 2 and Gameplay
+- [ ] Build Level 2.
 - [ ] Test Touch Goal Of Level 1.
 - [ ] Level 2 loads after touching the Level 1 Goal.
 - [ ] Level 2 uses its own camera and layout.
