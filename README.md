@@ -24,7 +24,7 @@
 ![Visual Studio](https://img.shields.io/badge/IDE-Visual%20Studio-5C2D91?style=flat-square&logo=visualstudio&logoColor=white)
 ![Blender](https://img.shields.io/badge/3D-Blender-F5792A?style=flat-square&logo=blender&logoColor=white)
 ![GIMP](https://img.shields.io/badge/Graphics-GIMP-5C5543?style=flat-square&logo=gimp&logoColor=white)
-<img width="1920" height="1080" alt="Screenshot 2026-10-29 144951" src="https://github.com/user-attachments/assets/a063112b-2c6c-4a26-b1d0-93294b16c2a4" />
+<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/0ed528da-d17d-4a36-ab97-a7039ff2ed35" />
 <img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/d82702dc-8854-4c9e-9ba8-7e37aa25a6dc" />
 <img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/4baca29d-6da9-4062-9977-8452f064a448" />
 
