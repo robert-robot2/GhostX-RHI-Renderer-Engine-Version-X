@@ -112,9 +112,10 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [x] Phase 20.C: Main Menu, Game Over, HUD, Add/Polish
 - [x] Phase 20.D: Patch: Coin Display for Max Coins/ Portal Check
 - [x] Phase 20.E: GamePlay Finitus, Fireballs, Flying Enemies, Shell Drops
+- [x] Phase 12.F: Build The Rest of Level 1, Test Goal Proceed to 12.D test
 - **Active Core**
-- [ ] Phase 12.F: Flag Pole, Goal, Build The Rest of Level 1, Test Goal Proceed to 12.D test
-- [ ] Phase 12.D: Test: Level 2 Build And Test Play Packaged Exe / Instructions/ Scene Switching
+
+- [ ] Phase 12.D: Test: Flag Pole, Goal, Castle Flag, Masrio Dance, Level 2 Build And Test Play Packaged Exe / Instructions/ Scene Switching
 - [ ] Phase 20.F: GamePlay Finitus, Camera, Ambience, Map, Collision
 - [ ] Phase 24: Check All Editor Windows/ Move To window Palette/ Add DropDowns
 - **Active SubCore**
@@ -484,8 +485,7 @@ To package an existing Release build:
 ### Level 1
 
 - [x] Project created from the Blank template.
-- [ ] All required objects added.
-- [ ] Test Touch Goal.
+- [x] All required objects added.
 - [x] Object Roles and colliders configured.
 - [x] Orbit Camera assigned as the Game Start Camera.
 - [x] Scene saved as `Scenes/Level1.ghostscene`.
@@ -497,7 +497,7 @@ To package an existing Release build:
 - [x] New Window Play Mode Test.
 
 ### Level 2 and Gameplay
-
+- [ ] Test Touch Goal Of Level 1.
 - [ ] Level 2 loads after touching the Level 1 Goal.
 - [ ] Level 2 uses its own camera and layout.
 - [ ] Win screen appears after completing Level 2.
