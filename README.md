@@ -114,7 +114,6 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [x] Phase 20.E: GamePlay Finitus, Fireballs, Flying Enemies, Shell Drops
 - [x] Phase 12.F: Build The Rest of Level 1, Test Goal Proceed to 12.D test
 - **Active Core**
-
 - [ ] Phase 12.D: Test: Flag Pole, Goal, Castle Flag, Masrio Dance, Level 2 Build And Test Play Packaged Exe / Instructions/ Scene Switching
 - [ ] Phase 20.F: GamePlay Finitus, Camera, Ambience, Map, Collision
 - [ ] Phase 24: Check All Editor Windows/ Move To window Palette/ Add DropDowns
