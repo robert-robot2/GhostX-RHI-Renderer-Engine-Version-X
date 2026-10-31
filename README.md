@@ -114,7 +114,7 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [x] Phase 20.D: Patch: Coin Display for Max Coins/ Portal Check
 - [x] Phase 20.E: GamePlay Finitus, Fireballs, Flying Enemies, Shell Drops
 - [x] Phase 12.F: Build The Rest of Level 1, Test Goal Proceed to 12.D test  Instruction Set 1 Complete
-- [x] Phase 12.D: Test: Flag Pole, Goal / Scene Switching/ HUD Map/ Instruction Set 2
+- [x] Phase 12.D: Test: Flag Pole Mesh, Goal / Scene Switching/ HUD Map/ Instruction Set 2
 - [x] Phase 25: Editor Upgrade: Camera Speed Parameter
 - [x] Phase 20.H: Flag Pole Slide, Castle Flag Raise 
 - **Active Core**
@@ -122,7 +122,7 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [ ] Phase 20.G: Play Packaged Exe Instruction Set 3
 - [ ] Phase 24: Check All Editor Windows/ Move To window Palette/ Add DropDowns
 - [ ] Phase 26:  Mario Dance
-- [ ] Phase 27: Editor Upgrade to Quads Camera
+- [ ] Phase 27: Editor Upgrade to Quat Camera
 - [ ] Phase : Character Select Screen Luigi
 - [ ] Phase : Gamepad
 - [ ] Phase : Audio
