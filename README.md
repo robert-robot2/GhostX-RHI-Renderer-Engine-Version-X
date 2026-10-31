@@ -57,6 +57,7 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - **Not all Assets Working With Previous Updates Minor Changes Required to Adhere to New Rules**
 - **Not All Assets Appearing in Content Folder if Used With a Previous Version- Assets Still Load Textures/ To Be tested in Package**
 - **When Moving textures outside of engine Resets Textures// No click drop drag to folder in content viewer yet**
+- **Some roles aren't reseting settings when duplicated// this could be a Link/Custom ID tags issue**
 ## General Possible Encountered Errors:
 - **Sprite Sheet Editor Display Frames of SLightly in Editor But not in game? The AI warned me this would happen....**
 ## Capacity
