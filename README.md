@@ -122,6 +122,7 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [ ] Phase : Audio
 - [ ] Phase : Vertical Sync, Rendering Polish
 - [ ] Phase : Antialiasing MSAA/SMAA/FXAA/TAA
+- [ ] Phase : Base Package to Download on site without installer.
 - **Active SubCore**
 - [ ] Phase : Install Shield Wizard/ Packaged Install for Download
 - [ ] Phase : Install Wizard Setup for Standalone Game
