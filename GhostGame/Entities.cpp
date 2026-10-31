@@ -39,6 +39,9 @@ static const float kShellSpeed = 10.0f;
 // The anim set a shell-dropping enemy goes back to on restart. Set this to your turtle's .ghostanim.
 static const char* kEnemyAnimDefault = "Content/Animations/Turtle.ghostanim";
 
+struct CastleFlag { int id; float y0; bool shown; };
+static std::vector<CastleFlag> g_castleFlags;
+
 static ShellState& ShellOf(int id)
 {
     for (ShellState& s : g_shells) if (s.id == id) return s;
@@ -144,7 +147,7 @@ static void RebuildMovers()
 void Level_Init()
 {
     g_saved.clear(); g_coins.clear(); g_enemyIds.clear(); g_blocks.clear(); g_enemies.clear(); g_pickups.clear(); g_blockMem.clear(); g_hidden.clear();
-    g_breaking.clear(); g_moverIds.clear(); g_projIds.clear(); g_movers.clear(); g_debris.clear();    g_shells.clear(); g_shellSwapped.clear();
+    g_breaking.clear(); g_moverIds.clear(); g_projIds.clear(); g_movers.clear(); g_debris.clear();    g_shells.clear(); g_shellSwapped.clear(); g_castleFlags.clear();
     Snapshot("Player", nullptr);
     Snapshot("Coin", &g_coins);
     Snapshot("Enemy", &g_enemyIds);
@@ -154,6 +157,14 @@ void Level_Init()
     Snapshot("Mover", &g_moverIds);
     Snapshot("Projectile", &g_projIds);
     Snapshot("HiddenBlock", &g_hidden);
+    std::vector<int> cf;
+    Snapshot("CastleFlag", &cf);
+    for (int id : cf)
+    {
+        float p[3]; G->GetPosition(id, p);
+        g_castleFlags.push_back({ id, p[1], false });
+        G->SetVisible(id, 0);
+    }
     Snapshot("Flag", nullptr);
     for (int id : g_hidden) G->SetVisible(id, 0);          // hidden blocks are invisible while playing
 
@@ -197,6 +208,7 @@ void Level_Reset()
         G->SetVisible(s.id, s.visible);
         G->SpriteSetClip(s.id, "");
     }
+    for (CastleFlag& f : g_castleFlags) { G->SetVisible(f.id, 0); f.shown = false; }
     for (int id : g_hidden) G->SetVisible(id, 0);
     RebuildEnemies();
     RebuildMovers();
@@ -584,10 +596,32 @@ void Fireball_Spawn()
     f.vel[2] = g_faceDir * 8.0f;   // Z axis, direction Mario faces
     g_fireballs.push_back(f);
 }
-
+static void CastleFlag_Update(float dt)
+{
+    if (!S.complete) return;
+    for (CastleFlag& f : g_castleFlags)
+    {
+        float p[3];
+        if (!G->GetPosition(f.id, p)) continue;
+        if (!f.shown)                                  // first frame: appear one block down
+        {
+            p[1] = f.y0 - Cfg::CastleFlagRise;
+            G->SetPosition(f.id, p);
+            G->SetVisible(f.id, 1);
+            f.shown = true;
+        }
+        else if (p[1] < f.y0)                          // then glide up to where you placed it
+        {
+            p[1] += Cfg::CastleFlagSpeed * dt;
+            if (p[1] > f.y0) p[1] = f.y0;
+            G->SetPosition(f.id, p);
+        }
+    }
+}
 
 void Entities_Update(float dt)
 {
+    CastleFlag_Update(dt);
     // ---- Spinning coins and power-ups ----
     g_spin += 180.0f * dt;
     if (g_spin > 360.0f) g_spin -= 360.0f;

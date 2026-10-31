@@ -36,6 +36,8 @@ namespace Cfg
     constexpr float TimeStart = 300.0f;   // matches your HUD's "Timer 300"
     constexpr float TimeTick = 1.0f;     // real seconds per timer unit (SMB1 = 0.4)
     constexpr float PoleSlide = 4.0f;   // units per second Mario slides down the pole
+    constexpr float CastleFlagRise = 1.0f;    // starts this far below its placed spot (one block)
+    constexpr float CastleFlagSpeed = 0.5f;   // units per second it rises
 }
 
 enum { MODE_MENU = 0, MODE_PLAY, MODE_OVER };
