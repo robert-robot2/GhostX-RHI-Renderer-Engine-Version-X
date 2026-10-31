@@ -41,6 +41,7 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - **When importing FBX meshes please set Largest Side fit to 2 for default normal scaled import.**
 - **If You want to Open the Entire Engine For editing Through the Game Engine You must download And Build it in Visual Studio**
 - **Works in Play Mode/Standalone Window For One Level Game**(Test Phase Assimilated 12.C.)
+- **To snap to grid u have to set Value and translate in dropdown for specified snap.**
 ## Perks:
 - **Your Project or Engine will not crash if you move files UNLIKE UNREAL ENGINE.**
 - **But you do Have to Reupload Your Assets Temporarily For now Hence Engine is Not aware oF FIle path Change Yet**
