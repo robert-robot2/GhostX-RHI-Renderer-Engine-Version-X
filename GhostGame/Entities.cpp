@@ -1,6 +1,6 @@
 #include "Game.h"
 #include <vector>
-
+#include <algorithm>
 //Entities.cpp
 
 struct Saved { int id; float pos[3], scale[3], color[3]; char tag[32]; int visible; };
@@ -28,6 +28,9 @@ struct Fireball { int id; float vel[3]; float life; bool facingRight; };
 static std::vector<Fireball> g_fireballs;
 struct Debris { int id; float vel[3]; float life; };
 static std::vector<Debris> g_debris;
+static void Boss_Init();
+static void Boss_Reset();
+
 
 static float g_skyBase = 12.0f, g_skyCur = 12.0f;   // the level's own hour, and the hour we are showing
 extern float g_faceDir;
@@ -180,6 +183,7 @@ void Level_Init()
     RebuildEnemies();
     RebuildMovers();
     g_skyBase = g_skyCur = G->SkyGetTime();         // remember the authored time of day
+    Boss_Init();
 }
 
 void Level_Reset()
@@ -214,6 +218,7 @@ void Level_Reset()
     RebuildMovers();
     g_skyCur = g_skyBase;                           // respawn: back to the level's own sky
     G->SkySetTime(g_skyBase);
+    Boss_Reset();
 }
 
 void Coin_Collect(int id)
@@ -619,9 +624,190 @@ static void CastleFlag_Update(float dt)
     }
 }
 
+// ============================================================
+//  Boss: patrols A -> B -> C... (BossPoint markers sorted by Link ID), hops,
+//  axe trigger, bridge collapses one tile at a time, boss falls, level ends
+// ============================================================
+struct BossPt { float p[3]; char key[64]; };
+static int   g_bossId = 0, g_bossTarget = 1, g_bossDir = 1;
+static int   g_bossPhase = 0;                    // 0 fighting, 1 bridge falling, 2 boss falling, 3 done
+static bool  g_bossWalking = true, g_bossGrounded = false;
+static float g_bossWait = 0.0f, g_bossHop = 0.0f, g_bossVy = 0.0f, g_bossEnd = 0.0f;
+static float g_bridgeTimer = 0.0f, g_bridgeLowY = 0.0f;
+static size_t g_bridgeNext = 0;
+static std::vector<BossPt> g_bossPath;
+static std::vector<int>    g_bridge, g_bridgeOrder;
+
+static void Boss_Reset()
+{
+    g_bossPhase = 0; g_bossTarget = 1; g_bossDir = 1;
+    g_bossWalking = true; g_bossGrounded = false;
+    g_bossWait = 0.0f; g_bossVy = 0.0f; g_bossEnd = 0.0f;
+    g_bossHop = Cfg::BossHopInterval;
+    g_bridgeTimer = 0.0f; g_bridgeNext = 0;
+    g_bridgeOrder.clear();
+}
+
+static void Boss_Init()
+{
+    g_bossPath.clear(); g_bridge.clear();
+    Snapshot("Boss", nullptr);                       // so a restart puts everything back
+    Snapshot("BossAxe", nullptr);
+    Snapshot("BridgeTile", &g_bridge);
+    g_bossId = G->FindByTag("Boss");
+
+    g_bridgeLowY = 1e9f;
+    for (int id : g_bridge)
+    {
+        float p[3];
+        if (G->GetPosition(id, p) && p[1] < g_bridgeLowY) g_bridgeLowY = p[1];
+    }
+    if (g_bridge.empty()) g_bridgeLowY = -1e9f;      // no tiles: the 5 second timeout ends the level
+
+    if (g_bossId)
+    {
+        BossPt start = {};                           // point A = where the boss stands
+        Body b;
+        if (LoadBody(g_bossId, b)) memcpy(start.p, b.pos, sizeof start.p);
+        else G->GetPosition(g_bossId, start.p);
+        g_bossPath.push_back(start);
+
+        int ids[32];
+        const int n = G->FindAllByTag("BossPoint", ids, 32);
+        std::vector<BossPt> pts;
+        for (int i = 0; i < n; i++)
+        {
+            BossPt q = {};
+            G->GetPosition(ids[i], q.p);
+            GhostObjectProps pr = {};
+            if (G->GetObjectProps(ids[i], &pr)) strncpy_s(q.key, pr.link, _TRUNCATE);
+            pts.push_back(q);
+        }
+        std::sort(pts.begin(), pts.end(), [](const BossPt& a, const BossPt& c) { return strcmp(a.key, c.key) < 0; });
+        for (const BossPt& q : pts) g_bossPath.push_back(q);
+    }
+    Boss_Reset();
+}
+
+// Mario touched the axe: freeze him, order the tiles nearest-the-axe first, start the collapse
+void Boss_AxeHit(int axeId)
+{
+    if (!g_bossId || g_bossPhase != 0 || S.complete || S.onPole) return;
+    float ap[3];
+    if (!G->GetPosition(axeId, ap)) return;
+
+    std::vector<std::pair<float, int>> order;
+    for (int id : g_bridge)
+    {
+        float p[3];
+        if (!G->GetVisible(id) || !G->GetPosition(id, p)) continue;
+        const float dx = p[0] - ap[0], dy = p[1] - ap[1], dz = p[2] - ap[2];
+        order.push_back({ dx * dx + dy * dy + dz * dz, id });
+    }
+    std::sort(order.begin(), order.end());
+    g_bridgeOrder.clear();
+    for (const auto& o : order) g_bridgeOrder.push_back(o.second);
+
+    G->SetVisible(axeId, 0);
+    g_bossPhase = 1; g_bridgeNext = 0; g_bridgeTimer = 0.5f;
+    S.bossCut = true;
+}
+
+static void Boss_Update(float dt)
+{
+    if (!g_bossId || g_bossPhase >= 3) return;
+    Body b;
+    if (!LoadBody(g_bossId, b)) return;
+    GhostObjectProps pr = {};
+    G->GetObjectProps(g_bossId, &pr);
+
+    g_bossVy -= Cfg::Gravity * dt;
+    if (g_bossVy < -Cfg::MaxFall) g_bossVy = -Cfg::MaxFall;
+
+    const int n = (int)g_bossPath.size();
+    auto advance = [&]()                              // pick the next point
+        {
+            g_bossWait = pr.movePause;
+            if (pr.pathMode == 0) { if (g_bossTarget + g_bossDir < 0 || g_bossTarget + g_bossDir >= n) g_bossDir = -g_bossDir; g_bossTarget += g_bossDir; }
+            else if (pr.pathMode == 1) g_bossTarget = (g_bossTarget + 1) % n;
+            else if (g_bossTarget + 1 < n) g_bossTarget++;
+            else g_bossWalking = false;
+        };
+
+    float vx = 0.0f, vz = 0.0f;
+    const bool fighting = (g_bossPhase == 0);
+    if (fighting)
+    {
+        if (g_bossGrounded) g_bossHop -= dt;
+        if (g_bossGrounded && g_bossHop <= 0.0f && pr.pathOffset[1] > 0.01f)   // Move Offset Y = hop height
+        {
+            g_bossVy = sqrtf(2.0f * Cfg::Gravity * pr.pathOffset[1]);
+            g_bossHop = Cfg::BossHopInterval;
+        }
+        if (g_bossWalking && n > 1)
+        {
+            if (g_bossWait > 0.0f) g_bossWait -= dt;
+            else
+            {
+                const float* to = g_bossPath[g_bossTarget].p;
+                const float dx = to[0] - b.pos[0], dz = to[2] - b.pos[2];
+                const float dist = sqrtf(dx * dx + dz * dz);
+                const float sp = pr.moveSpeed > 0.01f ? pr.moveSpeed : 2.0f;
+                const bool arrived = dist <= sp * dt;
+                if (dist > 0.0001f) { const float s = arrived ? dist / dt : sp; vx = dx / dist * s; vz = dz / dist * s; }
+                if (arrived) advance();
+            }
+        }
+    }
+
+    b.vel[0] = vx; b.vel[1] = g_bossVy; b.vel[2] = vz;
+    MoveResult r = MoveBody(b, dt);
+    g_bossVy = b.vel[1];
+    g_bossGrounded = r.hitFloor;
+    if (fighting && g_bossWalking && n > 1 && (r.hitX || r.hitZ)) advance();   // blocked: turn to the next point
+    StoreBody(b);
+
+    const float yaw = S.camYaw * 0.0174532925f;
+    Sprite_FaceScreen(g_bossId, vx * cosf(yaw) - vz * sinf(yaw));
+    if (g_bossPhase >= 1 && !g_bossGrounded) Sprite_Play(g_bossId, "Die", "Hurt");
+    else Sprite_Play(g_bossId, (vx != 0.0f || vz != 0.0f) ? "Walk" : "Idle", "Idle");
+
+    if (g_bossPhase == 1)                             // bridge falls one tile at a time
+    {
+        g_bridgeTimer -= dt;
+        if (g_bridgeTimer <= 0.0f)
+        {
+            if (g_bridgeNext < g_bridgeOrder.size())
+            {
+                const int id = g_bridgeOrder[g_bridgeNext++];
+                SpawnDebris(id);
+                G->SetTag(id, "Broken");
+                G->SetVisible(id, 0);
+                g_bridgeTimer = Cfg::BridgeTileDelay;
+            }
+            else { g_bossPhase = 2; g_bossEnd = 0.0f; }
+        }
+    }
+    else if (g_bossPhase == 2)                        // wait for the boss to drop, then end the level
+    {
+        g_bossEnd += dt;
+        if (b.pos[1] < g_bridgeLowY - 8.0f || b.pos[1] < Cfg::FallLimit || g_bossEnd > 5.0f)
+        {
+            G->SetVisible(g_bossId, 0);
+            g_bossPhase = 3;
+            S.bossCut = false;
+            S.timeBonus = (int)S.timeLeft * 50;
+            Score_Add(S.timeBonus + 5000);
+            S.complete = true;
+        }
+    }
+}
+
+
 void Entities_Update(float dt)
 {
     CastleFlag_Update(dt);
+    Boss_Update(dt);
     // ---- Spinning coins and power-ups ----
     g_spin += 180.0f * dt;
     if (g_spin > 360.0f) g_spin -= 360.0f;

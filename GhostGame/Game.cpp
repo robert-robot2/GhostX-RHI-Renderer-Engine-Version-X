@@ -92,7 +92,7 @@ void Game_Restart(bool died)
     S.coins = 0; S.enemiesDown = 0;
     S.big = false; S.fire = false; S.starTime = 0.0f; S.attackCool = 0.0f; S.heldShell = 0; S.shellSliding = false; S.advance = 0.0f; S.invuln = 0.0f; S.hurt = 0.0f; S.complete = false;
     S.big = false; S.advance = 0.0f; S.invuln = 0.0f; S.hurt = 0.0f; S.complete = false;
-    S.onPole = false; S.poleSlide = 0.0f; S.poleId = 0;
+    S.onPole = false; S.bossCut = false; S.poleSlide = 0.0f; S.poleId = 0;
     S.portalCool = 0.0f;
     S.timeLeft = Cfg::TimeStart; S.stompChain = S.starChain = 0; S.timeBonus = 0;
     Level_Reset();
@@ -246,7 +246,7 @@ GHOST_GAME_EXPORT int GhostGame_Init(const GhostGameAPI* api)
 
 static void Timer_Update(float dt)
 {
-    if (S.complete || S.onPole || !S.player || S.error) return;
+    if (S.complete || S.onPole || S.bossCut || !S.player || S.error) return;
     S.timeLeft -= dt / Cfg::TimeTick;
     if (S.timeLeft <= 0.0f) { S.timeLeft = 0.0f; Game_Restart(true); }   // time up = lose a life
 }

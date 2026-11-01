@@ -262,6 +262,8 @@ void Player_Update(float dt)
         }
         else if (Pickup_TypeFromTag(tag, ptype)) { PowerUp_Remove(ids[i]); Collect(b, ptype); }
         else if (strcmp(tag, "Projectile") == 0) { if (Hurt(b)) return; }
+        else if (strcmp(tag, "Boss") == 0) { if (Hurt(b)) return; }          // the boss hurts on touch, stomping does nothing
+        else if (strcmp(tag, "BossAxe") == 0) Boss_AxeHit(ids[i]);
         else if (strcmp(tag, "Enemy") == 0)
         {
             float emn[3], emx[3];
@@ -336,6 +338,12 @@ void Player_Update(float dt)
             if (fp[1] > stop) { fp[1] -= Cfg::PoleSlide * 1.5f * dt; if (fp[1] < stop) fp[1] = stop; G->SetPosition(flag, fp); }
         }
         StoreBody(b);
+        return;
+    }
+    if (S.bossCut)                                    // frozen while the bridge falls
+    {
+        memset(g_vel, 0, sizeof g_vel);
+        Sprite_Play(S.player, "Idle", nullptr);
         return;
     }
     StoreBody(b);

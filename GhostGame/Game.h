@@ -38,6 +38,8 @@ namespace Cfg
     constexpr float PoleSlide = 4.0f;   // units per second Mario slides down the pole
     constexpr float CastleFlagRise = 1.0f;    // starts this far below its placed spot (one block)
     constexpr float CastleFlagSpeed = 0.5f;   // units per second it rises
+    constexpr float BridgeTileDelay = 0.15f;   // seconds between bridge tiles falling
+    constexpr float BossHopInterval = 1.4f;    // seconds between boss hops
 }
 
 enum { MODE_MENU = 0, MODE_PLAY, MODE_OVER, MODE_SELECT, MODE_OPTIONS };
@@ -70,7 +72,8 @@ struct GameState
     int mode = MODE_MENU;
     int  character = 0;                // 0 Mario, 1 Luigi
     bool twoPlayer = false;            // alternates Mario / Luigi per level
-    bool  onPole = false;
+    bool  onPole = false;  
+    bool  bossCut = false;             // axe hit: Mario frozen, timer stopped
     float poleSlide = 0.0f;   // how far Mario has slid down
     int   poleId = 0;
     float poleTop = 0.0f, poleBot = 0.0f;
@@ -120,7 +123,7 @@ void Sky_Update(float dt);
 void Score_Add(int pts);
 void Score_Enemy(bool star);
 void Goal_Reached(int poleId, float hitY, float poleTop, float poleBot);
-
+void Boss_AxeHit(int axeId);
 // ---- Game.cpp ----
 void Game_Restart(bool died);
 // Sprite helpers: they do nothing (and return 0) if the object is a plain cube

@@ -7,6 +7,7 @@ bool IsSolid(int id)
 {
     char tag[32];
     if (!G->GetTag(id, tag, sizeof tag)) return false;
+    if (strcmp(tag, "Boss") == 0 || strcmp(tag, "BossAxe") == 0 || strcmp(tag, "BossPoint") == 0) return false;
     return !(strcmp(tag, "Player") == 0 || strcmp(tag, "Enemy") == 0 || strcmp(tag, "Coin") == 0 ||
         strcmp(tag, "Goal") == 0 || strcmp(tag, "Mushroom") == 0 || strcmp(tag, "FireFlower") == 0 ||
         strcmp(tag, "Star") == 0 || strcmp(tag, "OneUp") == 0 || strcmp(tag, "Defeated") == 0 ||
