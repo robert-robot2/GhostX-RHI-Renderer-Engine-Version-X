@@ -64,7 +64,6 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 ## General Possible Encountered Errors:
 - **Sprite Sheet Editor Display Frames of SLightly in Editor But not in game? The AI warned me this would happen....**
 ## Capacity
-- **To Be filled**
 - **One million vertices Per Mesh Limit**
 - **2048 Max Scene Objects**
 ## Requirements
@@ -240,6 +239,7 @@ F / G	F toggles face-pick mode, G toggles the grid
 ## How To FAQ
 
 - Coming Soon
+- **To Be filled**
 
 
 ## Credits
