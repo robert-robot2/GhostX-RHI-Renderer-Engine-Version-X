@@ -130,6 +130,7 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [ ] Phase 24: Check All Editor Windows/ Move To window Palette/ Add DropDowns
 - [ ] Phase 26: Mario Dance
 - [ ] Phase 27: Editor Upgrade to Quat Camera
+- [ ] Phase 29: Thicc Editor Upgrade: Controls
 - [ ] Phase : Gamepad
 - [ ] Phase : Audio
 - [ ] Phase : Vertical Sync, Rendering Polish
