@@ -130,7 +130,15 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [ ] Phase 24: Check All Editor Windows/ Move To window Palette/ Add DropDowns
 - [ ] Phase 26: Mario Dance
 - [ ] Phase 27: Editor Upgrade to Quat Camera
-- [ ] Phase 29: Thicc Editor Upgrade: Controls
+- [ ] Phase 29.A: Thicc Editor Upgrade: Controls: Red collider box	Shows automatically on the selected object
+Camera zoom levels	Wheel dollies in and out (Shift for 4x). Right mouse + wheel changes fly speed. On an orbit camera the wheel changes distance.
+Camera jump to object	Z, or double-click an object in the Hierarchy
+Undo / Redo	Ctrl+Z, Ctrl+Y or Ctrl+Shift+Z, and the new Edit menu
+Copy / Paste	Ctrl+C, Ctrl+V, and the Edit menu
+Rename	F2, or right-click
+Right-click menu	Right-click in the Hierarchy, or tap right-click in the viewport
+F / G	F toggles face-pick mode, G toggles the grid
+- [ ] Phase 29.B: Thicc Editor Upgrade Part Duece: .................
 - [ ] Phase : Gamepad
 - [ ] Phase : Audio
 - [ ] Phase : Vertical Sync, Rendering Polish
@@ -144,7 +152,6 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [ ] Phase : Online Multiplayer
 - [ ] Phase 13.D: A CAD-style set of annotation tools on top of the blueprint grid.
 - [ ] Phase 18: Player Controls Editor
-- [ ] Phase : Controls, Right Clicker, User Friendly, copy paste
 - **Testing/Game**
 - [ ] Phase : .................
 - **DEBUG/ERRORS**
