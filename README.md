@@ -145,6 +145,7 @@ F / G	F toggles face-pick mode, G toggles the grid
 - [ ] Phase 24: Check All Editor Windows/ Move To window Palette/ Add DropDowns
 - [ ] Phase 26: Mario Dance
 - [ ] Phase 27: Editor Upgrade to Quat Camera
+- [ ] Phase 30: Upgrade Roles to Show only their Behaviours not all Behaviours.
 - [ ] Phase 29.B: Thicc Editor Upgrade Part Duece: Camera Check, Click Drag, Shift Multi Select , F for Faces
 - [ ] Phase : Vertical Sync, Rendering Polish
 - **Active SubCore**
