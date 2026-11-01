@@ -140,6 +140,7 @@ F / G	F toggles face-pick mode, G toggles the grid
 - [ ] Phase : Install Shield Wizard/ Packaged Install for Download
 - [ ] Phase : Install Wizard Setup for Standalone Game
 - [ ] Phase : Program Launcher
+- [ ] Phase : Download Patcher
 - [ ] Phase : Gamepad
 - [ ] Phase 28: Animations: Mario/Luigi Flag Slide Down, Death, Transform, Swimming
 - [ ] Phase 24: Check All Editor Windows/ Move To window Palette/ Add DropDowns
