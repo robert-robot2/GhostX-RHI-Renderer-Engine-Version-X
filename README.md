@@ -135,6 +135,7 @@ F / G	F toggles face-pick mode, G toggles the grid
 - [ ] Phase 20.F: Collision, Boss, Polish, Level 2 Build // Instruction Set 2 Complete
 - [ ] Phase : Audio
 - [ ] Phase : Antialiasing MSAA/SMAA/FXAA/TAA
+- [ ] Phase : Gamepad
 - [ ] Phase 20.G: Play Packaged Exe //Instruction Set 3
 - [ ] Phase : Base Demo Gameplay Package to Download on site without installer
 - [ ] Phase : Base Engine For Use Without Package Installer for Download
@@ -142,7 +143,6 @@ F / G	F toggles face-pick mode, G toggles the grid
 - [ ] Phase : Install Wizard Setup for Standalone Game
 - [ ] Phase : Program Launcher
 - [ ] Phase : Download Patcher
-- [ ] Phase : Gamepad
 - [ ] Phase 28: Animations: Mario/Luigi Flag Slide Down, Death, Transform, Swimming
 - [ ] Phase 24: Check All Editor Windows/ Move To window Palette/ Add DropDowns
 - [ ] Phase 26: Mario Dance
