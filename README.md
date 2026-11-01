@@ -122,14 +122,7 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [x] Phase 20.J: Mod Upgrade: Sky Sphere parameters to Automato Adjust ambience over selected time period.
 - [x] Phase 20.K: Full HUD Rework, 2 Player, Options, Options Menu, Character Select Luigi
 - [x] Phase 28: Editor Upgrade: New Function, Duplicate in Array, Ctrl+F
-- **Active Core**
-- [ ] Phase 28: Animations: Mario/Luigi Flag Slide Down, Death, Transform, Swimming
-- [ ] Phase 20.F: Collision, Boss, Polish, Level 2 Build // Instruction Set 2 Complete 
-- [ ] Phase 20.G: Play Packaged Exe //Instruction Set 3
-- [ ] Phase 24: Check All Editor Windows/ Move To window Palette/ Add DropDowns
-- [ ] Phase 26: Mario Dance
-- [ ] Phase 27: Editor Upgrade to Quat Camera
-- [ ] Phase 29.A: Thicc Editor Upgrade: Controls: Red collider box	Shows automatically on the selected object
+- [x] Phase 29.A: Thicc Editor Upgrade: Controls: Red collider box	Shows automatically on the selected object
 Camera zoom levels	Wheel dollies in and out (Shift for 4x). Right mouse + wheel changes fly speed. On an orbit camera the wheel changes distance.
 Camera jump to object	Z, or double-click an object in the Hierarchy
 Undo / Redo	Ctrl+Z, Ctrl+Y or Ctrl+Shift+Z, and the new Edit menu
@@ -137,7 +130,14 @@ Copy / Paste	Ctrl+C, Ctrl+V, and the Edit menu
 Rename	F2, or right-click
 Right-click menu	Right-click in the Hierarchy, or tap right-click in the viewport
 F / G	F toggles face-pick mode, G toggles the grid
-- [ ] Phase 29.B: Thicc Editor Upgrade Part Duece: .................
+- **Active Core**
+- [ ] Phase 28: Animations: Mario/Luigi Flag Slide Down, Death, Transform, Swimming
+- [ ] Phase 20.F: Collision, Boss, Polish, Level 2 Build // Instruction Set 2 Complete 
+- [ ] Phase 20.G: Play Packaged Exe //Instruction Set 3
+- [ ] Phase 24: Check All Editor Windows/ Move To window Palette/ Add DropDowns
+- [ ] Phase 26: Mario Dance
+- [ ] Phase 27: Editor Upgrade to Quat Camera
+- [ ] Phase 29.B: Thicc Editor Upgrade Part Duece: Camera Check, Click Drag, Shift Multi Select , F for Faces
 - [ ] Phase : Gamepad
 - [ ] Phase : Audio
 - [ ] Phase : Vertical Sync, Rendering Polish
