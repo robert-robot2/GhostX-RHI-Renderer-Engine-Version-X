@@ -136,6 +136,10 @@ F / G	F toggles face-pick mode, G toggles the grid
 - [ ] Phase : Antialiasing MSAA/SMAA/FXAA/TAA
 - [ ] Phase 20.G: Play Packaged Exe //Instruction Set 3
 - [ ] Phase : Base Demo Gameplay Package to Download on site without installer
+- [ ] Phase : Base Engine For Use Without Package Installer for Download
+- [ ] Phase : Install Shield Wizard/ Packaged Install for Download
+- [ ] Phase : Install Wizard Setup for Standalone Game
+- [ ] Phase : Program Launcher
 - [ ] Phase : Gamepad
 - [ ] Phase 28: Animations: Mario/Luigi Flag Slide Down, Death, Transform, Swimming
 - [ ] Phase 24: Check All Editor Windows/ Move To window Palette/ Add DropDowns
@@ -144,9 +148,6 @@ F / G	F toggles face-pick mode, G toggles the grid
 - [ ] Phase 29.B: Thicc Editor Upgrade Part Duece: Camera Check, Click Drag, Shift Multi Select , F for Faces
 - [ ] Phase : Vertical Sync, Rendering Polish
 - **Active SubCore**
-- [ ] Phase : Install Shield Wizard/ Packaged Install for Download
-- [ ] Phase : Install Wizard Setup for Standalone Game
-- [ ] Phase : Program Launcher
 - [ ] Phase : Co-op Multiplayer
 - [ ] Phase : Online Multiplayer
 - [ ] Phase 13.D: A CAD-style set of annotation tools on top of the blueprint grid.
