@@ -271,5 +271,8 @@ extern "C"
 
     GHOST_API int  GhostEngine_GetLinkId(int objectId, char* buf, int bufSize);
     GHOST_API void GhostEngine_SetLinkId(int objectId, const char* utf8);
+    // Ctrl+F array: creates `count` copies of an object. offsets = x,y,z per copy, relative to the source.
+// outIds (optional, size count) receives the new ids. Returns how many were created.
+    GHOST_API int GhostEngine_DuplicateArray(int id, const float* offsets, int count, int* outIds);
 
 }

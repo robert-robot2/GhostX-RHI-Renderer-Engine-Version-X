@@ -1393,7 +1393,8 @@ namespace GhostShell
         public bool HandleKey(Keys key, bool repeat)
         {
             bool ctrlD = key == Keys.D && Control.ModifierKeys == Keys.Control;
-            if (key != Keys.D4 && key != Keys.NumPad4 && key != Keys.Delete && !ctrlD) return false;
+            bool ctrlF = key == Keys.F && Control.ModifierKeys == Keys.Control;
+            if (key != Keys.D4 && key != Keys.NumPad4 && key != Keys.Delete && !ctrlD && !ctrlF) return false;
 
             Control? focus = Control.FromHandle(GhostShell.Win32.GetFocus());
             if (focus == null) return false;          // a native dialog (file / color picker) has focus
@@ -1419,10 +1420,41 @@ namespace GhostShell
                 Sync();
                 return true;
             }
+            if (ctrlF)
+            {
+                int sel = GhostEngine.GhostEngine_GetSelected();
+                if (sel == 0) return false;
+                _form.BeginInvoke(new Action(() => ArrayDuplicate(sel)));   // open the dialog after the key event finishes
+                return true;
+            }
             ToggleVisible();
             return true;
         }
+        private void ArrayDuplicate(int sel)
+        {
+            var o = new GhostObjectInfo();
+            if (GhostEngine.GhostEngine_GetPlayState() != 0 || GhostEngine.GhostEngine_GetObject(sel, ref o) == 0)
+            {
+                System.Media.SystemSounds.Beep.Play();            // playing, or not an object
+                return;
+            }
 
+            using var dlg = new GhostArrayDialog(GhostNames.Of(sel));
+            if (dlg.ShowDialog(_form) != DialogResult.OK) return;
+
+            float[] offsets = dlg.BuildOffsets();
+            int want = offsets.Length / 3;
+            if (want == 0) return;
+
+            var ids = new int[want];
+            int made = GhostEngine.GhostEngine_DuplicateArray(sel, offsets, want, ids);
+            if (made == 0) System.Media.SystemSounds.Beep.Play();
+            else if (made < want)
+                MessageBox.Show(_form, $"Created {made} of {want} copies. The scene object limit was reached.",
+                    "Array Duplicate", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            Sync();
+            _viewport.Select();
+        }
         private static bool IsTypingIn(Control? c)
         {
             for (; c != null; c = c.Parent)

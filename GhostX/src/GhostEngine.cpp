@@ -3339,7 +3339,41 @@ int GhostEngine_DuplicateEntity(int id)
     g_scene.version++;
     return copy.id;
 }
+int GhostEngine_DuplicateArray(int id, const float* offsets, int count, int* outIds)
+{
+    if (g_playState != GhostPlayState::Editing || !offsets || count <= 0) return 0;
+    GhostObject* src = FindObject(id);
+    if (!src) return 0;
 
+    const GhostObject tmpl = *src;                   // copy first: push_back can move the vector
+
+    std::string base = tmpl.name;                    // "Cube 4" -> "Cube", then add each new id
+    size_t sp = base.find_last_of(' ');
+    if (sp != std::string::npos && sp + 1 < base.size() &&
+        base.find_first_not_of("0123456789", sp + 1) == std::string::npos)
+        base.resize(sp);
+
+    int made = 0, lastId = 0;
+    for (int i = 0; i < count; i++)
+    {
+        if (!CanAddObject(tmpl.meshId)) break;       // scene is full: keep what was made
+        GhostObject copy = tmpl;
+        copy.id = g_scene.nextId++;
+        copy.name = base + " " + std::to_string(copy.id);
+        copy.position = { tmpl.position.x + offsets[i * 3], tmpl.position.y + offsets[i * 3 + 1], tmpl.position.z + offsets[i * 3 + 2] };
+        g_scene.objects.push_back(copy);
+        if (outIds) outIds[made] = copy.id;
+        lastId = copy.id;
+        made++;
+    }
+    if (made > 0)
+    {
+        g_scene.selectedId = lastId;
+        g_scene.selectedFace = -1;
+        g_scene.version++;
+    }
+    return made;
+}
 int GhostEngine_GetCameraTargetTag(int id, char* buf, int size)
 {
     if (!buf || size <= 0) return 0;

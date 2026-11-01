@@ -289,6 +289,10 @@ namespace GhostShell
         public static extern int GhostEngine_TakePlayFault([Out] byte[] buf, int bufSize);
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern int GhostEngine_DuplicateEntity(int id);
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_DuplicateArray(int id, [In] float[] offsets, int count, [Out] int[] outIds);
+
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern int GhostEngine_SetFont(int textureId, int atlasW, int atlasH, float cellW, float cellH,
                                              float pad, float lineHeight, [In] float[] advances);
@@ -387,6 +391,7 @@ namespace GhostShell
         public static extern int GhostEngine_GetLinkId(int objectId, [Out] byte[] buf, int bufSize);
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern void GhostEngine_SetLinkId(int objectId, [MarshalAs(UnmanagedType.LPUTF8Str)] string text);
+
 
 
 
