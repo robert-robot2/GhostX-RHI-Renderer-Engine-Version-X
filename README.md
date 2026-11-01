@@ -201,7 +201,14 @@ F / G	F toggles face-pick mode, G toggles the grid
 | Right mouse + move | Look around |
 | `W` `A` `S` `D` | Move the active camera |
 | `Space` or `E` / `Q` | Move up / down |
+| Mouse wheel | Dolly camera in / out |
+| `Shift` + mouse wheel | Dolly camera 4× faster |
+| Right mouse + wheel | Change fly camera speed |
+| Mouse wheel (orbit camera) | Change camera orbit distance |
+| `Z` | Jump camera to the selected object |
+| Double-click an object in the Hierarchy | Jump camera to that object |
 | Left click | Select an object, light or camera |
+| Red collider box | Automatically appears around the selected object |
 | Left drag | Move the selection on a camera-facing plane (locked objects can't be dragged) |
 | Tool dropdown (top left of the viewport) | Switch between Select, Translate, Rotate, Scale and Dimension |
 | Drag a gizmo handle | Move, rotate or scale along an axis |
@@ -209,14 +216,25 @@ F / G	F toggles face-pick mode, G toggles the grid
 | `Esc` while dragging a gizmo | Cancel the drag |
 | Click a dimension label or edge | Type an exact size |
 | `Shift` + left click | Pick one face of an object (click again for All Faces) |
+| `F` | Toggle face-pick mode |
+| `G` | Toggle grid visibility |
 | `Delete` | Delete the selection (the last camera can't be deleted) |
 | `Ctrl` + `D` | Duplicate the selected object |
 | `Ctrl` + `F` | Array duplicate: line, grid, staircase, square outline or circle, with set counts and XYZ spacing |
+| `Ctrl` + `Z` | Undo |
+| `Ctrl` + `Y` | Redo |
+| `Ctrl` + `Shift` + `Z` | Redo |
+| `Ctrl` + `C` | Copy selected object |
+| `Ctrl` + `V` | Paste copied object |
+| `F2` | Rename selected object |
+| Right-click an object in the Hierarchy | Open the right-click context menu |
+| Right-click in the viewport | Open the viewport context menu |
 | `Ctrl` + `S` | Save the scene (saves the open UI or animation file if that window has focus) |
 | `4` | Hide or show all tool panels |
 | Drag a texture tile onto an object | Apply it (hold `Shift` for one face) |
 | Drag a palette item into the viewport, or double-click it | Add it to the scene |
 | Double-click a camera in the Hierarchy | Make it the main view camera |
+| Edit menu | Access Copy, Paste and other editing commands |
 
 > Camera keys only work while a viewport has focus, so typing in a panel never moves the camera.
 
