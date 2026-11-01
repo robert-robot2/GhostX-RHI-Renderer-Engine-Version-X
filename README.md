@@ -185,23 +185,50 @@ GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (
 - [ ] OpenGL 
 - [ ] Direct X 4
 - [ ] DirectX 9
-
 ## Controls
+
+### Editor
 
 | Input | Action |
 |---|---|
 | Right mouse + move | Look around |
 | `W` `A` `S` `D` | Move the active camera |
-| `Space` / `Ctrl` | Move up / down |
+| `Space` or `E` / `Q` | Move up / down |
 | Left click | Select an object, light or camera |
-| Left drag | Move the selection on a camera-facing plane |
+| Left drag | Move the selection on a camera-facing plane (locked objects can't be dragged) |
+| Tool dropdown (top left of the viewport) | Switch between Select, Translate, Rotate, Scale and Dimension |
+| Drag a gizmo handle | Move, rotate or scale along an axis |
+| `Shift` while dragging a gizmo | Toggle snapping |
+| `Esc` while dragging a gizmo | Cancel the drag |
+| Click a dimension label or edge | Type an exact size |
 | `Shift` + left click | Pick one face of an object (click again for All Faces) |
 | `Delete` | Delete the selection (the last camera can't be deleted) |
+| `Ctrl` + `D` | Duplicate the selected object |
+| `Ctrl` + `F` | Array duplicate: line, grid, staircase, square outline or circle, with set counts and XYZ spacing |
+| `Ctrl` + `S` | Save the scene (saves the open UI or animation file if that window has focus) |
 | `4` | Hide or show all tool panels |
 | Drag a texture tile onto an object | Apply it (hold `Shift` for one face) |
-| 'Ctrl + D' | Duplicates Selected Item |
+| Drag a palette item into the viewport, or double-click it | Add it to the scene |
+| Double-click a camera in the Hierarchy | Make it the main view camera |
+
 > Camera keys only work while a viewport has focus, so typing in a panel never moves the camera.
-- Coming Soon, Right Click Features, Copy Paste etc.
+
+### Gameplay
+
+| Input | Action |
+|---|---|
+| `W` `A` `S` `D` | Move (relative to the camera) |
+| `Shift` | Run. Hold it next to a shell to pick it up, release to throw |
+| `Space` | Jump (hold for a higher jump) |
+| `S` / Down | Crouch, or enter a pipe (Portal Trigger = Press Down) |
+| `F` | Enter a portal (Portal Trigger = Press F) |
+| Left click | Attack (Fire Mario throws a fireball) |
+| Right mouse + drag | Orbit the camera |
+| Mouse wheel | Zoom the orbit camera |
+| `Q` / `E` | Turn the camera (free camera only) |
+| `Esc` | Open or close the Options menu |
+
+- Coming soon: right-click features, copy and paste, and key rebinding.
 ## How To FAQ
 
 - Coming Soon
