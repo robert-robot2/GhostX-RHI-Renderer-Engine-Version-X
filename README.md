@@ -130,6 +130,7 @@ Copy / Paste	Ctrl+C, Ctrl+V, and the Edit menu
 Rename	F2, or right-click
 Right-click menu	Right-click in the Hierarchy, or tap right-click in the viewport
 F / G	F toggles face-pick mode, G toggles the grid
+- [x] Phase 20.L: Boss
 - **Active Core**
 - [ ] Phase 20.F: Collision, Boss, Polish, Level 2 Build // Instruction Set 2 Complete
 - [ ] Phase : Audio
