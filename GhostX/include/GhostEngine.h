@@ -274,5 +274,16 @@ extern "C"
     // Ctrl+F array: creates `count` copies of an object. offsets = x,y,z per copy, relative to the source.
 // outIds (optional, size count) receives the new ids. Returns how many were created.
     GHOST_API int GhostEngine_DuplicateArray(int id, const float* offsets, int count, int* outIds);
+    // ---- Editor: undo, clipboard, focus, rename, face mode ----
+    GHOST_API int  GhostEngine_Undo();
+    GHOST_API int  GhostEngine_Redo();
+    GHOST_API int  GhostEngine_UndoCount();
+    GHOST_API int  GhostEngine_RedoCount();
+    GHOST_API int  GhostEngine_CopySelected();
+    GHOST_API int  GhostEngine_Paste();
+    GHOST_API int  GhostEngine_FocusSelected();
+    GHOST_API void GhostEngine_SetEntityName(int id, const char* utf8);
+    GHOST_API void GhostEngine_SetFaceMode(int on);
+    GHOST_API int  GhostEngine_GetFaceMode();
 
 }

@@ -1227,6 +1227,8 @@ namespace GhostShell
         private object? _lastSnap;
 
         private int _dragIndex = -1;
+        private ContextMenuStrip _ctx = null!;
+        private DateTime _rmbDown;
         private Point _dragStart;
         private GhostViewportManager _vp = null!;
         public GhostEditorUI(Form form, Panel viewport) { _form = form; _viewport = viewport; }
@@ -1344,11 +1346,28 @@ namespace GhostShell
                 {
                     var c = new GhostCameraInfo();
                     if (GhostEngine.GhostEngine_GetCamera(id, ref c) != 0)
-                        GhostEngine.GhostEngine_SetActiveCamera(id);
+                        GhostEngine.GhostEngine_SetActiveCamera(id);       // cameras: make it the main view
+                    else { GhostEngine.GhostEngine_SelectEntity(id); DoFocus(); }   // everything else: jump to it
                 }
+            };
+            _tree.NodeMouseClick += (s, e) =>
+            {
+                if (e.Button != MouseButtons.Right || e.Node == null || e.Node.Tag is not int id || id == 0) return;
+                _tree.SelectedNode = e.Node;
+                _ctx.Show(_tree, e.Location);
             };
 
             BuildDocking();
+            _ctx = BuildContextMenu();
+            _viewport.MouseDown += (s, e) => { if (e.Button == MouseButtons.Right) _rmbDown = DateTime.UtcNow; };
+            _viewport.MouseUp += (s, e) =>
+            {
+                if (e.Button != MouseButtons.Right || GhostEngine.GhostEngine_GetPlayState() != 0) return;
+                if ((DateTime.UtcNow - _rmbDown).TotalMilliseconds > 220) return;     // held = camera look, tapped = menu
+                int id = GhostEngine.GhostEngine_PickObjectAt(e.X, e.Y, out _);
+                if (id != 0) GhostEngine.GhostEngine_SelectEntity(id);
+                _ctx.Show(_viewport, e.Location);
+            };
 
             // ---- Viewport: drop target + keyboard focus ----
             _viewport.AllowDrop = true;
@@ -1392,9 +1411,21 @@ namespace GhostShell
         // Returns true if the key was consumed
         public bool HandleKey(Keys key, bool repeat)
         {
-            bool ctrlD = key == Keys.D && Control.ModifierKeys == Keys.Control;
-            bool ctrlF = key == Keys.F && Control.ModifierKeys == Keys.Control;
-            if (key != Keys.D4 && key != Keys.NumPad4 && key != Keys.Delete && !ctrlD && !ctrlF) return false;
+            Keys mods = Control.ModifierKeys;
+            bool ctrl = mods == Keys.Control, plain = mods == Keys.None;
+
+            bool isFour = key == Keys.D4 || key == Keys.NumPad4, isDelete = key == Keys.Delete;
+            bool ctrlD = ctrl && key == Keys.D, ctrlF = ctrl && key == Keys.F;
+            bool undo = ctrl && key == Keys.Z;
+            bool redo = (ctrl && key == Keys.Y) || (mods == (Keys.Control | Keys.Shift) && key == Keys.Z);
+            bool copy = ctrl && key == Keys.C, paste = ctrl && key == Keys.V;
+            bool faceKey = plain && key == Keys.F, gridKey = plain && key == Keys.G;
+            bool focusKey = plain && key == Keys.Z, renameKey = plain && key == Keys.F2;
+
+            if (!(isFour || isDelete || ctrlD || ctrlF || undo || redo || copy || paste || faceKey || gridKey || focusKey || renameKey))
+                return false;
+            if ((faceKey || gridKey || focusKey || renameKey) && GhostEngine.GhostEngine_GetPlayState() != 0)
+                return false;                                  // while playing these keys belong to the game
 
             Control? focus = Control.FromHandle(GhostShell.Win32.GetFocus());
             if (focus == null) return false;          // a native dialog (file / color picker) has focus
@@ -1402,33 +1433,116 @@ namespace GhostShell
             if (IsTypingIn(focus)) return false;      // never steal keys from a text box or the property grid
             if (repeat) return true;
 
-            if (key == Keys.Delete)
+            int sel = GhostEngine.GhostEngine_GetSelected();
+            if (undo) { DoUndo(); return true; }
+            if (redo) { DoRedo(); return true; }
+            if (paste) { DoPaste(); return true; }
+            if (gridKey) { ToggleGrid(); return true; }
+            if (faceKey) { GhostEngine.GhostEngine_SetFaceMode(GhostEngine.GhostEngine_GetFaceMode() == 0 ? 1 : 0); return true; }
+
+            if (isFour) { ToggleVisible(); return true; }
+            if (sel == 0) return false;
+            if (isDelete) { DoDelete(); return true; }
+            if (ctrlD) { DoDuplicate(); return true; }
+            if (ctrlF) { _form.BeginInvoke(new Action(() => ArrayDuplicate(sel))); return true; }
+            if (copy) { DoCopy(); return true; }
+            if (focusKey) { DoFocus(); return true; }
+            if (renameKey) { _form.BeginInvoke(new Action(RenameSelected)); return true; }
+            return false;
+        }
+
+        private void DoUndo() { GhostEngine.GhostEngine_Undo(); Sync(); }
+        private void DoRedo() { GhostEngine.GhostEngine_Redo(); Sync(); }
+        private void DoFocus() => GhostEngine.GhostEngine_FocusSelected();
+        private void DoCopy() { if (GhostEngine.GhostEngine_CopySelected() == 0) System.Media.SystemSounds.Beep.Play(); }
+        private void DoPaste() { if (GhostEngine.GhostEngine_Paste() == 0) System.Media.SystemSounds.Beep.Play(); Sync(); }
+
+        private void DoDelete()
+        {
+            int sel = GhostEngine.GhostEngine_GetSelected();
+            if (sel == 0) return;
+            if (GhostEngine.GhostEngine_RemoveEntity(sel) == 0) System.Media.SystemSounds.Beep.Play();   // refused: the last camera stays
+            Sync();
+        }
+
+        private void DoDuplicate()          // same engine call Ctrl+D always used
+        {
+            int sel = GhostEngine.GhostEngine_GetSelected();
+            if (sel == 0) return;
+            if (GhostEngine.GhostEngine_DuplicateEntity(sel) == 0) System.Media.SystemSounds.Beep.Play();
+            Sync();
+        }
+
+        private void ToggleGrid()
+        {
+            GhostEngine.GhostEngine_GetViewSettings(out GhostViewSettings v);
+            v.showGrid = v.showGrid != 0 ? 0 : 1;
+            GhostEngine.GhostEngine_SetViewSettings(ref v);
+        }
+
+        private void RenameSelected()
+        {
+            int sel = GhostEngine.GhostEngine_GetSelected();
+            if (sel == 0 || GhostEngine.GhostEngine_GetPlayState() != 0) return;
+            string? name = GhostPrompt.Ask(_form, "Rename", "New name:", GhostNames.Of(sel));
+            if (string.IsNullOrWhiteSpace(name)) return;
+            GhostEngine.GhostEngine_SetEntityName(sel, name);
+            Sync();
+        }
+
+        private ContextMenuStrip BuildContextMenu()
+        {
+            var m = new ContextMenuStrip { BackColor = Bg2, ForeColor = Fg, ShowImageMargin = false };
+            m.Items.Add("Rename...    F2", null, (s, e) => RenameSelected());
+            m.Items.Add("Jump camera here    Z", null, (s, e) => DoFocus());
+            m.Items.Add(new ToolStripSeparator());
+            m.Items.Add("Copy    Ctrl+C", null, (s, e) => DoCopy());
+            m.Items.Add("Paste    Ctrl+V", null, (s, e) => DoPaste());
+            m.Items.Add("Duplicate    Ctrl+D", null, (s, e) => DoDuplicate());
+            m.Items.Add("Array Duplicate...    Ctrl+F", null, (s, e) => { int id = GhostEngine.GhostEngine_GetSelected(); if (id != 0) ArrayDuplicate(id); });
+            m.Items.Add(new ToolStripSeparator());
+            m.Items.Add("Delete    Del", null, (s, e) => DoDelete());
+            return m;
+        }
+
+        private void BuildEditMenu()
+        {
+            ToolStrip? strip = _form.MainMenuStrip;
+            if (strip == null) return;
+            var menu = new ToolStripMenuItem("Edit");
+            ToolStripMenuItem Add(string text, string keys, Action a)
             {
-                int sel = GhostEngine.GhostEngine_GetSelected();
-                if (sel == 0) return false;
-                if (GhostEngine.GhostEngine_RemoveEntity(sel) == 0)
-                    System.Media.SystemSounds.Beep.Play();       // refused: the last camera stays
-                Sync();
-                return true;
+                var it = new ToolStripMenuItem(text) { ShortcutKeyDisplayString = keys };   // display only: the key handler does the work
+                it.Click += (s, e) => a();
+                menu.DropDownItems.Add(it);
+                return it;
             }
-            if (ctrlD)
+            var undo = Add("Undo", "Ctrl+Z", DoUndo);
+            var redo = Add("Redo", "Ctrl+Y", DoRedo);
+            menu.DropDownItems.Add(new ToolStripSeparator());
+            var copy = Add("Copy", "Ctrl+C", DoCopy);
+            var paste = Add("Paste", "Ctrl+V", DoPaste);
+            var dup = Add("Duplicate", "Ctrl+D", DoDuplicate);
+            var arr = Add("Array Duplicate...", "Ctrl+F", () => { int id = GhostEngine.GhostEngine_GetSelected(); if (id != 0) ArrayDuplicate(id); });
+            menu.DropDownItems.Add(new ToolStripSeparator());
+            var ren = Add("Rename...", "F2", RenameSelected);
+            var jump = Add("Jump Camera To Selection", "Z", DoFocus);
+            var del = Add("Delete", "Del", DoDelete);
+
+            menu.DropDownOpening += (s, e) =>
             {
-                int sel = GhostEngine.GhostEngine_GetSelected();
-                if (sel == 0) return false;
-                if (GhostEngine.GhostEngine_DuplicateEntity(sel) == 0)
-                    System.Media.SystemSounds.Beep.Play();         // not an object, scene full, or playing
-                Sync();
-                return true;
-            }
-            if (ctrlF)
-            {
-                int sel = GhostEngine.GhostEngine_GetSelected();
-                if (sel == 0) return false;
-                _form.BeginInvoke(new Action(() => ArrayDuplicate(sel)));   // open the dialog after the key event finishes
-                return true;
-            }
-            ToggleVisible();
-            return true;
+                bool ed = GhostEngine.GhostEngine_GetPlayState() == 0;
+                bool has = ed && GhostEngine.GhostEngine_GetSelected() != 0;
+                undo.Enabled = ed && GhostEngine.GhostEngine_UndoCount() > 0;
+                redo.Enabled = ed && GhostEngine.GhostEngine_RedoCount() > 0;
+                paste.Enabled = ed;
+                copy.Enabled = dup.Enabled = arr.Enabled = ren.Enabled = jump.Enabled = del.Enabled = has;
+            };
+
+            int at = 1;                                            // right after File
+            for (int i = 0; i < strip.Items.Count; i++)
+                if (strip.Items[i].Text == "File") { at = i + 1; break; }
+            strip.Items.Insert(at, menu);
         }
         private void ArrayDuplicate(int sel)
         {
@@ -1488,6 +1602,7 @@ namespace GhostShell
             _form.MainMenuStrip?.SendToBack();
 
             BuildWindowMenu();
+            BuildEditMenu();
         }
 
         private IDockContent GetContentFromPersistString(string key) => key switch

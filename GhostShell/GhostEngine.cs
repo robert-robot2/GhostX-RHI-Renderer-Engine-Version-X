@@ -293,6 +293,18 @@ namespace GhostShell
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern int GhostEngine_DuplicateArray(int id, [In] float[] offsets, int count, [Out] int[] outIds);
 
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern int GhostEngine_Undo();
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern int GhostEngine_Redo();
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern int GhostEngine_UndoCount();
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern int GhostEngine_RedoCount();
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern int GhostEngine_CopySelected();
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern int GhostEngine_Paste();
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern int GhostEngine_FocusSelected();
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetEntityName(int id, [MarshalAs(UnmanagedType.LPUTF8Str)] string name);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern void GhostEngine_SetFaceMode(int on);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern int GhostEngine_GetFaceMode();
+
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern int GhostEngine_SetFont(int textureId, int atlasW, int atlasH, float cellW, float cellH,
                                              float pad, float lineHeight, [In] float[] advances);

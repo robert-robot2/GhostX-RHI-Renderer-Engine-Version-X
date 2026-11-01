@@ -46,6 +46,7 @@ static GhostMat4  g_view = GhostMat4::Identity();
 static GhostMat4  g_proj = GhostMat4::Identity();
 static GhostVec3  g_camR = { 1, 0, 0 }, g_camU = { 0, 1, 0 }, g_camF = { 0, 0, 1 };
 static int        g_hoverId = 0;
+static bool       g_faceMode = false;     // F: a click picks a face, no Shift needed
 static bool       g_dragging = false;
 static int        g_dragId = 0;
 static GhostVec3  g_dragOffset;
@@ -642,7 +643,7 @@ void GhostEngine_MouseDown(int px, int py, int button)
 
     // Shift+click on an object: select it and pick the face under the cursor. No drag.
     // Shift+click on the face that is already targeted goes back to "All Faces".
-    if ((GetAsyncKeyState(VK_SHIFT) & 0x8000) && id != 0)
+    if (((GetAsyncKeyState(VK_SHIFT) & 0x8000) || g_faceMode) && id != 0)
     {
         if (GhostObject* ob = FindObject(id))
         {
@@ -1163,7 +1164,22 @@ static void OverlayBounds(const GhostObject& o, const GhostVec3& eye)
     const float col[4] = { 1.0f, 0.62f, 0.12f, 0.85f };
     for (int e = 0; e < 12; e++) g_ov.Line(c[E[e][0]], c[E[e][1]], col, 1.5f, false);
 }
-
+// The gameplay collider: axis-aligned (rotation is ignored, like the game), drawn in red
+static void OverlayCollider(const GhostObject& o)
+{
+    const GhostVec3 h(fabsf(o.colliderSize.x * o.scale.x) * 0.5f,
+        fabsf(o.colliderSize.y * o.scale.y) * 0.5f,
+        fabsf(o.colliderSize.z * o.scale.z) * 0.5f);
+    const GhostVec3 c(o.position.x + o.colliderOffset.x * o.scale.x,
+        o.position.y + o.colliderOffset.y * o.scale.y,
+        o.position.z + o.colliderOffset.z * o.scale.z);
+    GhostVec3 p[8];
+    for (int i = 0; i < 8; i++)
+        p[i] = GhostVec3(c.x + ((i & 1) ? h.x : -h.x), c.y + ((i & 2) ? h.y : -h.y), c.z + ((i & 4) ? h.z : -h.z));
+    static const int E[12][2] = { { 0,1 },{ 2,3 },{ 4,5 },{ 6,7 },{ 0,2 },{ 1,3 },{ 4,6 },{ 5,7 },{ 0,4 },{ 1,5 },{ 2,6 },{ 3,7 } };
+    const float col[4] = { 1.0f, 0.2f, 0.2f, 0.95f };
+    for (int e = 0; e < 12; e++) g_ov.Line(p[E[e][0]], p[E[e][1]], col, 2.0f, false);
+}
 // ---------------- Gizmo: shared frame, hit testing, dragging, drawing ----------------
 struct GizmoFrame
 {
@@ -1684,6 +1700,7 @@ static void DrawViewportOverlay(const GhostMat4& view, const GhostMat4& proj, co
             if (s.showSelection)
             {
                 if (o) OverlayBounds(*o, eye);
+                if (o && o->collider) OverlayCollider(*o);
                 OverlayGizmo(sel);
             }
             if (o && s.showSelection)
@@ -1719,7 +1736,11 @@ static void DrawViewportOverlay(const GhostMat4& view, const GhostMat4& proj, co
 
         }
     }
-
+    if (editing && g_faceMode)
+    {
+        const float c[4] = { 0.30f, 0.95f, 0.95f, 1.0f };
+        g_ov.TextPx(14.0f, (float)rh - 34.0f, 20.0f, "FACE PICK MODE  (press F to leave)", c);
+    }
     if (s.showFps)
     {
         char t[48];
@@ -1994,6 +2015,114 @@ static void UpdateOrbitCameras(float dt, bool smooth)
     }
 }
 
+// ============================================================
+//  Undo / redo: automatic snapshots of the editable scene (textures are not rolled back)
+// ============================================================
+struct UndoSnap
+{
+    std::vector<GhostObject> objects;
+    std::vector<GhostLight> lights;
+    std::vector<GhostCamera> cameras;
+    std::vector<GhostModEntity> mods;
+    float ambientColor[3] = { 1, 1, 1 };
+    float ambientIntensity = 0.15f, shadowStrength = 1.0f;
+    bool  shadowsEnabled = true;
+    int   activeCameraId = 0, gameStartCameraId = 0, nextId = 1;
+};
+static std::vector<UndoSnap> g_undo, g_redo;
+static UndoSnap     g_undoBase;
+static unsigned int g_undoBaseHash = 0;
+static bool         g_undoHaveBase = false;
+static float        g_undoTimer = 0.0f;
+static const size_t kUndoMax = 40;
+
+static void UndoCapture(UndoSnap& s)
+{
+    s.objects = g_scene.objects; s.lights = g_scene.lights; s.cameras = g_scene.cameras; s.mods = g_scene.mods;
+    for (int i = 0; i < 3; i++) s.ambientColor[i] = g_scene.ambientColor[i];
+    s.ambientIntensity = g_scene.ambientIntensity; s.shadowStrength = g_scene.shadowStrength;
+    s.shadowsEnabled = g_scene.shadowsEnabled;
+    s.activeCameraId = g_scene.activeCameraId; s.gameStartCameraId = g_scene.gameStartCameraId; s.nextId = g_scene.nextId;
+}
+
+static void UndoReset() { g_undo.clear(); g_redo.clear(); g_undoHaveBase = false; }
+
+// If the scene changed since the last snapshot, the old state becomes an undo step
+static void UndoCommit()
+{
+    const unsigned int h = GhostScene_Hash(g_scene);
+    if (!g_undoHaveBase) { UndoCapture(g_undoBase); g_undoBaseHash = h; g_undoHaveBase = true; return; }
+    if (h == g_undoBaseHash) return;
+    g_undo.push_back(std::move(g_undoBase));
+    if (g_undo.size() > kUndoMax) g_undo.erase(g_undo.begin());
+    g_redo.clear();
+    UndoCapture(g_undoBase);
+    g_undoBaseHash = h;
+}
+
+static void UndoTick(float dt)
+{
+    g_undoTimer += dt;
+    if (g_undoTimer < 0.15f) return;
+    g_undoTimer = 0.0f;
+    if (g_gizmo.active || g_dragging) return;                                            // a drag is one step: wait for the release
+    if ((GetAsyncKeyState(VK_LBUTTON) | GetAsyncKeyState(VK_RBUTTON)) & 0x8000) return;
+    UndoCommit();
+}
+
+static void UndoRestore(const UndoSnap& s)
+{
+    GhostCamera keep;                                   // the hash ignores the main camera's pose, so keep the current one
+    bool haveKeep = false;
+    if (GhostCamera* cur = ActiveCamera()) { keep = *cur; haveKeep = true; }
+
+    g_scene.objects = s.objects; g_scene.lights = s.lights; g_scene.cameras = s.cameras; g_scene.mods = s.mods;
+    for (int i = 0; i < 3; i++) g_scene.ambientColor[i] = s.ambientColor[i];
+    g_scene.ambientIntensity = s.ambientIntensity; g_scene.shadowStrength = s.shadowStrength;
+    g_scene.shadowsEnabled = s.shadowsEnabled;
+    g_scene.activeCameraId = s.activeCameraId; g_scene.gameStartCameraId = s.gameStartCameraId;
+    if (s.nextId > g_scene.nextId) g_scene.nextId = s.nextId;      // ids never go backwards
+
+    if (haveKeep)
+        for (GhostCamera& c : g_scene.cameras)
+            if (c.id == keep.id) { c.position = keep.position; c.yawDeg = keep.yawDeg; c.pitchDeg = keep.pitchDeg; }
+
+    if (!EntityPosition(g_scene.selectedId)) g_scene.selectedId = 0;
+    g_scene.selectedFace = -1;
+    g_hoverId = 0; g_dragging = false; g_dragId = 0;
+    g_scene.version++;
+}
+
+int GhostEngine_Undo()
+{
+    if (g_playState != GhostPlayState::Editing) return 0;
+    UndoCommit();                                        // an edit made in the last fraction of a second counts too
+    if (g_undo.empty()) return 0;
+    g_redo.push_back(std::move(g_undoBase));
+    UndoSnap s = std::move(g_undo.back());
+    g_undo.pop_back();
+    UndoRestore(s);
+    g_undoBase = std::move(s);
+    g_undoBaseHash = GhostScene_Hash(g_scene);
+    return 1;
+}
+
+int GhostEngine_Redo()
+{
+    if (g_playState != GhostPlayState::Editing) return 0;
+    UndoCommit();
+    if (g_redo.empty()) return 0;
+    g_undo.push_back(std::move(g_undoBase));
+    UndoSnap s = std::move(g_redo.back());
+    g_redo.pop_back();
+    UndoRestore(s);
+    g_undoBase = std::move(s);
+    g_undoBaseHash = GhostScene_Hash(g_scene);
+    return 1;
+}
+
+int GhostEngine_UndoCount() { return (int)g_undo.size(); }
+int GhostEngine_RedoCount() { return (int)g_redo.size(); }
 
 void GhostEngine_Tick()
 {
@@ -2137,6 +2266,7 @@ void GhostEngine_Tick()
     }
     UpdateOrbitCameras(dt, g_playState != GhostPlayState::Editing);
     UpdateSprites(dt);                                // animation clips run in the editor and while playing
+    if (g_playState == GhostPlayState::Editing) UndoTick(dt);
     // ---- Render: camera windows first, the main view last (it carries the vsync) ----
     for (int vp = 1; vp < GHOST_MAX_SURFACES; vp++)
         if (g_vp[vp].alive) RenderViewport(vp);
@@ -2513,6 +2643,7 @@ int GhostEngine_LoadScene(const char* path, char* msg, int msgSize)
     g_hoverId = 0; g_dragging = false; g_dragId = 0; g_inputCameraId = 0;
     g_scenePath = GhostPath_Normalize(path);
     g_scene.version++;
+    UndoReset();
     CopyMsg(warn, msg, msgSize);
     return warn.empty() ? 1 : 2;
 }
@@ -2533,6 +2664,7 @@ void GhostEngine_ClearScene()
     GhostScene_AddCamera(g_scene);            // the default camera, id 1
     g_hoverId = 0; g_dragging = false; g_dragId = 0; g_inputCameraId = 0;
     g_scene.version++;
+    UndoReset();
 }
 
 unsigned int GhostEngine_GetSceneHash()
@@ -3374,6 +3506,86 @@ int GhostEngine_DuplicateArray(int id, const float* offsets, int count, int* out
     }
     return made;
 }
+
+// ---- Clipboard (objects) ----
+static std::vector<GhostObject> g_clip;
+static int g_pasteCount = 0;
+
+int GhostEngine_CopySelected()
+{
+    GhostObject* o = FindObject(g_scene.selectedId);
+    if (!o) return 0;
+    g_clip.clear();
+    g_clip.push_back(*o);
+    g_pasteCount = 0;
+    return 1;
+}
+
+int GhostEngine_Paste()
+{
+    if (g_playState != GhostPlayState::Editing || g_clip.empty()) return 0;
+    GhostObject copy = g_clip[0];
+    if (!CanAddObject(copy.meshId)) return 0;
+    g_pasteCount++;
+
+    std::string base = copy.name;
+    size_t sp = base.find_last_of(' ');
+    if (sp != std::string::npos && sp + 1 < base.size() &&
+        base.find_first_not_of("0123456789", sp + 1) == std::string::npos)
+        base.resize(sp);
+    copy.id = g_scene.nextId++;
+    copy.name = base + " " + std::to_string(copy.id);
+    copy.position.x += (fabsf(copy.scale.x) + 0.25f) * (float)g_pasteCount;   // each paste lands one step further over
+
+    g_scene.objects.push_back(copy);
+    g_scene.selectedId = copy.id;
+    g_scene.selectedFace = -1;
+    g_scene.version++;
+    return 1;
+}
+
+// ---- Jump the editor camera to the selection ----
+int GhostEngine_FocusSelected()
+{
+    if (g_playState != GhostPlayState::Editing) return 0;
+    GhostCamera* cam = InputCamera();
+    GhostVec3* pp = EntityPosition(g_scene.selectedId);
+    if (!cam || !pp) return 0;
+    GhostVec3 tgt;
+    if (cam->mode == 1 && ResolveOrbitTarget(*cam, tgt)) return 0;     // an orbit camera follows its target
+
+    GhostVec3 center = *pp;
+    float radius = 1.0f;
+    if (const GhostObject* o = FindObject(g_scene.selectedId))
+    {
+        const GhostVec3 mn = GhostMesh_Min(o->meshId), mx = GhostMesh_Max(o->meshId);
+        center = GhostVec3(o->position.x + (mn.x + mx.x) * 0.5f * o->scale.x,
+            o->position.y + (mn.y + mx.y) * 0.5f * o->scale.y,
+            o->position.z + (mn.z + mx.z) * 0.5f * o->scale.z);
+        const float ex = fabsf((mx.x - mn.x) * o->scale.x), ey = fabsf((mx.y - mn.y) * o->scale.y), ez = fabsf((mx.z - mn.z) * o->scale.z);
+        radius = 0.5f * sqrtf(ex * ex + ey * ey + ez * ez);
+    }
+    const float dist = fmaxf(radius * 2.5f, 2.0f);
+    cam->position = center - AnglesToDir(cam->yawDeg, cam->pitchDeg) * dist;
+    return 1;
+}
+
+void GhostEngine_SetEntityName(int id, const char* utf8)
+{
+    if (!utf8) return;
+    std::string n = utf8;
+    while (!n.empty() && n.back() == ' ') n.pop_back();
+    if (n.empty()) return;
+    if (n.size() > 63) n.resize(63);
+    for (GhostObject& o : g_scene.objects) if (o.id == id) { o.name = n; g_scene.version++; return; }
+    for (GhostLight& l : g_scene.lights) if (l.id == id) { l.name = n; g_scene.version++; return; }
+    for (GhostCamera& c : g_scene.cameras) if (c.id == id) { c.name = n; g_scene.version++; return; }
+    for (GhostModEntity& m : g_scene.mods) if (m.id == id) { m.name = n; g_scene.version++; return; }
+}
+
+void GhostEngine_SetFaceMode(int on) { g_faceMode = (on != 0); }
+int  GhostEngine_GetFaceMode() { return g_faceMode ? 1 : 0; }
+
 int GhostEngine_GetCameraTargetTag(int id, char* buf, int size)
 {
     if (!buf || size <= 0) return 0;
@@ -3403,8 +3615,33 @@ void GhostEngine_SetGameStartCamera(int id)
 
 void GhostEngine_MouseWheel(int delta)
 {
-    if (g_playState != GhostPlayState::Playing || !g_inputEnabled) return;
+    if (!g_inputEnabled) return;
     const float notches = (float)delta / 120.0f;
+
+    if (g_playState == GhostPlayState::Editing)       // wheel = dolly, right mouse + wheel = fly speed
+    {
+        GhostCamera* c = InputCamera();
+        if (!c) return;
+        GhostVec3 tgt;
+        if (c->mode == 1 && ResolveOrbitTarget(*c, tgt))
+        {
+            const float d = c->distance - notches;
+            c->distance = d < c->minDist ? c->minDist : (d > c->maxDist ? c->maxDist : d);
+        }
+        else if (GetAsyncKeyState(VK_RBUTTON) & 0x8000)
+        {
+            const float v = c->moveSpeed * powf(1.25f, notches);
+            c->moveSpeed = v < 0.1f ? 0.1f : (v > 200.0f ? 200.0f : v);
+        }
+        else
+        {
+            const float step = fmaxf(c->moveSpeed * 0.3f, 0.25f) * ((GetAsyncKeyState(VK_SHIFT) & 0x8000) ? 4.0f : 1.0f);
+            c->position = c->position + AnglesToDir(c->yawDeg, c->pitchDeg) * (notches * step);
+        }
+        return;
+    }
+
+    if (g_playState != GhostPlayState::Playing) return;
     g_wheelAccum += notches;                       // the game can read it too
 
     GhostCamera* c = InputCamera();
