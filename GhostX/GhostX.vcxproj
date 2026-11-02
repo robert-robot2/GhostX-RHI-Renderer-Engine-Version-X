@@ -169,6 +169,7 @@ xcopy /Y /E /I "$(ProjectDir)shaders" "$(SolutionDir)GhostShell\bin\x64\Release\
     <ClInclude Include="include\GhostMath.h" />
     <ClInclude Include="include\GhostModelImport.h" />
     <ClInclude Include="include\GhostMods.h" />
+    <ClInclude Include="include\GhostMSAA.h" />
     <ClInclude Include="include\GhostOverlay.h" />
     <ClInclude Include="include\GhostPipeline.h" />
     <ClInclude Include="include\GhostRHI_DX12.h" />
@@ -190,6 +191,7 @@ xcopy /Y /E /I "$(ProjectDir)shaders" "$(SolutionDir)GhostShell\bin\x64\Release\
     <ClCompile Include="src\GhostImage.cpp" />
     <ClCompile Include="src\GhostModelImport.cpp" />
     <ClCompile Include="src\GhostMods.cpp" />
+    <ClCompile Include="src\GhostMSAA.cpp" />
     <ClCompile Include="src\GhostPipeline.cpp" />
     <ClCompile Include="src\GhostRHI_DX12.cpp" />
     <ClCompile Include="src\GhostRuntime.cpp" />

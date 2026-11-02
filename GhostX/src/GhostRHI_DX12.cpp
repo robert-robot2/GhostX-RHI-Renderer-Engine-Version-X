@@ -250,6 +250,34 @@ D3D12_CPU_DESCRIPTOR_HANDLE GhostRHI_DX12::GetRTV()
     rtv.ptr += (SIZE_T)(m_cur * FRAME_COUNT + m_frameIndex) * m_rtvDescSize;
     return rtv;
 }
+
+void GhostRHI_DX12::ResolveToBackBuffer(ID3D12Resource* msaaSource, DXGI_FORMAT format)
+{
+    ID3D12Resource* bb = m_renderTargets[m_frameIndex].Get();
+    if (!msaaSource || !bb) return;
+
+    D3D12_RESOURCE_BARRIER b[2] = {};
+    b[0].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    b[0].Transition.pResource = msaaSource;
+    b[0].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    b[0].Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+    b[0].Transition.StateAfter = D3D12_RESOURCE_STATE_RESOLVE_SOURCE;
+    b[1].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    b[1].Transition.pResource = bb;
+    b[1].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    b[1].Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+    b[1].Transition.StateAfter = D3D12_RESOURCE_STATE_RESOLVE_DEST;
+    m_cmdList->ResourceBarrier(2, b);
+
+    m_cmdList->ResolveSubresource(bb, 0, msaaSource, 0, format);
+
+    b[0].Transition.StateBefore = D3D12_RESOURCE_STATE_RESOLVE_SOURCE;
+    b[0].Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+    b[1].Transition.StateBefore = D3D12_RESOURCE_STATE_RESOLVE_DEST;
+    b[1].Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+    m_cmdList->ResourceBarrier(2, b);
+}
+
 GhostResult GhostRHI_DX12::ExecuteOneShot(
     const std::function<void(ID3D12GraphicsCommandList*)>& record)
 {

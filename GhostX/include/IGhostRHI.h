@@ -54,6 +54,11 @@ public:
     virtual ID3D12Device* GetDevice() = 0;
     virtual ID3D12GraphicsCommandList* GetCmdList() = 0;
     virtual D3D12_CPU_DESCRIPTOR_HANDLE GetRTV() = 0;
+    // ---- MSAA ----
+// Resolves a multisampled target into the current surface's back buffer.
+// msaaSource must be in RENDER_TARGET state (it is returned to it).
+// The back buffer must be in RENDER_TARGET state and ends in it. Sizes must match.
+    virtual void ResolveToBackBuffer(ID3D12Resource* msaaSource, DXGI_FORMAT format) = 0;
     // ---- One-shot GPU work (texture uploads etc.) ----
 // Records into a private list, submits, and waits for the GPU. Call between frames only.
     virtual GhostResult ExecuteOneShot(

@@ -14,6 +14,7 @@
 #include "../include/GhostAnim.h"
 #include "../include/GhostModelImport.h"
 #include "../include/GhostOverlay.h"
+#include "../include/GhostMSAA.h"
 #include <string.h>
 #include <filesystem>
 #include <map>
@@ -24,6 +25,8 @@
 // ---- Engine state ----
 static IGhostRHI* g_rhi = nullptr;
 static GhostPipeline* g_pipeline = nullptr;
+static GhostMSAA  g_msaa;
+static int        g_msaaWanted = 1;
 
 // ---- Camera state ----
 static GhostVec3 g_eye = { 0.0f, 0.75f, -2.0f };
@@ -232,6 +235,10 @@ int GhostEngine_Init(HWND hwnd, unsigned int width, unsigned int height)
     // these are thin wrappers, no D3D12 types leak into Engine.
     if (GhostPipelineCreate(g_rhi, &pd, &g_pipeline) != GHOST_OK) return -1;
     if (GhostUploadMeshes(g_rhi, g_pipeline) != GHOST_OK) return -1;
+
+    //add failure is not fatal, MSAA just stays unavailable??
+    GhostMSAA_Init(g_rhi, g_msaa);
+
 
     // ---- Built-in textures: id 0 = white (untextured draws), id 1 = checkerboard (UV debugging) ----
     {
@@ -1941,6 +1948,11 @@ static void RenderViewport(int vp)
     if (custom) { if (GhostEnsureOffscreen(g_rhi, g_pipeline, vp, rw, rh) != GHOST_OK) return; }
     else        GhostReleaseOffscreen(g_pipeline, vp);
     if (GhostEnsureDepth(g_rhi, g_pipeline, vp, rw, rh) != GHOST_OK) return;
+    // MSAA targets follow the render size (freed again when MSAA is off)
+    const bool msaa = g_msaa.active > 1;
+    if (msaa) { if (GhostMSAA_Ensure(g_rhi, g_msaa, vp, rw, rh) != GHOST_OK) return; }
+    else      GhostMSAA_Release(g_msaa, vp);
+
     // ---- Matrices ----
     GhostVec3 eye = cam->position;
     GhostVec3 forward = AnglesToDir(cam->yawDeg, cam->pitchDeg);
@@ -1974,6 +1986,8 @@ static void RenderViewport(int vp)
     {
         g_rhi->BeginFrame(&g_clearColor, dsv);
     }
+
+    if (msaa) GhostMSAA_Begin(g_rhi, g_pipeline, g_msaa, vp, &g_clearColor, rw, rh);   // from here every draw goes to the MSAA target
 
     GhostSceneCB sceneCB;
     BuildSceneCB(g_scene, sceneCB);
@@ -2119,6 +2133,8 @@ static void RenderViewport(int vp)
 
         GhostDrawUI(g_rhi, g_pipeline, frameQuads, rw, rh, (float)rh / 1080.0f);
     }
+
+    if (msaa) GhostMSAA_End(g_rhi, g_pipeline, g_msaa, vp, custom);   // resolve BEFORE the offscreen target goes back to a texture
     if (custom)
     {
         GhostEndOffscreen(g_rhi, g_pipeline, vp);
@@ -2420,6 +2436,8 @@ void GhostEngine_Tick()
         PruneMulti();
         if (g_marquee && !(GetAsyncKeyState(VK_LBUTTON) & 0x8000)) g_marquee = false;
     }
+
+    GhostMSAA_Apply(g_rhi, g_pipeline, g_msaa, g_msaaWanted);   // between frames: the GPU is idle, so PSOs and targets can be swapped
     // ---- Render: camera windows first, the main view last (it carries the vsync) ----
     for (int vp = 1; vp < GHOST_MAX_SURFACES; vp++)
         if (g_vp[vp].alive) RenderViewport(vp);
@@ -2441,6 +2459,7 @@ void GhostEngine_Resize(unsigned int width, unsigned int height)
 void GhostEngine_Shutdown()
 {
     GhostGameModule_Unload();
+    GhostMSAA_Shutdown(g_msaa);
     GhostPipelineDestroy(g_pipeline);
     g_pipeline = nullptr;
 
@@ -2692,6 +2711,7 @@ void GhostEngine_DestroyViewport(int vp)
     g_rhi->DestroySurface(vp);
     GhostReleaseDepth(g_pipeline, vp);
     GhostReleaseOffscreen(g_pipeline, vp);
+    GhostMSAA_Release(g_msaa, vp);
     g_vp[vp] = EngineViewport();
 }
 
@@ -4616,3 +4636,9 @@ void GhostEngine_SetSelection(const int* ids, int count)
 
 void GhostEngine_SetColliderMode(int on) { g_colMode = (on != 0); }
 int  GhostEngine_GetColliderMode() { return g_colMode ? 1 : 0; }
+// ============================================================
+//  Exported: antialiasing
+// ============================================================
+void GhostEngine_SetMSAA(int samples) { g_msaaWanted = samples < 1 ? 1 : (samples > 8 ? 8 : samples); }
+int  GhostEngine_GetMSAA() { return (int)g_msaa.active; }
+int  GhostEngine_GetMSAAMax() { return (int)g_msaa.maxSamples; }

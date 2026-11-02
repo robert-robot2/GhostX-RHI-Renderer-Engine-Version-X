@@ -292,4 +292,9 @@ extern "C"
     GHOST_API void GhostEngine_SetColliderMode(int on);
     GHOST_API int  GhostEngine_GetColliderMode();
 
+    // ---- Antialiasing ----
+    GHOST_API void GhostEngine_SetMSAA(int samples);      // 1 = off, 2 / 4 / 8. Applied before the next frame; clamped to what the GPU supports
+    GHOST_API int  GhostEngine_GetMSAA();                 // the sample count currently in use
+    GHOST_API int  GhostEngine_GetMSAAMax();              // highest supported: 1, 2, 4 or 8
+
 }

@@ -14,6 +14,7 @@ namespace GhostShell
         public string LastProjectFolder { get; set; } = "";
         public string ViewSettings { get; set; } = "";
         public string GizmoSettings { get; set; } = "";
+        public int MsaaSamples { get; set; } = 1;      // 1 = off, 2, 4 or 8
     }
 
     internal static class GhostSettings

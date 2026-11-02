@@ -143,6 +143,10 @@ struct GhostPipeline
     bool                         rtvOverrideActive = false;
 
     D3D12_CPU_DESCRIPTOR_HANDLE  rtvOverride = {};
+    // ---- MSAA ----
+    unsigned int                 sampleCount = 1;          // sample count the scene PSOs were built for
+    bool                         dsvOverrideActive = false;
+    D3D12_CPU_DESCRIPTOR_HANDLE  dsvOverride = {};
     ComPtr<ID3D12DescriptorHeap> dsvHeap; 
 
     D3D12_VIEWPORT viewport = {};
@@ -166,6 +170,9 @@ GhostResult GhostUploadMeshData(IGhostRHI* rhi, GhostPipeline* pipeline, int mes
 
 GhostResult GhostUploadMeshes(IGhostRHI* rhi, GhostPipeline* pipeline);
 
+// Rebuilds the PSOs that draw into the scene target (main, icon, UI, overlays, sky) at a new sample count.
+// Between frames only. On failure nothing is changed.
+GhostResult GhostRebuildScenePSOs(IGhostRHI* rhi, GhostPipeline* pipeline, unsigned int sampleCount);
 
 void GhostUpdateObjectCB(GhostPipeline* pipeline, unsigned int slot, const GhostObjectCB* cb);
 void GhostUpdateSceneCB(GhostPipeline* pipeline, const GhostSceneCB* cb);

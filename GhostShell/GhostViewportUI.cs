@@ -37,6 +37,7 @@ namespace GhostShell
 
         private delegate void ChangeG(ref GhostGizmoSettings g);
         private readonly List<(ToolStripMenuItem item, Func<GhostGizmoSettings, bool> on)> _marksG = new();
+        private readonly List<(ToolStripMenuItem item, int samples)> _marksAA = new();
 
 
         public GhostViewportBar(Control host)
@@ -98,6 +99,19 @@ namespace GhostShell
             into.Add(it);
             _marksG.Add((it, on));
             return it;
+        }
+
+        private void AddAA(ToolStripItemCollection into, string text, int samples)
+        {
+            var it = new ToolStripMenuItem(text);
+            it.Click += (s, e) =>
+            {
+                GhostEngine.GhostEngine_SetMSAA(samples);
+                GhostSettings.Data.MsaaSamples = samples;
+                GhostSettings.Save();
+            };
+            into.Add(it);
+            _marksAA.Add((it, samples));
         }
 
         private void EditG(ChangeG c)
@@ -213,6 +227,11 @@ namespace GhostShell
             }
 
             it.Add(new ToolStripSeparator());
+            ToolStripMenuItem aa = Sub(it, "Antialiasing");
+            AddAA(aa.DropDownItems, "Off", 1);
+            AddAA(aa.DropDownItems, "MSAA 2x", 2);
+            AddAA(aa.DropDownItems, "MSAA 4x", 4);
+            AddAA(aa.DropDownItems, "MSAA 8x", 8);
             var reset = new ToolStripMenuItem("Reset view settings");
             reset.Click += (s, e) =>
             {
@@ -251,6 +270,13 @@ namespace GhostShell
             foreach (var (item, on) in _marks) item.Checked = on(s);
             GhostEngine.GhostEngine_GetGizmoSettings(out GhostGizmoSettings gs);
             foreach (var (item, on) in _marksG) item.Checked = on(gs);
+            int aaMax = GhostEngine.GhostEngine_GetMSAAMax();
+            int aaNow = GhostEngine.GhostEngine_GetMSAA();
+            foreach (var (item, n) in _marksAA)
+            {
+                item.Checked = (n == aaNow);
+                item.Enabled = (n <= aaMax);                 // greyed out when the GPU can't do it
+            }
         }
 
         private void Sync()
@@ -323,6 +349,7 @@ namespace GhostShell
                 var g = new GhostGizmoSettings { snap = gSnap, moveStep = gMove, rotStep = gRot, scaleStep = gScale };
                 GhostEngine.GhostEngine_SetGizmoSettings(ref g);
             }
+            GhostEngine.GhostEngine_SetMSAA(GhostSettings.Data.MsaaSamples);
             Sync();
         }
     }

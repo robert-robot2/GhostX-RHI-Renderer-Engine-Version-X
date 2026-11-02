@@ -26,6 +26,7 @@ public:
     ID3D12Device* GetDevice()  override;
     ID3D12GraphicsCommandList* GetCmdList() override;
     D3D12_CPU_DESCRIPTOR_HANDLE GetRTV()     override;
+    void ResolveToBackBuffer(ID3D12Resource* msaaSource, DXGI_FORMAT format) override;
     GhostResult ExecuteOneShot(
         const std::function<void(ID3D12GraphicsCommandList*)>& record) override;
     int          CreateSurface(HWND hwnd, unsigned int width, unsigned int height) override;
