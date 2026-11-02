@@ -198,7 +198,9 @@ F / G	F toggles face-pick mode, G toggles the grid
 - [ ] DirectX 9
 ## Controls
 
-### Editor
+## Controls
+
+### Editor: viewport
 
 | Input | Action |
 |---|---|
@@ -211,51 +213,83 @@ F / G	F toggles face-pick mode, G toggles the grid
 | Mouse wheel (orbit camera) | Change camera orbit distance |
 | `Z` | Jump camera to the selected object |
 | Double-click an object in the Hierarchy | Jump camera to that object |
-| Left click | Select an object, light or camera |
-| Red collider box | Automatically appears around the selected object |
-| Left drag | Move the selection on a camera-facing plane (locked objects can't be dragged) |
-| Tool dropdown (top left of the viewport) | Switch between Select, Translate, Rotate, Scale and Dimension |
-| Drag a gizmo handle | Move, rotate or scale along an axis |
-| `Shift` while dragging a gizmo | Toggle snapping |
-| `Esc` while dragging a gizmo | Cancel the drag |
-| Click a dimension label or edge | Type an exact size |
-| `Shift` + left click | Pick one face of an object (click again for All Faces) |
-| `F` | Toggle face-pick mode |
-| `G` | Toggle grid visibility |
-| `Delete` | Delete the selection (the last camera can't be deleted) |
-| `Ctrl` + `D` | Duplicate the selected object |
-| `Ctrl` + `F` | Array duplicate: line, grid, staircase, square outline or circle, with set counts and XYZ spacing |
-| `Ctrl` + `Z` | Undo |
-| `Ctrl` + `Y` | Redo |
-| `Ctrl` + `Shift` + `Z` | Redo |
-| `Ctrl` + `C` | Copy selected object |
-| `Ctrl` + `V` | Paste copied object |
-| `F2` | Rename selected object |
-| Right-click an object in the Hierarchy | Open the right-click context menu |
-| Right-click in the viewport | Open the viewport context menu |
-| `Ctrl` + `S` | Save the scene (saves the open UI or animation file if that window has focus) |
-| `4` | Hide or show all tool panels |
-| Drag a texture tile onto an object | Apply it (hold `Shift` for one face) |
-| Drag a palette item into the viewport, or double-click it | Add it to the scene |
 | Double-click a camera in the Hierarchy | Make it the main view camera |
-| Edit menu | Access Copy, Paste and other editing commands |
+| `G` | Toggle grid visibility |
+| Hover the viewport | Gives it keyboard focus (unless you're typing in a panel) |
 
 > Camera keys only work while a viewport has focus, so typing in a panel never moves the camera.
 
-### Gameplay
+### Editor: selecting and editing
 
 | Input | Action |
 |---|---|
-| `W` `A` `S` `D` | Move (relative to the camera) |
-| `Shift` | Run. Hold it next to a shell to pick it up, release to throw |
-| `Space` | Jump (hold for a higher jump) |
-| `S` / Down | Crouch, or enter a pipe (Portal Trigger = Press Down) |
-| `F` | Enter a portal (Portal Trigger = Press F) |
-| Left click | Attack (Fire Mario throws a fireball) |
-| Right mouse + drag | Orbit the camera |
-| Mouse wheel | Zoom the orbit camera |
-| `Q` / `E` | Turn the camera (free camera only) |
-| `Esc` | Open or close the Options menu |
+| Left click | Select an object, light, camera or sky icon |
+| Red collider box | Automatically appears around the selected object |
+| Left drag | Move the selection on a camera-facing plane (locked objects can't be dragged) |
+| `Shift` + left click | Pick one face of an object (click the same face again for All Faces) |
+| `F` | Toggle face-pick mode |
+| `Delete` | Delete the selection (the last camera can't be deleted) |
+| `Ctrl` + `D` | Duplicate the selected object |
+| `Ctrl` + `F` | Array duplicate: line, grid, staircase, square outline or circle, with set counts and XYZ spacing |
+| `Ctrl` + `C` / `Ctrl` + `V` | Copy / paste the selected object |
+| `Ctrl` + `Z` | Undo |
+| `Ctrl` + `Y` or `Ctrl` + `Shift` + `Z` | Redo |
+| `F2` | Rename the selected object |
+| Right-click in the Hierarchy | Object context menu |
+| Right-click in the viewport | Viewport context menu |
+| Edit menu | Copy, Paste and other editing commands |
+| Details panel | Edit Transform, Material, Shadows, Gameplay role and Behavior live |
+| Locked in place (Gameplay) | Object stays selectable but can't be dragged or gizmo-edited |
+
+### Editor: tools and gizmos
+
+| Input | Action |
+|---|---|
+| Tool dropdown (top left of the viewport) | Select, Translate, Rotate, Scale, Dimension |
+| Drag a gizmo handle | Move, rotate or scale along an axis (centre handle = uniform scale) |
+| `Shift` while dragging a gizmo | Toggle snapping |
+| `Esc` while dragging a gizmo | Cancel the drag and restore the original values |
+| Click a dimension label or edge | Type an exact size (`10mm`, `2in`, ...) |
+| View menu | Space (World / Local), units, decimals, grid size, grid plane and style, overlays |
+
+### Adding and texturing
+
+| Input | Action |
+|---|---|
+| Drag a palette item into the viewport, or double-click it | Add it to the scene |
+| Drag a texture tile onto an object | Apply it (hold `Shift` for one face) |
+| Double-click a texture tile | Apply it to the selection |
+| Drop images or 3D models onto the Content Browser | Import them |
+| Double-click a `.ghostscene` / `.ghostui` / `.ghostanim` in the Content Browser | Open it |
+
+### Panels and windows
+
+| Input | Action |
+|---|---|
+| `Ctrl` + `S` | Save the scene (saves the open UI or animation file if that window has focus) |
+| `4` | Hide or show all tool panels |
+| Drag a panel tab | Dock, tab or float it |
+| Window menu | Show Viewport, Palette, Hierarchy, Details, Content Browser, UI Designer, Animation Editor, Reset Layout |
+| Camera > Show Viewport | Open a live window for that camera (up to 4 cameras) |
+
+The layout is saved when you close the editor.
+
+### Play mode (the game module)
+
+| Input | Action |
+|---|---|
+| Play menu | Start, pause and stop the game |
+| `W` `A` `S` `D` / arrow keys | Move (relative to the camera) |
+| `Shift` | Run |
+| `Space` | Jump (tap for a short hop, hold for full height) |
+| `S` / `Down` | Crouch; also enters a pipe set to Press Down |
+| `F` | Enter a portal set to Press F |
+| `Q` / `E` | Turn a free camera |
+| Right mouse + move | Orbit an orbit camera |
+| Mouse wheel | Zoom an orbit camera |
+| `R` | Restart the level |
+
+> The editor camera and gizmos are off while playing. Stopping Play restores the scene exactly as it was.
 
 - Coming soon: right-click features, copy and paste, and key rebinding.
 ## How To FAQ
