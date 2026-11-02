@@ -139,6 +139,7 @@ F / G	F toggles face-pick mode, G toggles the grid
 - [ ] Phase : Antialiasing MSAA/SMAA/FXAA/TAA
 - [ ] Phase : Gamepad
 - [ ] Phase 20.G: Play Packaged Exe //Instruction Set 3
+- **Active Replicant Core**
 - [ ] Phase : Base Demo Gameplay Package to Download on site without installer
 - [ ] Phase : Base Engine For Use Without Package Installer for Download
 - [ ] Phase : Install Shield Wizard/ Packaged Install for Download
