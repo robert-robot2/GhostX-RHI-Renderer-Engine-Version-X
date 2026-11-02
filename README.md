@@ -149,6 +149,7 @@ F / G	F toggles face-pick mode, G toggles the grid
 - [ ] Phase 24: Check All Editor Windows/ Move To window Palette/ Add DropDowns
 - [ ] Phase 26: Mario Dance
 - [ ] Phase 27: Editor Upgrade to Quat Camera
+- [ ] Phase : Particle Editor Manager
 - [ ] Phase 30: Upgrade Roles to Show only their Behaviours not all Behaviours.
 - [ ] Phase 29.C: Thicc Editor Upgrade Part Drei: Collision Rotation
 - [ ] Phase : Vertical Sync, Rendering Polish
@@ -181,7 +182,6 @@ F / G	F toggles face-pick mode, G toggles the grid
 - [ ] Phase : Blueprint Material Editor/ Full Materials
 - [ ] Phase : AutoCad Mesh Integration .step import
 - [ ] Phase : Animation Editor/ Bone Hierarchy Editor
-- [ ] Phase : Particle Manager
 - [ ] Phase : Full Mesh Editor/ Sculpting/Animation/Texture Painting
 - [ ] Phase : Multiple RHI Backends Mods
 - [ ] Phase : Interactive Blazor WASM Ghost UI Documentation/Download/Store/Mod/Updates
