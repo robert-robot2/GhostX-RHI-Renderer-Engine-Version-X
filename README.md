@@ -136,7 +136,8 @@ F / G	F toggles face-pick mode, G toggles the grid
 - [x] Phase 31: Antialiasing MSAA 2x/4x/8x
 - [x] Phase 32: Antialiasing TAA with Jitter adjustment
 - **Active Core**
-- [ ] Phase 20.G: Collision, Polish for Levels 
+- [ ] Phase 20.G: Collision, Polish for Levels
+- [ ] Phase 20.O: FINAL FORM YET IS MY POWER LEVEL OVER 9000??? Flying Shell Drops, Doppelgangers, Bopper Spinners
 - [ ] Phase 33: Audio
 - [ ] Phase 34: Gamepad
 - [ ] Phase 20.N: Play Packaged Exe //Instruction Set 3
