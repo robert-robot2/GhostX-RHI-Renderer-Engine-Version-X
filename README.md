@@ -133,10 +133,10 @@ F / G	F toggles face-pick mode, G toggles the grid
 - [x] Phase 20.L: Boss
 - [x] Phase 29.B: Thicc Editor Upgrade Part Duece: Camera Check, Click Drag, Shift Multi Select, F for Faces, Collision H
 - [x] Phase 20.F: Level 2 Build // Instruction Set 2 Complete
+- [x] Phase 31: Antialiasing MSAA
 - **Active Core**
 - [ ] Phase 20.G: Collision, Polish for Levels 
 - [ ] Phase : Audio
-- [ ] Phase : Antialiasing MSAA/SMAA/FXAA/TAA
 - [ ] Phase : Gamepad
 - [ ] Phase 20.G: Play Packaged Exe //Instruction Set 3
 - **Active Replicant Core**
@@ -155,6 +155,7 @@ F / G	F toggles face-pick mode, G toggles the grid
 - [ ] Phase 29.C: Thicc Editor Upgrade Part Drei: Collision Rotation
 - [ ] Phase : Vertical Sync, Rendering Polish
 - **Active SubCore**
+- [ ] Phase : Antialiasing SMAA/FXAA/TAA
 - [ ] Phase : Co-op Multiplayer
 - [ ] Phase : Online Multiplayer
 - [ ] Phase 13.D: A CAD-style set of annotation tools on top of the blueprint grid.
