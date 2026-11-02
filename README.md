@@ -132,7 +132,7 @@ Right-click menu	Right-click in the Hierarchy, or tap right-click in the viewpor
 F / G	F toggles face-pick mode, G toggles the grid
 - [x] Phase 20.L: Boss
 - [x] Phase 29.B: Thicc Editor Upgrade Part Duece: Camera Check, Click Drag, Shift Multi Select, F for Faces, Collision H
-- [x] Phase 20.F: Level 2 Build // Instruction Set 2 Complete
+- [x] Phase 20.M: Level 2 Build // Instruction Set 2 Complete
 - [x] Phase 31: Antialiasing MSAA 2x/4x/8x
 - **Active Core**
 - [ ] Phase 20.G: Collision, Polish for Levels 
