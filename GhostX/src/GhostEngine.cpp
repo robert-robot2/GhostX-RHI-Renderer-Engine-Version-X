@@ -15,6 +15,7 @@
 #include "../include/GhostModelImport.h"
 #include "../include/GhostOverlay.h"
 #include "../include/GhostMSAA.h"
+#include "../include/GhostTAA.h"
 #include <string.h>
 #include <filesystem>
 #include <map>
@@ -27,6 +28,9 @@ static IGhostRHI* g_rhi = nullptr;
 static GhostPipeline* g_pipeline = nullptr;
 static GhostMSAA  g_msaa;
 static int        g_msaaWanted = 1;
+static GhostTAA   g_taa;
+static int        g_taaOn = 0;
+static float      g_taaSpeed = 1.0f;
 
 // ---- Camera state ----
 static GhostVec3 g_eye = { 0.0f, 0.75f, -2.0f };
@@ -238,7 +242,7 @@ int GhostEngine_Init(HWND hwnd, unsigned int width, unsigned int height)
 
     //add failure is not fatal, MSAA just stays unavailable??
     GhostMSAA_Init(g_rhi, g_msaa);
-
+    GhostTAA_Init(g_rhi, g_taa);                  // failure is not fatal: TAA just stays unavailable
 
     // ---- Built-in textures: id 0 = white (untextured draws), id 1 = checkerboard (UV debugging) ----
     {
@@ -1952,19 +1956,30 @@ static void RenderViewport(int vp)
     const bool msaa = g_msaa.active > 1;
     if (msaa) { if (GhostMSAA_Ensure(g_rhi, g_msaa, vp, rw, rh) != GHOST_OK) return; }
     else      GhostMSAA_Release(g_msaa, vp);
-
+    // TAA targets follow the render size (freed again when TAA is off)
+    bool taa = g_taaOn && !msaa && g_taa.ready;
+    if (taa && GhostTAA_Ensure(g_rhi, g_taa, vp, rw, rh) != GHOST_OK) taa = false;
+    if (!taa) GhostTAA_Release(g_taa, vp);
+    float jx = 0.0f, jy = 0.0f;
     // ---- Matrices ----
     GhostVec3 eye = cam->position;
     GhostVec3 forward = AnglesToDir(cam->yawDeg, cam->pitchDeg);
     GhostVec3 worldUp = { 0.0f, 1.0f, 0.0f };
     GhostVec3 right = worldUp.Cross(forward).Normalize();
     GhostMat4 view = GhostMat4::LookAtLH(eye, eye + forward, worldUp);
-    GhostMat4 proj = GhostMat4::PerspectiveFovLH(cam->fovDeg * d2r, (float)rw / (float)rh, 0.1f, 100.0f);
+    const GhostMat4 projClean = GhostMat4::PerspectiveFovLH(cam->fovDeg * d2r, (float)rw / (float)rh, 0.1f, 100.0f);
+    GhostMat4 proj = projClean;                       // what gets drawn with: jittered while TAA is on
+    if (taa)
+    {
+        GhostTAA_NextJitter(g_taa, vp, g_taaSpeed, jx, jy);
+        proj.m[0][2] += jx * 2.0f / (float)rw;        // shifts clip x by jx pixels (clip.w = view z)
+        proj.m[1][2] += jy * 2.0f / (float)rh;
+    }
 
     if (mainView)                                   // picking and dragging use the main view only
     {
         g_view = view;
-        g_proj = proj;
+        g_proj = projClean;                           // picking never sees the jitter
         g_mainEye = eye;
         g_camR = right;
         g_camU = forward.Cross(right);
@@ -1988,7 +2003,7 @@ static void RenderViewport(int vp)
     }
 
     if (msaa) GhostMSAA_Begin(g_rhi, g_pipeline, g_msaa, vp, &g_clearColor, rw, rh);   // from here every draw goes to the MSAA target
-
+    if (taa) GhostTAA_Begin(g_rhi, g_pipeline, g_taa, vp, &g_clearColor, rw, rh);   // scene, icons and overlays draw jittered
     GhostSceneCB sceneCB;
     BuildSceneCB(g_scene, sceneCB);
     RenderShadowPass(sceneCB, eye, rw, rh);          // renders the shadow maps and fills the shadow fields
@@ -2116,6 +2131,23 @@ static void RenderViewport(int vp)
     }
 
     if (mainView && (overlays || g_viewCfg.showFps)) DrawViewportOverlay(view, proj, eye, rw, rh, overlays);
+    if (taa)
+    {
+        GhostTAAFrame tf = {};
+        const GhostVec3 camUp = forward.Cross(right);
+        tf.eye[0] = eye.x;      tf.eye[1] = eye.y;      tf.eye[2] = eye.z;
+        tf.right[0] = right.x;  tf.right[1] = right.y;  tf.right[2] = right.z;
+        tf.up[0] = camUp.x;     tf.up[1] = camUp.y;     tf.up[2] = camUp.z;
+        tf.fwd[0] = forward.x;  tf.fwd[1] = forward.y;  tf.fwd[2] = forward.z;
+        tf.p00 = projClean.m[0][0];  tf.p11 = projClean.m[1][1];
+        tf.p22 = projClean.m[2][2];  tf.p23 = projClean.m[2][3];
+        const GhostMat4 vpClean = projClean * view;
+        memcpy(tf.vp, vpClean.m, 16 * sizeof(float));
+
+        // Resolve into the offscreen image (custom resolution) or the window back buffer (Match Window)
+        const D3D12_CPU_DESCRIPTOR_HANDLE dest = custom ? GhostGetOffscreenRTV(g_pipeline, vp) : g_rhi->GetRTV();
+        GhostTAA_End(g_rhi, g_pipeline, g_taa, vp, dest, custom, tf);
+    }
     // ---- 2D game UI: main view, while a game is running. Retained widgets first, then the game's immediate quads ----
     if (mainView && g_playState != GhostPlayState::Editing)
     {
@@ -2133,6 +2165,8 @@ static void RenderViewport(int vp)
 
         GhostDrawUI(g_rhi, g_pipeline, frameQuads, rw, rh, (float)rh / 1080.0f);
     }
+
+
 
     if (msaa) GhostMSAA_End(g_rhi, g_pipeline, g_msaa, vp, custom);   // resolve BEFORE the offscreen target goes back to a texture
     if (custom)
@@ -2437,7 +2471,7 @@ void GhostEngine_Tick()
         if (g_marquee && !(GetAsyncKeyState(VK_LBUTTON) & 0x8000)) g_marquee = false;
     }
 
-    GhostMSAA_Apply(g_rhi, g_pipeline, g_msaa, g_msaaWanted);   // between frames: the GPU is idle, so PSOs and targets can be swapped
+    GhostMSAA_Apply(g_rhi, g_pipeline, g_msaa, g_taaOn ? 1 : g_msaaWanted);   // TAA and MSAA are exclusive
     // ---- Render: camera windows first, the main view last (it carries the vsync) ----
     for (int vp = 1; vp < GHOST_MAX_SURFACES; vp++)
         if (g_vp[vp].alive) RenderViewport(vp);
@@ -2460,6 +2494,7 @@ void GhostEngine_Shutdown()
 {
     GhostGameModule_Unload();
     GhostMSAA_Shutdown(g_msaa);
+    GhostTAA_Shutdown(g_taa);
     GhostPipelineDestroy(g_pipeline);
     g_pipeline = nullptr;
 
@@ -2712,6 +2747,7 @@ void GhostEngine_DestroyViewport(int vp)
     GhostReleaseDepth(g_pipeline, vp);
     GhostReleaseOffscreen(g_pipeline, vp);
     GhostMSAA_Release(g_msaa, vp);
+    GhostTAA_Release(g_taa, vp);
     g_vp[vp] = EngineViewport();
 }
 
@@ -4642,3 +4678,8 @@ int  GhostEngine_GetColliderMode() { return g_colMode ? 1 : 0; }
 void GhostEngine_SetMSAA(int samples) { g_msaaWanted = samples < 1 ? 1 : (samples > 8 ? 8 : samples); }
 int  GhostEngine_GetMSAA() { return (int)g_msaa.active; }
 int  GhostEngine_GetMSAAMax() { return (int)g_msaa.maxSamples; }
+
+void  GhostEngine_SetTAA(int on) { g_taaOn = on ? 1 : 0; }
+int   GhostEngine_GetTAA() { return g_taaOn; }
+void  GhostEngine_SetTAAJitterSpeed(float s) { g_taaSpeed = (s != s) ? 1.0f : (s < 0.05f ? 0.05f : (s > 4.0f ? 4.0f : s)); }
+float GhostEngine_GetTAAJitterSpeed() { return g_taaSpeed; }

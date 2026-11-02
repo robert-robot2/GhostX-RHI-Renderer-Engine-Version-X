@@ -297,4 +297,9 @@ extern "C"
     GHOST_API int  GhostEngine_GetMSAA();                 // the sample count currently in use
     GHOST_API int  GhostEngine_GetMSAAMax();              // highest supported: 1, 2, 4 or 8
 
+    GHOST_API void  GhostEngine_SetTAA(int on);                    // 1 = TAA (forces MSAA off)
+    GHOST_API int   GhostEngine_GetTAA();
+    GHOST_API void  GhostEngine_SetTAAJitterSpeed(float speed);    // 0.05 .. 4, default 1
+    GHOST_API float GhostEngine_GetTAAJitterSpeed();
+
 }

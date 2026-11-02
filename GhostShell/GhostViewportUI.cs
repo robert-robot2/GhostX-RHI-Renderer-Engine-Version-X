@@ -38,7 +38,8 @@ namespace GhostShell
         private delegate void ChangeG(ref GhostGizmoSettings g);
         private readonly List<(ToolStripMenuItem item, Func<GhostGizmoSettings, bool> on)> _marksG = new();
         private readonly List<(ToolStripMenuItem item, int samples)> _marksAA = new();
-
+        private ToolStripMenuItem _taaItem = null!;
+        private readonly List<(ToolStripMenuItem item, float speed)> _marksJit = new();
 
         public GhostViewportBar(Control host)
         {
@@ -106,12 +107,36 @@ namespace GhostShell
             var it = new ToolStripMenuItem(text);
             it.Click += (s, e) =>
             {
+                GhostEngine.GhostEngine_SetTAA(0);                    // MSAA and TAA are exclusive
                 GhostEngine.GhostEngine_SetMSAA(samples);
+                GhostSettings.Data.TaaEnabled = 0;
                 GhostSettings.Data.MsaaSamples = samples;
                 GhostSettings.Save();
             };
             into.Add(it);
             _marksAA.Add((it, samples));
+        }
+
+        private static void SelectTAA()
+        {
+            GhostEngine.GhostEngine_SetMSAA(1);
+            GhostEngine.GhostEngine_SetTAA(1);
+            GhostSettings.Data.MsaaSamples = 1;
+            GhostSettings.Data.TaaEnabled = 1;
+            GhostSettings.Save();
+        }
+
+        private void AddJit(ToolStripItemCollection into, string text, float speed)
+        {
+            var it = new ToolStripMenuItem(text);
+            it.Click += (s, e) =>
+            {
+                GhostEngine.GhostEngine_SetTAAJitterSpeed(speed);
+                GhostSettings.Data.TaaJitterSpeed = GhostEngine.GhostEngine_GetTAAJitterSpeed();
+                GhostSettings.Save();
+            };
+            into.Add(it);
+            _marksJit.Add((it, speed));
         }
 
         private void EditG(ChangeG c)
@@ -232,6 +257,16 @@ namespace GhostShell
             AddAA(aa.DropDownItems, "MSAA 2x", 2);
             AddAA(aa.DropDownItems, "MSAA 4x", 4);
             AddAA(aa.DropDownItems, "MSAA 8x", 8);
+            _taaItem = new ToolStripMenuItem("TAA  (soft, RE-style)");
+            _taaItem.Click += (s, e) => SelectTAA();
+            aa.DropDownItems.Add(_taaItem);
+            aa.DropDownItems.Add(new ToolStripSeparator());
+            ToolStripMenuItem jit = Sub(aa.DropDownItems, "TAA jitter speed");
+            AddJit(jit.DropDownItems, "Very slow (0.25x)", 0.25f);
+            AddJit(jit.DropDownItems, "Slow (0.5x)", 0.5f);
+            AddJit(jit.DropDownItems, "Normal (1x)  default", 1.0f);
+            AddJit(jit.DropDownItems, "Fast (2x)", 2.0f);
+            AddJit(jit.DropDownItems, "Very fast (3x)", 3.0f);
             var reset = new ToolStripMenuItem("Reset view settings");
             reset.Click += (s, e) =>
             {
@@ -272,11 +307,15 @@ namespace GhostShell
             foreach (var (item, on) in _marksG) item.Checked = on(gs);
             int aaMax = GhostEngine.GhostEngine_GetMSAAMax();
             int aaNow = GhostEngine.GhostEngine_GetMSAA();
+            bool taaNow = GhostEngine.GhostEngine_GetTAA() != 0;
             foreach (var (item, n) in _marksAA)
             {
-                item.Checked = (n == aaNow);
-                item.Enabled = (n <= aaMax);                 // greyed out when the GPU can't do it
+                item.Checked = !taaNow && n == aaNow;
+                item.Enabled = (n <= aaMax);
             }
+            _taaItem.Checked = taaNow;
+            float js = GhostEngine.GhostEngine_GetTAAJitterSpeed();
+            foreach (var (item, v) in _marksJit) item.Checked = Math.Abs(v - js) < 1e-3f;
         }
 
         private void Sync()
@@ -350,6 +389,8 @@ namespace GhostShell
                 GhostEngine.GhostEngine_SetGizmoSettings(ref g);
             }
             GhostEngine.GhostEngine_SetMSAA(GhostSettings.Data.MsaaSamples);
+            GhostEngine.GhostEngine_SetTAAJitterSpeed(GhostSettings.Data.TaaJitterSpeed);
+            GhostEngine.GhostEngine_SetTAA(GhostSettings.Data.TaaEnabled);
             Sync();
         }
     }

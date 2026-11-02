@@ -414,6 +414,11 @@ namespace GhostShell
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern int GhostEngine_GetMSAA();
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern int GhostEngine_GetMSAAMax();
 
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern void GhostEngine_SetTAA(int on);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern int GhostEngine_GetTAA();
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern void GhostEngine_SetTAAJitterSpeed(float speed);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern float GhostEngine_GetTAAJitterSpeed();
+
 
     }
 }
