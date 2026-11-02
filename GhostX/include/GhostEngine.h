@@ -286,4 +286,10 @@ extern "C"
     GHOST_API void GhostEngine_SetFaceMode(int on);
     GHOST_API int  GhostEngine_GetFaceMode();
 
+    GHOST_API int  GhostEngine_GetSelectedCount();
+    GHOST_API int  GhostEngine_GetSelectedIds(int* outIds, int maxCount);   // the primary is first
+    GHOST_API void GhostEngine_SetSelection(const int* ids, int count);
+    GHOST_API void GhostEngine_SetColliderMode(int on);
+    GHOST_API int  GhostEngine_GetColliderMode();
+
 }

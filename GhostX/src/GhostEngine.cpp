@@ -19,6 +19,7 @@
 #include <map>
 #include <set> 
 #include <fstream>
+#include <algorithm>
 
 // ---- Engine state ----
 static IGhostRHI* g_rhi = nullptr;
@@ -47,6 +48,13 @@ static GhostMat4  g_proj = GhostMat4::Identity();
 static GhostVec3  g_camR = { 1, 0, 0 }, g_camU = { 0, 1, 0 }, g_camF = { 0, 0, 1 };
 static int        g_hoverId = 0;
 static bool       g_faceMode = false;     // F: a click picks a face, no Shift needed
+static std::vector<int> g_multi;                 // extra selected ids. The primary is g_scene.selectedId
+static bool g_colMode = false;                   // H: the gizmo edits the collider
+static bool g_marquee = false, g_marqueeAdd = false;
+static int  g_mqX0 = 0, g_mqY0 = 0, g_mqX1 = 0, g_mqY1 = 0, g_collapseId = 0;
+static bool g_dragMoved = false;
+static bool IsSelected(int id) { return id != 0 && (id == g_scene.selectedId || std::find(g_multi.begin(), g_multi.end(), id) != g_multi.end()); }
+static std::vector<int> SelectedIds() { std::vector<int> v; if (g_scene.selectedId) v.push_back(g_scene.selectedId); for (int i : g_multi) v.push_back(i); return v; }
 static bool       g_dragging = false;
 static int        g_dragId = 0;
 static GhostVec3  g_dragOffset;
@@ -102,8 +110,11 @@ struct GizmoState
     int  id = 0, axis = -1, tool = 0;                    // axis: 0..2 = X Y Z, 3 = uniform scale
     GhostVec3 startPos, startRot, startScale, dir, u, v;
     float t0 = 0.0f, d0 = 0.0f, ox = 0.0f, oy = 0.0f, lastAngle = 0.0f, accum = 0.0f, value = 0.0f;
+    bool col = false;  GhostVec3 startColSize, startColOff;
 };
 static GizmoState g_gizmo;
+struct GroupItem { int id; GhostVec3 pos, rot, scale; };
+static std::vector<GroupItem> g_group;           // the other selected objects while the gizmo drags
 static int        g_gizmoHover = -1;
 static bool GizmoBegin(int x, int y);
 static void GizmoUpdate(int x, int y);
@@ -468,6 +479,55 @@ static GhostVec3* EntityPosition(int id)
     return nullptr;
 }
 
+static void ToggleSelect(int id)
+{
+    if (id == 0) return;
+    if (id == g_scene.selectedId)
+    {
+        if (!g_multi.empty()) { g_scene.selectedId = g_multi.back(); g_multi.pop_back(); }
+        else g_scene.selectedId = 0;
+    }
+    else
+    {
+        auto it = std::find(g_multi.begin(), g_multi.end(), id);
+        if (it != g_multi.end()) g_multi.erase(it);
+        else { if (g_scene.selectedId) g_multi.push_back(g_scene.selectedId); g_scene.selectedId = id; }
+    }
+    g_scene.selectedFace = -1;
+}
+
+static void PruneMulti()
+{
+    for (size_t i = 0; i < g_multi.size(); )
+        if (g_multi[i] == g_scene.selectedId || !EntityPosition(g_multi[i])) g_multi.erase(g_multi.begin() + i); else i++;
+    if (!g_scene.selectedId && !g_multi.empty()) { g_scene.selectedId = g_multi.back(); g_multi.pop_back(); }
+}
+
+static void FinishMarquee()
+{
+    const bool tiny = abs(g_mqX1 - g_mqX0) < 5 && abs(g_mqY1 - g_mqY0) < 5;
+    if (tiny)                                         // a plain click on empty space
+    {
+        if (!g_marqueeAdd) { g_scene.selectedId = 0; g_multi.clear(); }
+        return;
+    }
+    const float x0 = (float)(g_mqX0 < g_mqX1 ? g_mqX0 : g_mqX1), x1 = (float)(g_mqX0 < g_mqX1 ? g_mqX1 : g_mqX0);
+    const float y0 = (float)(g_mqY0 < g_mqY1 ? g_mqY0 : g_mqY1), y1 = (float)(g_mqY0 < g_mqY1 ? g_mqY1 : g_mqY0);
+    std::vector<int> hits;
+    for (const GhostObject& o : g_scene.objects)
+    {
+        const GhostVec3 mn = GhostMesh_Min(o.meshId), mx = GhostMesh_Max(o.meshId);
+        const GhostVec3 c(o.position.x + (mn.x + mx.x) * 0.5f * o.scale.x,
+            o.position.y + (mn.y + mx.y) * 0.5f * o.scale.y,
+            o.position.z + (mn.z + mx.z) * 0.5f * o.scale.z);
+        float sx, sy;
+        if (WorldToScreen(c, sx, sy) && sx >= x0 && sx <= x1 && sy >= y0 && sy <= y1) hits.push_back(o.id);
+    }
+    if (!g_marqueeAdd) { g_scene.selectedId = 0; g_multi.clear(); }
+    for (int id : hits)
+        if (!IsSelected(id)) { if (g_scene.selectedId) g_multi.push_back(g_scene.selectedId); g_scene.selectedId = id; }
+}
+
 // Light icons are tested in screen space (they're drawn on top), then objects by ray vs. box
 static int PickAt(int sx, int sy)
 {
@@ -637,29 +697,40 @@ void GhostEngine_MouseDown(int px, int py, int button)
     if (button != 0 || g_looking || !g_haveCam || g_playState != GhostPlayState::Editing) return;
     int x, y;
     if (!PanelToRender(px, py, x, y, false)) return;          // clicked the dark bars
-    if (LabelClick(x, y)) return;                      // clicked a dimension label or an edge: the editor asks for a value
-    if (GizmoBegin(x, y)) return;                      // grabbed a gizmo handle: no picking, no free drag
+    if (LabelClick(x, y)) return;
+    if (GizmoBegin(x, y)) return;
     int id = PickAt(x, y);
+    const bool mod = ((GetAsyncKeyState(VK_SHIFT) | GetAsyncKeyState(VK_CONTROL)) & 0x8000) != 0;
 
-    // Shift+click on an object: select it and pick the face under the cursor. No drag.
-    // Shift+click on the face that is already targeted goes back to "All Faces".
-    if (((GetAsyncKeyState(VK_SHIFT) & 0x8000) || g_faceMode) && id != 0)
-    {
+    g_dragging = false; g_collapseId = 0; g_dragMoved = false; g_marquee = false;
+
+    if (g_faceMode && id != 0)                                // F: a click picks a face
         if (GhostObject* ob = FindObject(id))
         {
+            g_multi.clear();
             g_scene.selectedId = id;
-            CurrentFace();                         // re-syncs the owner, so a previous object's face never leaks over
+            CurrentFace();
             int face = PickFace(*ob, x, y);
-            if (face >= 0)
-                g_scene.selectedFace = (g_scene.selectedFace == face) ? -1 : face;
-            g_dragging = false;
+            if (face >= 0) g_scene.selectedFace = (g_scene.selectedFace == face) ? -1 : face;
             return;
         }
+    if (mod && id != 0) { ToggleSelect(id); return; }
+    if (mod || id == 0)                                       // empty space: start a selection box
+    {
+        g_marquee = true; g_marqueeAdd = mod;
+        g_mqX0 = g_mqX1 = x; g_mqY0 = g_mqY1 = y;
+        return;
     }
-    g_scene.selectedId = id;
-    g_dragging = false;
-    if (id == 0) return;
-    if (GhostObject* lo = FindObject(id)) if (lo->locked) return;     // locked: selectable, but it never starts a drag
+
+    if (IsSelected(id) && !g_multi.empty()) g_collapseId = id;   // keep the group for dragging
+    else g_multi.clear();
+    if (id != g_scene.selectedId)
+    {
+        auto it = std::find(g_multi.begin(), g_multi.end(), id);
+        if (it != g_multi.end()) { g_multi.erase(it); g_multi.push_back(g_scene.selectedId); }
+        g_scene.selectedId = id;
+    }
+    if (GhostObject* lo = FindObject(id)) if (lo->locked) return;
     GhostVec3* pos = EntityPosition(id);
     GhostVec3 o, d, hit;
     if (!pos || !ScreenRay(x, y, o, d) || !RayPlane(o, d, *pos, hit)) return;
@@ -678,17 +749,34 @@ void GhostEngine_MouseMove(int px, int py)
     int x, y;
     if (g_gizmo.active)
     {
-        PanelToRender(px, py, x, y, true);              // clamped, so a drag can run over the bars
+        PanelToRender(px, py, x, y, true);
         GizmoUpdate(x, y);
+        return;
+    }
+    if (g_marquee)
+    {
+        PanelToRender(px, py, x, y, true);
+        g_mqX1 = x; g_mqY1 = y;
         return;
     }
     if (g_dragging)
     {
-        PanelToRender(px, py, x, y, true);                    // clamped, so a drag can run over the bars
+        PanelToRender(px, py, x, y, true);
         GhostVec3* pos = EntityPosition(g_dragId);
         GhostVec3 o, d, hit;
         if (pos && ScreenRay(x, y, o, d) && RayPlane(o, d, g_dragPlanePoint, hit))
-            *pos = hit + g_dragOffset;
+        {
+            const GhostVec3 np = hit + g_dragOffset, delta = np - *pos;
+            if (delta.Length() > 1e-5f) g_dragMoved = true;
+            *pos = np;
+            for (int mid : g_multi)                           // the rest of the group follows
+            {
+                if (mid == g_dragId) continue;
+                GhostObject* ob = FindObject(mid);
+                if (ob && ob->locked) continue;
+                if (GhostVec3* q = EntityPosition(mid)) *q = *q + delta;
+            }
+        }
         return;
     }
     if (!PanelToRender(px, py, x, y, false)) { g_hoverId = 0; g_gizmoHover = -1; return; }
@@ -699,8 +787,10 @@ void GhostEngine_MouseMove(int px, int py)
 void GhostEngine_MouseUp(int x, int y, int button)
 {
     if (button == 0) UiMouseEvent(2, x, y);
-    (void)x; (void)y;
     if (button != 0) return;
+    if (g_marquee) FinishMarquee();
+    else if (g_collapseId && !g_dragMoved) { g_multi.clear(); g_scene.selectedId = g_collapseId; }   // plain click on a group member
+    g_marquee = false; g_collapseId = 0;
     g_gizmo.active = false;
     g_dragging = false;
     g_dragId = 0;
@@ -751,6 +841,7 @@ int GhostEngine_RemoveEntity(int id)
 
 void GhostEngine_SelectEntity(int id)
 {
+    g_multi.clear();
     g_scene.selectedId = (id != 0 && EntityPosition(id)) ? id : 0;
 }
 
@@ -1188,6 +1279,7 @@ struct GizmoFrame
     float     L = 1.0f;          // world length of the handles (constant on screen)
     int       tool = 0;          // the tool that actually applies to this entity
     bool      object = false;
+    bool col = false;
 };
 
 static GhostGizmoSettings g_gizSet = { 1, 0.0f, 15.0f, 0.1f };
@@ -1201,15 +1293,24 @@ static bool GizmoFrameOf(int selId, GizmoFrame& f)
     f.object = (o != nullptr);
     f.pos = *pp;
 
+    f.col = false;
+    if (g_colMode && o && o->collider)
+    {
+        f.col = true;                                   // the gizmo sits on the red collider box
+        f.pos = GhostVec3(o->position.x + o->colliderOffset.x * o->scale.x,
+            o->position.y + o->colliderOffset.y * o->scale.y,
+            o->position.z + o->colliderOffset.z * o->scale.z);
+    }
+
     int tool = g_viewCfg.tool;
     if (tool == 4) tool = 0;                                   // the Dimension tool has no handles
     if (!o && (tool == 2 || tool == 3)) tool = 0;              // only objects can be rotated and scaled
     if (o && o->locked) tool = 0;                              // a locked object shows plain axes and nothing can be grabbed
-
+    if (f.col && tool == 2) tool = 0;                   // colliders can't rotate
     f.tool = tool;
 
     f.ax[0] = GhostVec3(1, 0, 0); f.ax[1] = GhostVec3(0, 1, 0); f.ax[2] = GhostVec3(0, 0, 1);
-    if (o && (g_viewCfg.space == 1 || tool == 3))              // scale always uses the object's own axes
+    if (o && !f.col && (g_viewCfg.space == 1 || tool == 3))
     {
         const GhostMat4 M = GhostObjectModel(*o);
         for (int k = 0; k < 3; k++) f.ax[k] = GhostVec3(M.m[0][k], M.m[1][k], M.m[2][k]).Normalize();
@@ -1320,6 +1421,8 @@ static bool GizmoBegin(int x, int y)
     g.local = (g_viewCfg.space == 1) || f.tool == 3;
     g.startPos = f.pos;
     if (o) { g.startRot = o->rotationDeg; g.startScale = o->scale; }
+    g.col = f.col;
+    if (o) { g.startColSize = o->colliderSize; g.startColOff = o->colliderOffset; }
     if (h < 3) { g.dir = f.ax[h]; g.u = f.ax[(h + 1) % 3]; g.v = f.ax[(h + 2) % 3]; }
 
     if (f.tool == 1 || (f.tool == 3 && h < 3))                 // slide along an axis
@@ -1343,6 +1446,10 @@ static bool GizmoBegin(int x, int y)
         g.ox = ox; g.oy = oy;
         g.d0 = sqrtf(((float)x - ox) * ((float)x - ox) + ((float)y - oy) * ((float)y - oy));
     }
+    g_group.clear();
+    if (!f.col)
+        for (int mid : g_multi)
+            if (GhostObject* mo = FindObject(mid)) if (!mo->locked) g_group.push_back({ mid, mo->position, mo->rotationDeg, mo->scale });
     g.active = true;
     g_gizmo = g;
     return true;                                               // the click was consumed by the gizmo
@@ -1387,17 +1494,22 @@ static void GizmoUpdate(int x, int y)
     if (!g.active) return;
     GhostVec3* pos = EntityPosition(g.id);
     GhostObject* o = FindObject(g.id);
-    if (!pos || ((g.tool == 2 || g.tool == 3) && !o)) { g.active = false; return; }
+    if (!pos || ((g.tool == 2 || g.tool == 3 || g.col) && !o)) { g.active = false; return; }
 
     if (GetAsyncKeyState(VK_ESCAPE) & 0x8000)                  // cancel: put everything back
     {
-        *pos = g.startPos;
-        if (o) { o->rotationDeg = g.startRot; o->scale = g.startScale; }
+        if (g.col) { o->colliderOffset = g.startColOff; o->colliderSize = g.startColSize; }
+        else { *pos = g.startPos; if (o) { o->rotationDeg = g.startRot; o->scale = g.startScale; } }
+        for (const GroupItem& it : g_group)
+        {
+            if (GhostVec3* q = EntityPosition(it.id)) *q = it.pos;
+            if (GhostObject* go = FindObject(it.id)) { go->rotationDeg = it.rot; go->scale = it.scale; }
+        }
         g.active = false;
         return;
     }
 
-    g.snapping = (g_gizSet.snap != 0) != ((GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0);   // Shift flips snapping
+    g.snapping = (g_gizSet.snap != 0) != ((GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0);
     GhostVec3 ro, rd;
     if (!ScreenRay(x, y, ro, rd)) return;
 
@@ -1409,14 +1521,22 @@ static void GizmoUpdate(int x, int y)
         if (g.snapping)
         {
             const float step = g_gizSet.moveStep > 0.0f ? g_gizSet.moveStep : g_viewCfg.gridSize;
-            if (g_viewCfg.space == 0)                          // world axes: land on the grid lines themselves
-            {
-                const float a0 = g.startPos.Dot(g.dir);
-                s = SnapTo(a0 + s, step) - a0;
-            }
-            else s = SnapTo(s, step);                          // local axes: snap the distance travelled
+            if (g_viewCfg.space == 0) { const float a0 = g.startPos.Dot(g.dir); s = SnapTo(a0 + s, step) - a0; }
+            else s = SnapTo(s, step);
         }
-        *pos = g.startPos + g.dir * s;
+        const GhostVec3 np = g.startPos + g.dir * s;
+        if (g.col)                                             // move the collider: its offset changes
+        {
+            auto inv = [](float v) { return fabsf(v) > 1e-6f ? 1.0f / v : 0.0f; };
+            o->colliderOffset = GhostVec3((np.x - o->position.x) * inv(o->scale.x),
+                (np.y - o->position.y) * inv(o->scale.y),
+                (np.z - o->position.z) * inv(o->scale.z));
+        }
+        else
+        {
+            *pos = np;
+            for (const GroupItem& it : g_group) if (GhostVec3* q = EntityPosition(it.id)) *q = it.pos + g.dir * s;
+        }
         g.value = s;
     }
     else if (g.tool == 2)
@@ -1426,7 +1546,7 @@ static void GizmoUpdate(int x, int y)
         const GhostVec3 r = hit - g.startPos;
         const float a = atan2f(r.Dot(g.v), r.Dot(g.u));
         float d = a - g.lastAngle;
-        while (d > GHOST_PI) d -= 2.0f * GHOST_PI;             // follow the cursor round past +-180 degrees
+        while (d > GHOST_PI) d -= 2.0f * GHOST_PI;
         while (d < -GHOST_PI) d += 2.0f * GHOST_PI;
         g.accum += d;
         g.lastAngle = a;
@@ -1434,6 +1554,8 @@ static void GizmoUpdate(int x, int y)
         float deg = g.accum * (180.0f / GHOST_PI);
         if (g.snapping) deg = SnapTo(deg, g_gizSet.rotStep);
         ApplyRotation(*o, g, deg * (GHOST_PI / 180.0f));
+        for (const GroupItem& it : g_group)
+            if (GhostObject* go = FindObject(it.id)) { GizmoState gg = g; gg.startRot = it.rot; ApplyRotation(*go, gg, deg * (GHOST_PI / 180.0f)); }
         g.value = deg;
     }
     else                                                       // scale
@@ -1442,7 +1564,7 @@ static void GizmoUpdate(int x, int y)
         if (g.axis == 3)
         {
             const float dx = (float)x - g.ox, dy = (float)y - g.oy;
-            f = 1.0f + (sqrtf(dx * dx + dy * dy) - g.d0) / 100.0f;      // 100 pixels = +1.0
+            f = 1.0f + (sqrtf(dx * dx + dy * dy) - g.d0) / 100.0f;
         }
         else
         {
@@ -1453,12 +1575,13 @@ static void GizmoUpdate(int x, int y)
         if (g.snapping) f = SnapTo(f, g_gizSet.scaleStep);
         f = f < 0.01f ? 0.01f : (f > 100.0f ? 100.0f : f);
 
-        GhostVec3 ns = g.startScale;
-        if (g.axis == 3) ns = g.startScale * f;
-        else if (g.axis == 0) ns.x *= f;
-        else if (g.axis == 1) ns.y *= f;
-        else ns.z *= f;
-        o->scale = ns;
+        auto apply = [&](GhostVec3 s0) { if (g.axis == 3) s0 = s0 * f; else if (g.axis == 0) s0.x *= f; else if (g.axis == 1) s0.y *= f; else s0.z *= f; return s0; };
+        if (g.col) o->colliderSize = apply(g.startColSize);    // resize the collider
+        else
+        {
+            o->scale = apply(g.startScale);
+            for (const GroupItem& it : g_group) if (GhostObject* go = FindObject(it.id)) go->scale = apply(it.scale);
+        }
         g.value = f;
     }
 }
@@ -1736,11 +1859,35 @@ static void DrawViewportOverlay(const GhostMat4& view, const GhostMat4& proj, co
 
         }
     }
+    // This May Be incorrect Order
     if (editing && g_faceMode)
     {
+        for (int mid : g_multi) if (GhostObject* mo = FindObject(mid)) OverlayBounds(*mo, eye);
+        if (g_marquee && (abs(g_mqX1 - g_mqX0) > 4 || abs(g_mqY1 - g_mqY0) > 4))
+        {
+            const int xs[4] = { g_mqX0, g_mqX1, g_mqX1, g_mqX0 }, ys[4] = { g_mqY0, g_mqY0, g_mqY1, g_mqY1 };
+            GhostVec3 P[4];
+            bool ok = true;
+            for (int k = 0; k < 4; k++) { GhostVec3 ro, rd; if (ScreenRay(xs[k], ys[k], ro, rd)) P[k] = ro + rd * 1.0f; else ok = false; }
+            const float bc[4] = { 0.40f, 0.80f, 1.0f, 1.0f };
+            if (ok) for (int k = 0; k < 4; k++) g_ov.Line(P[k], P[(k + 1) % 4], bc, 1.5f, false);
+        }
         const float c[4] = { 0.30f, 0.95f, 0.95f, 1.0f };
         g_ov.TextPx(14.0f, (float)rh - 34.0f, 20.0f, "FACE PICK MODE  (press F to leave)", c);
     }
+    if (editing && g_colMode)
+    {
+        const float rc[4] = { 1.0f, 0.35f, 0.35f, 1.0f };
+        g_ov.TextPx(14.0f, (float)rh - 58.0f, 20.0f, "COLLIDER EDIT MODE  (H to leave. Move = offset, Scale = size)", rc);
+    }
+    if (editing && !g_multi.empty())
+    {
+        char t[32];
+        snprintf(t, sizeof t, "%d selected", (int)g_multi.size() + 1);
+        const float mc[4] = { 0.40f, 0.80f, 1.0f, 1.0f };
+        g_ov.TextPx(14.0f, (float)rh - 82.0f, 20.0f, t, mc);
+    }
+
     if (s.showFps)
     {
         char t[48];
@@ -1858,8 +2005,8 @@ static void RenderViewport(int vp)
         if (!o.visible && g_playState != GhostPlayState::Editing) continue;   // hidden in game
         const int       faceCount = GhostMesh_FaceCount(o.meshId);
         const GhostMat4 model = GhostObjectModel(o);
-        const bool      selected = overlays && (o.id == g_scene.selectedId);
-        const int       hl = selected ? CurrentFace() : -1;
+        const bool      selected = overlays && IsSelected(o.id);
+        const int       hl = (selected && o.id == g_scene.selectedId) ? CurrentFace() : -1;
         if (o.meshId == GHOST_MESH_QUAD)                       // sprite actor: one billboard quad
         {
             if (slot >= MAX_SCENE_OBJECTS) continue;
@@ -2088,6 +2235,7 @@ static void UndoRestore(const UndoSnap& s)
             if (c.id == keep.id) { c.position = keep.position; c.yawDeg = keep.yawDeg; c.pitchDeg = keep.pitchDeg; }
 
     if (!EntityPosition(g_scene.selectedId)) g_scene.selectedId = 0;
+    g_multi.clear();
     g_scene.selectedFace = -1;
     g_hoverId = 0; g_dragging = false; g_dragId = 0;
     g_scene.version++;
@@ -2266,7 +2414,12 @@ void GhostEngine_Tick()
     }
     UpdateOrbitCameras(dt, g_playState != GhostPlayState::Editing);
     UpdateSprites(dt);                                // animation clips run in the editor and while playing
-    if (g_playState == GhostPlayState::Editing) UndoTick(dt);
+    if (g_playState == GhostPlayState::Editing)
+    {
+        UndoTick(dt);
+        PruneMulti();
+        if (g_marquee && !(GetAsyncKeyState(VK_LBUTTON) & 0x8000)) g_marquee = false;
+    }
     // ---- Render: camera windows first, the main view last (it carries the vsync) ----
     for (int vp = 1; vp < GHOST_MAX_SURFACES; vp++)
         if (g_vp[vp].alive) RenderViewport(vp);
@@ -3513,33 +3666,40 @@ static int g_pasteCount = 0;
 
 int GhostEngine_CopySelected()
 {
-    GhostObject* o = FindObject(g_scene.selectedId);
-    if (!o) return 0;
     g_clip.clear();
-    g_clip.push_back(*o);
+    for (int id : SelectedIds()) if (GhostObject* o = FindObject(id)) g_clip.push_back(*o);
     g_pasteCount = 0;
-    return 1;
+    return g_clip.empty() ? 0 : 1;
 }
 
 int GhostEngine_Paste()
 {
     if (g_playState != GhostPlayState::Editing || g_clip.empty()) return 0;
-    GhostObject copy = g_clip[0];
-    if (!CanAddObject(copy.meshId)) return 0;
+    float lo = 1e30f, hi = -1e30f;                       // one shift for the whole group keeps its layout
+    for (const GhostObject& c : g_clip)
+    {
+        lo = fminf(lo, c.position.x - fabsf(c.scale.x) * 0.5f); hi = fmaxf(hi, c.position.x + fabsf(c.scale.x) * 0.5f);
+    }
     g_pasteCount++;
+    const float shift = (hi - lo + 0.25f) * (float)g_pasteCount;
 
-    std::string base = copy.name;
-    size_t sp = base.find_last_of(' ');
-    if (sp != std::string::npos && sp + 1 < base.size() &&
-        base.find_first_not_of("0123456789", sp + 1) == std::string::npos)
-        base.resize(sp);
-    copy.id = g_scene.nextId++;
-    copy.name = base + " " + std::to_string(copy.id);
-    copy.position.x += (fabsf(copy.scale.x) + 0.25f) * (float)g_pasteCount;   // each paste lands one step further over
-
-    g_scene.objects.push_back(copy);
-    g_scene.selectedId = copy.id;
-    g_scene.selectedFace = -1;
+    std::vector<int> made;
+    for (const GhostObject& src : g_clip)
+    {
+        if (!CanAddObject(src.meshId)) break;
+        GhostObject copy = src;
+        std::string base = copy.name;
+        size_t sp = base.find_last_of(' ');
+        if (sp != std::string::npos && sp + 1 < base.size() && base.find_first_not_of("0123456789", sp + 1) == std::string::npos)
+            base.resize(sp);
+        copy.id = g_scene.nextId++;
+        copy.name = base + " " + std::to_string(copy.id);
+        copy.position.x += shift;
+        g_scene.objects.push_back(copy);
+        made.push_back(copy.id);
+    }
+    if (made.empty()) return 0;
+    GhostEngine_SetSelection(made.data(), (int)made.size());
     g_scene.version++;
     return 1;
 }
@@ -4435,3 +4595,24 @@ void GhostEngine_SetLinkId(int id, const char* t)
     if (s.size() > 63) s.resize(63);
     o->link = s;
 }
+
+
+int GhostEngine_GetSelectedCount() { PruneMulti(); return (g_scene.selectedId ? 1 : 0) + (int)g_multi.size(); }
+
+int GhostEngine_GetSelectedIds(int* out, int maxCount)
+{
+    if (!out || maxCount <= 0) return 0;
+    int n = 0;
+    for (int id : SelectedIds()) { if (n >= maxCount) break; out[n++] = id; }
+    return n;
+}
+
+void GhostEngine_SetSelection(const int* ids, int count)
+{
+    g_multi.clear(); g_scene.selectedId = 0; g_scene.selectedFace = -1;
+    for (int i = 0; ids && i < count; i++)
+        if (EntityPosition(ids[i])) { if (g_scene.selectedId) g_multi.push_back(g_scene.selectedId); g_scene.selectedId = ids[i]; }
+}
+
+void GhostEngine_SetColliderMode(int on) { g_colMode = (on != 0); }
+int  GhostEngine_GetColliderMode() { return g_colMode ? 1 : 0; }

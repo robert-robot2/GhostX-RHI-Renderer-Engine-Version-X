@@ -1365,7 +1365,7 @@ namespace GhostShell
                 if (e.Button != MouseButtons.Right || GhostEngine.GhostEngine_GetPlayState() != 0) return;
                 if ((DateTime.UtcNow - _rmbDown).TotalMilliseconds > 220) return;     // held = camera look, tapped = menu
                 int id = GhostEngine.GhostEngine_PickObjectAt(e.X, e.Y, out _);
-                if (id != 0) GhostEngine.GhostEngine_SelectEntity(id);
+                if (id != 0 && !SelectedIdsList().Contains(id)) GhostEngine.GhostEngine_SelectEntity(id);   // keep a group selected
                 _ctx.Show(_viewport, e.Location);
             };
 
@@ -1420,12 +1420,15 @@ namespace GhostShell
             bool redo = (ctrl && key == Keys.Y) || (mods == (Keys.Control | Keys.Shift) && key == Keys.Z);
             bool copy = ctrl && key == Keys.C, paste = ctrl && key == Keys.V;
             bool faceKey = plain && key == Keys.F, gridKey = plain && key == Keys.G;
+            bool colKey = plain && key == Keys.H;                        
             bool focusKey = plain && key == Keys.Z, renameKey = plain && key == Keys.F2;
 
-            if (!(isFour || isDelete || ctrlD || ctrlF || undo || redo || copy || paste || faceKey || gridKey || focusKey || renameKey))
+            if (!(isFour || isDelete || ctrlD || ctrlF || undo || redo || copy || paste || faceKey || gridKey || colKey || focusKey || renameKey))
                 return false;
-            if ((faceKey || gridKey || focusKey || renameKey) && GhostEngine.GhostEngine_GetPlayState() != 0)
+            if ((faceKey || gridKey || focusKey || renameKey || colKey) && GhostEngine.GhostEngine_GetPlayState() != 0)
                 return false;                                  // while playing these keys belong to the game
+            if (colKey) { GhostEngine.GhostEngine_SetColliderMode(GhostEngine.GhostEngine_GetColliderMode() == 0 ? 1 : 0); return true; }
+
 
             Control? focus = Control.FromHandle(GhostShell.Win32.GetFocus());
             if (focus == null) return false;          // a native dialog (file / color picker) has focus
@@ -1459,17 +1462,20 @@ namespace GhostShell
 
         private void DoDelete()
         {
-            int sel = GhostEngine.GhostEngine_GetSelected();
-            if (sel == 0) return;
-            if (GhostEngine.GhostEngine_RemoveEntity(sel) == 0) System.Media.SystemSounds.Beep.Play();   // refused: the last camera stays
+            foreach (int id in SelectedIdsList())
+                if (GhostEngine.GhostEngine_RemoveEntity(id) == 0) System.Media.SystemSounds.Beep.Play();   // refused: the last camera stays
             Sync();
         }
 
-        private void DoDuplicate()          // same engine call Ctrl+D always used
+        private void DoDuplicate()          // same engine call Ctrl+D always used, once per selected object
         {
-            int sel = GhostEngine.GhostEngine_GetSelected();
-            if (sel == 0) return;
-            if (GhostEngine.GhostEngine_DuplicateEntity(sel) == 0) System.Media.SystemSounds.Beep.Play();
+            var made = new List<int>();
+            foreach (int id in SelectedIdsList())
+            {
+                int n = GhostEngine.GhostEngine_DuplicateEntity(id);
+                if (n == 0) System.Media.SystemSounds.Beep.Play(); else made.Add(n);
+            }
+            if (made.Count > 1) GhostEngine.GhostEngine_SetSelection(made.ToArray(), made.Count);
             Sync();
         }
 
@@ -2069,13 +2075,24 @@ namespace GhostShell
             }
             var o = new GhostObjectInfo();
             if (GhostEngine.GhostEngine_GetObject(id, ref o) != 0)
-                return (o, GhostEngine.GhostEngine_GetTargetFace());   // face included, so the grid refreshes when it changes
+            {
+                var gp = new GhostGameplayInfo();
+                GhostEngine.GhostEngine_GetGameplay(id, ref gp);
+                return (o, GhostEngine.GhostEngine_GetTargetFace(), gp);
+            }
             var l = new GhostLightInfo();
             if (GhostEngine.GhostEngine_GetLight(id, ref l) != 0) return l;
             var c = new GhostCameraInfo();
             if (GhostEngine.GhostEngine_GetCamera(id, ref c) != 0) return c;
             if (GhostModProxy.Exists(id)) return GhostMods.Signature(id);
             return null;
+        }
+
+        private static List<int> SelectedIdsList()
+        {
+            var buf = new int[512];
+            int n = GhostEngine.GhostEngine_GetSelectedIds(buf, buf.Length);
+            return new List<int>(new ArraySegment<int>(buf, 0, n));
         }
     }
 }
