@@ -156,7 +156,7 @@ F / G	F toggles face-pick mode, G toggles the grid
 - [ ] Phase : Particle Editor Manager
 - [ ] Phase 30: Upgrade Roles to Show only their Behaviours not all Behaviours.
 - [ ] Phase 29.C: Thicc Editor Upgrade Part Drei: Collision Rotation
-- [ ] Phase : Vertical Sync, Rendering Polish
+- [ ] Phase : Render Polis
 - **Active SubCore**
 - [ ] Phase : Antialiasing SMAA/FXAA/TAA
 - [ ] Phase : Co-op Multiplayer
@@ -193,7 +193,8 @@ F / G	F toggles face-pick mode, G toggles the grid
 - [ ] Phase : Live Download Patcher From Interactive Blazor UI instead of Store in Launcher Store is Now inside App UI.
 - [ ] Phase : Easy Mod Download Library from Blazor UI Dashboard
 - [ ] Phase : To be added, Experimental
-
+- **What the Fuck?**
+- [ ] Phase: Vertical Sync?
 ## Rendering Hardware Interface (RHI) Backends
 - **Featured**
 - [x] DirectX 12 
