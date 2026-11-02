@@ -118,6 +118,12 @@ namespace GhostShell
         public float moveStep, rotStep, scaleStep;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GhostPadInfo
+    {
+        public int connected, slot, buttons;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 6)] public float[] axes;
+    }
 
     internal static class GhostEngine
     {
@@ -419,6 +425,10 @@ namespace GhostShell
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern void GhostEngine_SetTAAJitterSpeed(float speed);
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern float GhostEngine_GetTAAJitterSpeed();
 
+        // ---- Gamepad ----
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern void GhostEngine_SetPadSettings(float deadzone, int rumble, int slot);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern int GhostEngine_GetPadInfo(out GhostPadInfo info);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern void GhostEngine_PadTestRumble(int on);
 
     }
 }

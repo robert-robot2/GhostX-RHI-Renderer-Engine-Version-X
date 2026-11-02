@@ -166,7 +166,7 @@ namespace GhostShell
 
             _menuBuilder.OnAbout += OnAbout;
             _menuBuilder.OnVersion += OnVersion;
-
+            _menuBuilder.OnGamepad += (s, e) => GhostPadDialog.Open(this);
             // ---- Engine editor panels (must come after the menu strip exists) ----
             _editor = new GhostEditorUI(this, _renderPanel);
             _editor.Build();
@@ -275,6 +275,7 @@ namespace GhostShell
                 }
                 _engineReady = true;
                 GhostFontAtlas.BakeDefault();     // the on-screen text font (the player needs it too)
+                GhostPadDialog.ApplySaved();      // saved deadzone / rumble / pad slot (the standalone player runs this too)
                 _viewBar?.ApplyStartup();                        // the overlay text needs the font, and the settings need the engine
                 GhostSceneFile.MarkClean();       // the starting scene counts as saved
                 if (GhostPlayer.IsPlayer && !GhostPlayer.Launch(this)) return;

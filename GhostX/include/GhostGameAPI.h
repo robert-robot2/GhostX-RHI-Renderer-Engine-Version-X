@@ -24,7 +24,29 @@ extern "C" {
 #define GHOST_API_MESH_SHIP     2
 #define GHOST_API_MESH_SQUARE   3
 #define GHOST_API_MESH_QUAD 4
-
+    // Gamepad buttons and axes (GhostGameAPI Pad* calls)
+#define GHOST_PAD_A 0
+#define GHOST_PAD_B 1
+#define GHOST_PAD_X 2
+#define GHOST_PAD_Y 3
+#define GHOST_PAD_LB 4
+#define GHOST_PAD_RB 5
+#define GHOST_PAD_BACK 6
+#define GHOST_PAD_START 7
+#define GHOST_PAD_LSTICK 8
+#define GHOST_PAD_RSTICK 9
+#define GHOST_PAD_UP 10
+#define GHOST_PAD_DOWN 11
+#define GHOST_PAD_LEFT 12
+#define GHOST_PAD_RIGHT 13
+#define GHOST_PAD_BUTTON_COUNT 14
+#define GHOST_PAD_AXIS_LX 0
+#define GHOST_PAD_AXIS_LY 1
+#define GHOST_PAD_AXIS_RX 2
+#define GHOST_PAD_AXIS_RY 3
+#define GHOST_PAD_AXIS_LT 4
+#define GHOST_PAD_AXIS_RT 5
+#define GHOST_PAD_AXIS_COUNT 6
     // Settings from Details > Gameplay > Behavior
     typedef struct GhostObjectProps
     {
@@ -135,6 +157,15 @@ extern "C" {
 
         int (*GetObjectProps)(int id, GhostObjectProps* out);
         int (*SpriteSetState)(int id, const char* stateName);      // plays the clip the animation maps this state to (or a clip with the same name)
+
+        // ---- gamepad (XInput). Buttons also arrive as keys: see GhostPad.cpp ----
+        int   (*PadConnected)(void);
+        int   (*PadButtonDown)(int button);
+        int   (*PadButtonPressed)(int button);
+        int   (*PadButtonReleased)(int button);
+        float (*PadAxis)(int axis);                        // sticks -1..1 (deadzone applied), triggers 0..1
+        void  (*PadRumble)(float strong, float weak, float seconds);   // 0..1 each
+        int   (*PadActive)(void);                          // 1 if the pad was the last device used
 
     } GhostGameAPI;
 

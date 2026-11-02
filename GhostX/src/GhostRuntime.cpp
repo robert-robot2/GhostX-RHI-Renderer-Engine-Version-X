@@ -2,14 +2,21 @@
 #define NOMINMAX
 #endif
 #include "../include/GhostRuntime.h"
+#include "../include/GhostPad.h"
 #include <Windows.h>
 #include <math.h>
 
+//GhostRuntime.cpp
+
 void GhostInput::Sample(bool enabled)
 {
+    GhostPad_Poll(enabled);                              // once per frame, before the keys
     for (int k = 1; k < 256; k++)
     {
-        bool now = enabled && (GetAsyncKeyState(k) & 0x8000) != 0;
+        const bool kb = enabled && (GetAsyncKeyState(k) & 0x8000) != 0;
+        const bool now = kb || (enabled && GhostPad_AsKey(k));       // the pad acts as keys too
+        if (kb && !kprev[k]) GhostPad_NoteKeyboard();
+        kprev[k] = kb;
         if (now && !prev[k]) pressed[k] = true;
         if (!now && prev[k]) released[k] = true;
         down[k] = now;
@@ -21,6 +28,7 @@ void GhostInput::EndStep()
 {
     memset(pressed, 0, sizeof pressed);
     memset(released, 0, sizeof released);
+    GhostPad_EndStep();
 }
 
 void GhostRuntime_TestBegin(const GhostScene& s, GhostTestState& t)

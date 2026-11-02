@@ -16,6 +16,7 @@
 #include "../include/GhostOverlay.h"
 #include "../include/GhostMSAA.h"
 #include "../include/GhostTAA.h"
+#include "../include/GhostPad.h"
 #include <string.h>
 #include <filesystem>
 #include <map>
@@ -2435,7 +2436,18 @@ void GhostEngine_Tick()
         g_looking = false;
         ShowCursor(TRUE);
     }
-
+    if (playing && orbitCam && g_inputEnabled && GhostPad_Connected())      // right stick orbits the camera
+    {
+        const float rx = GhostPad_Axis(GHOST_PAD_AXIS_RX), ry = GhostPad_Axis(GHOST_PAD_AXIS_RY);
+        if (rx != 0.0f || ry != 0.0f)
+        {
+            g_yaw += rx * 2.6f * dt;
+            g_pitch += ry * 1.6f * dt;
+            const float hi = cam->maxPitchDeg * toRad, lo = cam->minPitchDeg * toRad;
+            if (g_pitch > hi) g_pitch = hi;
+            if (g_pitch < lo) g_pitch = lo;
+        }
+    }
 
     auto down = [&](int vk) { return flyEnabled && (GetAsyncKeyState(vk) & 0x8000) != 0; };
     // ---- Movement ----
@@ -2492,6 +2504,7 @@ void GhostEngine_Resize(unsigned int width, unsigned int height)
 
 void GhostEngine_Shutdown()
 {
+    GhostPad_Shutdown();
     GhostGameModule_Unload();
     GhostMSAA_Shutdown(g_msaa);
     GhostTAA_Shutdown(g_taa);
@@ -3419,6 +3432,14 @@ static int Api_GetObjectProps(int id, GhostObjectProps* out)
     return 1;
 }
 
+static int   Api_PadConnected() { return GhostPad_Connected() ? 1 : 0; }
+static int   Api_PadButtonDown(int b) { return GhostPad_ButtonDown(b) ? 1 : 0; }
+static int   Api_PadButtonPressed(int b) { return GhostPad_ButtonPressed(b) ? 1 : 0; }
+static int   Api_PadButtonReleased(int b) { return GhostPad_ButtonReleased(b) ? 1 : 0; }
+static float Api_PadAxis(int a) { return GhostPad_Axis(a); }
+static void  Api_PadRumble(float s, float w, float sec) { GhostPad_Rumble(s, w, sec); }
+static int   Api_PadActive() { return GhostPad_PadActive() ? 1 : 0; }
+
 static void BuildGameApi()
 {
     GhostGameAPI& a = g_gameApi;
@@ -3450,6 +3471,9 @@ static void BuildGameApi()
     a.LoadScene = Api_LoadScene;  a.GetSceneName = Api_GetSceneName;  a.Quit = Api_Quit;
     a.GetObjectProps = Api_GetObjectProps;
     a.SpriteSetState = Api_SpriteSetState;
+    a.PadConnected = Api_PadConnected;  a.PadButtonDown = Api_PadButtonDown;
+    a.PadButtonPressed = Api_PadButtonPressed;  a.PadButtonReleased = Api_PadButtonReleased;
+    a.PadAxis = Api_PadAxis;  a.PadRumble = Api_PadRumble;  a.PadActive = Api_PadActive;
 }
 
 // Runs between steps (never inside game code). The editor's own scene stays safe in g_playBackup.
@@ -4683,3 +4707,19 @@ void  GhostEngine_SetTAA(int on) { g_taaOn = on ? 1 : 0; }
 int   GhostEngine_GetTAA() { return g_taaOn; }
 void  GhostEngine_SetTAAJitterSpeed(float s) { g_taaSpeed = (s != s) ? 1.0f : (s < 0.05f ? 0.05f : (s > 4.0f ? 4.0f : s)); }
 float GhostEngine_GetTAAJitterSpeed() { return g_taaSpeed; }
+
+
+void GhostEngine_SetPadSettings(float deadzone, int rumble, int slot) { GhostPad_SetSettings(deadzone, rumble != 0, slot); }
+
+int GhostEngine_GetPadInfo(GhostPadInfo* out)
+{
+    if (!out) return 0;
+    memset(out, 0, sizeof * out);
+    out->slot = -1;
+    int slot = -1, buttons = 0;
+    if (!GhostPad_Probe(slot, buttons, out->axes)) return 0;
+    out->connected = 1; out->slot = slot; out->buttons = buttons;
+    return 1;
+}
+
+void GhostEngine_PadTestRumble(int on) { GhostPad_TestRumble(on != 0); }

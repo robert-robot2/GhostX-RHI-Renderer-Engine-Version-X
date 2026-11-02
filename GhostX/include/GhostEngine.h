@@ -108,7 +108,12 @@ struct GhostGizmoSettings
     float rotStep;             // degrees, 0 = off
     float scaleStep;           // factor step, 0 = off
 };
-
+struct GhostPadInfo
+{
+    int   connected, slot;
+    int   buttons;                 // bit i = GHOST_PAD_* button i
+    float axes[6];                 // LX LY RX RY LT RT
+};
 
 extern "C"
 {
@@ -301,5 +306,10 @@ extern "C"
     GHOST_API int   GhostEngine_GetTAA();
     GHOST_API void  GhostEngine_SetTAAJitterSpeed(float speed);    // 0.05 .. 4, default 1
     GHOST_API float GhostEngine_GetTAAJitterSpeed();
+
+    // ---- Gamepad ----
+    GHOST_API void GhostEngine_SetPadSettings(float deadzone, int rumble, int slot);   // slot -1 = auto
+    GHOST_API int  GhostEngine_GetPadInfo(GhostPadInfo* out);                          // 1 = a pad is connected
+    GHOST_API void GhostEngine_PadTestRumble(int on);
 
 }

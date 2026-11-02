@@ -14,12 +14,13 @@ struct GhostInput
     bool pressed[256];
     bool released[256];
     bool prev[256];
+    bool kprev[256];                // keyboard only (without the pad), to know which device was used last
 
     GhostInput() { Reset(); }
     void Reset()
     {
         memset(down, 0, sizeof down); memset(pressed, 0, sizeof pressed);
-        memset(released, 0, sizeof released); memset(prev, 0, sizeof prev);
+        memset(released, 0, sizeof released); memset(prev, 0, sizeof prev); memset(kprev, 0, sizeof kprev);
     }
     void Sample(bool enabled);     // enabled = the viewport has keyboard focus
     void EndStep();                // call after every fixed step

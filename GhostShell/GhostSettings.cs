@@ -17,6 +17,9 @@ namespace GhostShell
         public int MsaaSamples { get; set; } = 1;      // 1 = off, 2, 4 or 8
         public int TaaEnabled { get; set; } = 0;
         public float TaaJitterSpeed { get; set; } = 1.0f;     // 1 = normal
+        public float PadDeadzone { get; set; } = 0.22f;
+        public bool PadRumble { get; set; } = true;
+        public int PadSlot { get; set; } = -1;        // -1 = auto, 0..3 = that pad
 
     }
 

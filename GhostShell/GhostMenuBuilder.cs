@@ -47,6 +47,7 @@ namespace GhostShell
         public event EventHandler? OnSaveProject;
         public event EventHandler? OnSaveProjectAs;
         public event EventHandler? OnSetStartScene;
+        public event EventHandler? OnGamepad;
 
         private ToolStripMenuItem _recentMenu = null!;
 
@@ -123,6 +124,7 @@ namespace GhostShell
 
             settingsMenu.DropDownItems.Add(MakeItem("Toggle Ghost UI", (s, e) => OnToggleGhostUI?.Invoke(s, e)));
             settingsMenu.DropDownItems.Add(MakeItem("Set Visual Studio Solution...", (s, e) => OnSetSolution?.Invoke(s, e)));
+            settingsMenu.DropDownItems.Add(MakeItem("Gamepad...", (s, e) => OnGamepad?.Invoke(s, e)));
             // ---- View ----
             var viewMenu = new ToolStripMenuItem("View");
             viewMenu.DropDownItems.Add(MakeItem("Toggle Engine UI  (4)", (s, e) => OnToggleEditorUI?.Invoke(s, e)));

@@ -190,9 +190,12 @@ static void Hud()
     G->UISetText(g_ui, "SizeText", pl == 2 ? "FIRE" : (pl == 1 ? "BIG" : "small"));
     G->UISetColor(g_ui, "SizeText", pl == 2 ? red : (pl == 1 ? green : grey));
 
-    G->UISetText(g_ui, "HintText", S.orbit
-        ? "WASD move    Shift run    Space jump    Click attack    Right-drag orbit    Wheel zoom    Esc options"
-        : "WASD move    Shift run    Space jump    Click attack    Q/E camera    F10 options");
+    const char* hint = G->PadActive()
+        ? "Left stick move    X run    A jump    B attack    RB interact    Right stick camera    Start options"
+        : (S.orbit
+            ? "WASD move    Shift run    Space jump    Click attack    Right-drag orbit    Wheel zoom    F10 options"
+            : "WASD move    Shift run    Space jump    Click attack    Q/E camera    F10 options");
+    G->UISetText(g_ui, "HintText", hint);
     G->UISetText(g_ui, "Character", S.character == 1 ? "Luigi" : "Mario");
 
     G->UISetVisible(g_ui, "CompletePanel", S.complete ? 1 : 0);

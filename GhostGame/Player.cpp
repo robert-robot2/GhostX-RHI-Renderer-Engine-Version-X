@@ -57,6 +57,7 @@ static void SetPower(Body& b, int level)
 
 static void Collect(Body& b, int type)
 {
+    G->PadRumble(0.3f, 0.3f, 0.15f);
     if (type != PU_ONEUP) Score_Add(1000);
     switch (type)
     {
@@ -71,6 +72,7 @@ static void Collect(Body& b, int type)
 static bool Hurt(Body& b)
 {
     if (S.starTime > 0.0f || S.invuln > 0.0f) return false;
+    G->PadRumble(S.big ? 0.6f : 1.0f, 0.8f, S.big ? 0.25f : 0.5f);
     if (S.big) { SetPower(b, 0); S.invuln = Cfg::Invulnerable; S.hurt = 0.45f; g_vel[1] = 6.0f; return false; }
     Game_Restart(true);
     return true;
@@ -212,6 +214,11 @@ void Player_Update(float dt)
     // ---- Input: camera-relative movement ----
     float ix = ((G->KeyDown('D') || G->KeyDown(VK_RIGHT)) ? 1.0f : 0.0f) - ((G->KeyDown('A') || G->KeyDown(VK_LEFT)) ? 1.0f : 0.0f);
     float iz = Cfg::SideScroller ? 0.0f : ((G->KeyDown('W') ? 1.0f : 0.0f) - (G->KeyDown('S') ? 1.0f : 0.0f));
+    if (G->PadConnected())                          // the stick overrides the keys, so a light push walks slowly
+    {
+        const float sx = G->PadAxis(GHOST_PAD_AXIS_LX), sy2 = G->PadAxis(GHOST_PAD_AXIS_LY);
+        if (sx != 0.0f || sy2 != 0.0f) { ix = sx; iz = Cfg::SideScroller ? 0.0f : sy2; }
+    }
     float yaw = S.camYaw * 0.0174532925f;
     float sy = sinf(yaw), cy = cosf(yaw);
     float dx = sy * iz + cy * ix;
@@ -271,7 +278,7 @@ void Player_Update(float dt)
 
             if (S.starTime > 0.0f) { Enemy_Kill(ids[i]); continue; }
             const bool stomp = preVy < 0.0f && feetBefore >= emx[1] - 0.25f;
-            if (stomp) { Enemy_Kill(ids[i]); g_vel[1] = G->KeyDown(VK_SPACE) ? Cfg::StompBounceHeld : Cfg::StompBounce; }
+            if (stomp) { Enemy_Kill(ids[i]); g_vel[1] = G->KeyDown(VK_SPACE) ? Cfg::StompBounceHeld : Cfg::StompBounce; G->PadRumble(0.0f, 0.4f, 0.08f); }
             else if (Hurt(b)) return;
         }
     }
