@@ -3,6 +3,7 @@
 ## Game on Wayne!
 ## Try Super Mario Infinitus Playable Demo Soon!
 ## Downloadable Engine Release Coming Soon!
+## CAN SOMEONE TELL ME WHY I DONT NEED VERTICAL SYNC?
 # 👻🎃🎃🎃🎃🎃🎃🎃🎃🎃🎃🎃👻 GhostX Version X 👻🎃🎃🎃🎃🎃🎃🎃🎃🎃🎃🎃👻
 
 **DirectX12 RHI Renderer Engine Winforms Blazor WASM UI with a Visual Studio Docking Suite Editor**
