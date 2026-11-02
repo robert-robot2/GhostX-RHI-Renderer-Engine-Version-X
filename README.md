@@ -132,8 +132,9 @@ Right-click menu	Right-click in the Hierarchy, or tap right-click in the viewpor
 F / G	F toggles face-pick mode, G toggles the grid
 - [x] Phase 20.L: Boss
 - [x] Phase 29.B: Thicc Editor Upgrade Part Duece: Camera Check, Click Drag, Shift Multi Select, F for Faces, Collision H
+- [x] Phase 20.F: Level 2 Build // Instruction Set 2 Complete
 - **Active Core**
-- [ ] Phase 20.F: Collision, Boss, Polish, Level 2 Build // Instruction Set 2 Complete
+- [ ] Phase 20.G: Collision, Polish for Levels 
 - [ ] Phase : Audio
 - [ ] Phase : Antialiasing MSAA/SMAA/FXAA/TAA
 - [ ] Phase : Gamepad
@@ -602,12 +603,12 @@ To package an existing Release build:
 - [x] New Window Play Mode Test.
 
 ### Level 2 and Gameplay
-- [ ] Build Level 2.
+- [x] Build Level 2.
 - [x] Test Touch Goal Of Level 1.
 - [x] Level 2 loads after touching the Level 1 Goal.
 - [x] Level 2 uses its own camera and layout.
-- [ ] Win screen appears after completing Level 2.
-- [ ] Play Again loads Level 1.
+- [x] Win screen appears after completing Level 2.
+- [x] Play Again loads Level 1.
 - [x] Quit stops gameplay.
 - [x] Stopping Play mode restores the editor state.
 - [x] Standalone Play works as expected.
