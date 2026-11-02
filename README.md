@@ -1,7 +1,7 @@
 <div align="center">
 
 ## Game on Wayne!
-## Try Super Mario Infinitus Playable Demo Soon!
+## BY THE POWER OF GREYsKULL Super Mario Infinitus Playable Demo WILL BE RELASE TODAY!
 ## Downloadable Engine Release Coming Soon!
 ## CAN SOMEONE TELL ME WHY I DONT NEED VERTICAL SYNC?
 ## MAJOR GAME FLAW TO SUPER MARIO 1 MARIO AND LUIGI ARE THE SAME GUY BUT WHY?
