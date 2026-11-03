@@ -20,6 +20,7 @@ namespace GhostShell
         public float PadDeadzone { get; set; } = 0.22f;
         public bool PadRumble { get; set; } = true;
         public int PadSlot { get; set; } = -1;        // -1 = auto, 0..3 = that pad
+        public string AudioMixer { get; set; } = "";   // "vol0,vol1,vol2,vol3,mute0,mute1,mute2,mute3"
 
     }
 

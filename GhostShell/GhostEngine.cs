@@ -431,5 +431,23 @@ namespace GhostShell
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern int GhostEngine_GetPadInfo(out GhostPadInfo info);
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern void GhostEngine_PadTestRumble(int on);
 
+        // ---- Audio ----
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern int GhostEngine_GetSoundCount();
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern int GhostEngine_GetSoundInfo(int index, out GhostSoundInfo info);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern void GhostEngine_SetSoundInfo(int index, ref GhostSoundInfo info);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern int GhostEngine_SaveSoundBank();
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern int GhostEngine_TestSound(int index);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern void GhostEngine_StopAudio();
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern void GhostEngine_SetBusVolume(int bus, float v);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern float GhostEngine_GetBusVolume(int bus);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern void GhostEngine_SetBusMute(int bus, int mute);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern int GhostEngine_GetBusMute(int bus);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_PreviewFile([MarshalAs(UnmanagedType.LPUTF8Str)] string path);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetSceneAudio(int which, [Out] byte[] buf, int bufSize);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetSceneAudio(int which, [MarshalAs(UnmanagedType.LPUTF8Str)] string name);
+
     }
 }

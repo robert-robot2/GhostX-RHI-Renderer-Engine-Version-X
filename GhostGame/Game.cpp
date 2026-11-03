@@ -28,6 +28,43 @@ void Sprite_FaceScreen(int id, float v)
     else if (v < -0.2f) G->SpriteSetFlip(id, 1);
 }
 
+static int g_musicState = -1;       // what Music_Update last asked for: 0 scene track, 1 star, 2 underground, 3 silent
+
+static void Music_Update()
+{
+    int want = 0;
+    if (S.mode == MODE_OVER || S.complete || S.onPole || S.bossCut) want = 3;
+    else if (S.starTime > 0.0f) want = 1;
+    else
+    {
+        float p[3];
+        if (S.player && G->GetPosition(S.player, p) && p[1] < Cfg::NightDepth) want = 2;   // same depth the sky goes dark at
+    }
+    if (want == g_musicState) return;
+    g_musicState = want;
+    switch (want)
+    {
+    case 0: G->PlaySceneAudio(0.4f); break;
+    case 1: G->PlayMusic("music_star", 0.2f); break;
+    case 2: G->PlayMusic("music_underground", 0.4f); break;
+    case 3: G->StopMusic(0.3f); break;
+    }
+}
+
+// Buttons named MusicButton / SfxButton / AmbienceButton on a .ghostui toggle their bus. A missing widget is ignored.
+static void Sound_Toggles(int ui)
+{
+    static const struct { const char* btn; const char* label; int bus; } t[3] =
+    { { "MusicButton", "Music", 1 },{ "SfxButton", "SFX", 2 },{ "AmbienceButton", "Ambience", 3 } };
+    for (const auto& x : t)
+    {
+        if (G->UIButtonClicked(ui, x.btn)) G->SetBusEnabled(x.bus, !G->GetBusEnabled(x.bus));
+        char s[48];
+        snprintf(s, sizeof s, "%s: %s", x.label, G->GetBusEnabled(x.bus) ? "ON" : "OFF");
+        G->UISetText(ui, x.btn, s);
+    }
+}
+
 static int g_ui = 0;                // handle of Content/UI/HUD.ghostui (0 = failed to load)
 static int  g_menuUi = 0, g_overUi = 0;
 static bool g_started = false;     // lives outside S, so a level change doesn't bring the menu back
@@ -135,7 +172,7 @@ static bool Clicked(int ui, const char* widget)
 
 void Game_Restart(bool died)
 {
-    if (died) { S.deaths++; if (--S.lives <= 0) { S.lives = 0; S.mode = MODE_OVER; return; } }   // freeze on the Game Over screen
+    if (died) { S.deaths++; if (--S.lives <= 0) { S.lives = 0; Sfx("game_over"); S.mode = MODE_OVER; return; } Sfx("death"); }
     S.coins = 0; S.enemiesDown = 0;
     S.big = false; S.fire = false; S.starTime = 0.0f; S.attackCool = 0.0f; S.heldShell = 0; S.shellSliding = false; S.advance = 0.0f; S.invuln = 0.0f; S.hurt = 0.0f; S.complete = false;
     S.big = false; S.advance = 0.0f; S.invuln = 0.0f; S.hurt = 0.0f; S.complete = false;
@@ -263,6 +300,7 @@ GHOST_GAME_EXPORT int GhostGame_Init(const GhostGameAPI* api)
     if (!api || api->version != GHOST_GAME_API_VERSION || api->size < (int)sizeof(GhostGameAPI)) return 0;
     G = api;
     S = GameState();
+    g_musicState = -1;
     Carry_Load();
     S.level = FindLevelIndex();
     S.lastLevel = (S.level < 0 || S.level >= kLevelCount - 1);
@@ -365,6 +403,7 @@ static bool Screens_Update()
     {
         if (g_optUi)
         {
+            Sound_Toggles(g_optUi);
             Nav_Update(g_optUi, kNavPause, 3);
             if (Clicked(g_optUi, "ResumeButton") || g_navBack) S.mode = MODE_PLAY;
             else if (Clicked(g_optUi, "RestartButton")) { S.mode = MODE_PLAY; Game_FullRestart(); }
@@ -414,6 +453,7 @@ static bool Screens_Update()
 GHOST_GAME_EXPORT void GhostGame_Update(float dt)
 {
     if (!S.player) { S.error = "No object with Role = Player in this scene"; Hud(); return; }
+    Music_Update();
     if (G->KeyPressed(VK_F10))                             // before Screens_Update, so it can also CLOSE the options panel
     {
         if (S.mode == MODE_PLAY && !S.complete && !S.onPole) S.mode = MODE_OPTIONS;

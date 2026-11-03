@@ -350,6 +350,7 @@ struct GhostScene
     int          selectedFace = -1;   // -1 = all faces; always belongs to selectedId
     bool         shadowsEnabled = true;
     float        shadowStrength = 1.0f;          // 1 = a shadowed spot gets only ambient light
+    std::string  music, ambience;       // names from Content/Audio/Sounds.ghostaudio, "" = none
     unsigned int version = 0;         // bumps on any structural change
 };
 

@@ -1117,6 +1117,42 @@ namespace GhostShell
         public float Height { get => Get().height; set { var i = Get(); i.height = value; Set(i); } }
     }
 
+    internal static class GhostSceneAudio
+    {
+        public static string Text(byte[]? b)
+        {
+            if (b == null) return "";
+            int n = Array.IndexOf(b, (byte)0);
+            return Encoding.UTF8.GetString(b, 0, n < 0 ? b.Length : n);
+        }
+        public static string Get(int which)
+        {
+            var b = new byte[64];
+            GhostEngine.GhostEngine_GetSceneAudio(which, b, b.Length);
+            string t = Text(b);
+            return t.Length == 0 ? "None" : t;
+        }
+        public static void Set(int which, string v) => GhostEngine.GhostEngine_SetSceneAudio(which, v == "None" ? "" : v);
+    }
+
+    internal abstract class SoundChoiceConverter : StringConverter
+    {
+        protected abstract int Kind { get; }
+        public override bool GetStandardValuesSupported(ITypeDescriptorContext? context) => true;
+        public override bool GetStandardValuesExclusive(ITypeDescriptorContext? context) => true;
+        public override StandardValuesCollection GetStandardValues(ITypeDescriptorContext? context)
+        {
+            var list = new List<string> { "None" };
+            int n = GhostEngine.GhostEngine_GetSoundCount();
+            for (int i = 0; i < n; i++)
+                if (GhostEngine.GhostEngine_GetSoundInfo(i, out GhostSoundInfo s) != 0 && s.kind == Kind)
+                    list.Add(GhostSceneAudio.Text(s.name));
+            return new StandardValuesCollection(list);
+        }
+    }
+    internal sealed class MusicChoiceConverter : SoundChoiceConverter { protected override int Kind => 1; }
+    internal sealed class AmbienceChoiceConverter : SoundChoiceConverter { protected override int Kind => 2; }
+
     internal class AmbientProxy
     {
         [Category("Ambient"), DisplayName("Color")]
@@ -1171,6 +1207,13 @@ namespace GhostShell
             get { GhostEngine.GhostEngine_GetShadowSettings(out _, out float s); return s; }
             set { GhostEngine.GhostEngine_GetShadowSettings(out int e, out _); GhostEngine.GhostEngine_SetShadowSettings(e, value); }
         }
+        [Category("Audio"), DisplayName("Scene Music (plays during Play)")]
+        [TypeConverter(typeof(MusicChoiceConverter))]
+        public string SceneMusic { get => GhostSceneAudio.Get(0); set => GhostSceneAudio.Set(0, value); }
+
+        [Category("Audio"), DisplayName("Scene Ambience (plays during Play)")]
+        [TypeConverter(typeof(AmbienceChoiceConverter))]
+        public string SceneAmbience { get => GhostSceneAudio.Get(1); set => GhostSceneAudio.Set(1, value); }
     }
 
     // ============================================================
@@ -1219,6 +1262,8 @@ namespace GhostShell
         private PanelDock _dockDesigner = null!;
         private GhostAnimEditor _animEditor = null!;
         private PanelDock _dockAnim = null!;
+        private GhostAudioMixer _mixer = null!;
+        private PanelDock _dockMixer = null!;
 
         private bool _visible = true;
         private bool _syncing;
@@ -1603,6 +1648,8 @@ namespace GhostShell
             _dockDesigner = new PanelDock("UIDesigner", "UI Designer", _designer, ToolAreas | DockAreas.Document);
             _animEditor = new GhostAnimEditor();
             _dockAnim = new PanelDock("AnimEditor", "Animation Editor", _animEditor, ToolAreas | DockAreas.Document);
+            _mixer = new GhostAudioMixer();
+            _dockMixer = new PanelDock("AudioMixer", "Audio Mixer", _mixer, ToolAreas | DockAreas.Document);
             _form.Controls.Add(_dock);
             _dock.BringToFront();                    // the dock fills whatever the menu strip leaves
             _form.MainMenuStrip?.SendToBack();
@@ -1620,6 +1667,7 @@ namespace GhostShell
             "Content" => _dockContent,
             "UIDesigner" => _dockDesigner,
             "AnimEditor" => _dockAnim,
+            "AudioMixer" => _dockMixer,
             _ => null!,
         };
 
@@ -1687,11 +1735,12 @@ namespace GhostShell
             foreach (PanelDock d in _tools) d.DockPanel = null!;
             if (_dockDesigner.DockPanel != null) _dockDesigner.DockPanel = null!;
             if (_dockAnim.DockPanel != null) _dockAnim.DockPanel = null!;
+            if (_dockMixer.DockPanel != null) _dockMixer.DockPanel = null!;
             ApplyDefaultLayout();
         }
         private bool IsInsideDesigner(Control? c)
         {
-            for (; c != null; c = c.Parent) if (c == _designer || c == _animEditor) return true;
+            for (; c != null; c = c.Parent) if (c == _designer || c == _animEditor || c == _mixer) return true;
             return false;
         }
 
@@ -1724,7 +1773,17 @@ namespace GhostShell
             }
             return false;
         }
-
+        public void OpenMixer()
+        {
+            if (_dockMixer.DockState == DockState.Unknown)
+            {
+                Rectangle r = _form.Bounds;
+                var b = new Rectangle(r.X + 100, r.Y + 120,
+                    Math.Max(760, Math.Min(900, r.Width - 160)), Math.Max(480, Math.Min(640, r.Height - 180)));
+                _dockMixer.Show(_dock, b);
+            }
+            else _dockMixer.Show(_dock);
+        }
         public void OpenAnimEditor(string? path)
         {
             if (_dockAnim.DockState == DockState.Unknown)
@@ -1778,6 +1837,9 @@ namespace GhostShell
             var animItem = new ToolStripMenuItem("Animation Editor");
             animItem.Click += (s, e) => OpenAnimEditor(null);
             menu.DropDownItems.Add(animItem);
+            var mixItem = new ToolStripMenuItem("Audio Mixer");
+            mixItem.Click += (s, e) => OpenMixer();
+            menu.DropDownItems.Add(mixItem);
             menu.DropDownItems.Add(new ToolStripSeparator());
             var reset = new ToolStripMenuItem("Reset Layout");
             reset.Click += (s, e) => ResetLayout();
@@ -1802,6 +1864,7 @@ namespace GhostShell
 
                 uiItem.Checked = IsShown(_dockDesigner);
                 animItem.Checked = IsShown(_dockAnim);
+                mixItem.Checked = IsShown(_dockMixer);
             };
 
             int at = strip.Items.Count;                                   // before Help

@@ -74,6 +74,7 @@ void Shell_Kick(int id, float dx, float dz)
     if (l < 0.0001f) { dx = 1.0f; dz = 0.0f; }
     else { dx /= l; dz /= l; }
     ShellState& s = ShellOf(id);
+    Sfx("kick");
     s.dx = dx; s.dz = dz; s.vy = 0.0f; s.cool = 0.0f;
     G->SetTag(id, "SlidingShell");
     G->SpriteSetClip(id, "");
@@ -225,6 +226,7 @@ void Coin_Collect(int id)
 {
     if (!G->GetVisible(id)) return;   // never count the same coin twice
     G->SetVisible(id, 0);
+    Sfx("coin");
     Coins_Add(1);
     Score_Add(200);
 }
@@ -234,6 +236,7 @@ void Enemy_Kill(int id)
     for (Enemy& e : g_enemies)
         if (e.id == id && e.alive)
         {
+            Sfx("stomp");
             e.alive = false;
             S.enemiesDown++;
             Score_Enemy(S.starTime > 0.0f);
@@ -321,6 +324,7 @@ static void SpawnDebris(int brickId)
 static void BreakBrick(int id, int effect)
 {
     Score_Add(50);
+    Sfx("brick_break");
     G->SetTag(id, "Broken");                               // no longer solid
     if (effect == 0) { G->SetVisible(id, 0); return; }
     if (Sprite_Play(id, "Break", nullptr))                 // a sprite plays its Break clip
@@ -338,8 +342,8 @@ static void BreakBrick(int id, int effect)
     G->SetScale(id, s); G->SetPosition(id, p); G->SetColor(id, ash);
 }
 
-void Coins_Add(int n) { S.coins += n; while (S.coins >= S.playerMaxCoins) { S.coins -= S.playerMaxCoins; S.lives++; } }
-void Life_Add() { S.lives++; }
+void Coins_Add(int n) { S.coins += n; while (S.coins >= S.playerMaxCoins) { S.coins -= S.playerMaxCoins; Life_Add(); } }
+void Life_Add() { S.lives++; Sfx("oneup"); }
 
 void Score_Add(int pts) { S.score += pts; }
 
@@ -356,6 +360,7 @@ void Goal_Reached(int poleId, float hitY, float poleTop, float poleBot)
 {
     if (S.complete || S.onPole) return;
     S.onPole = true;
+    Sfx("goal");
     S.poleId = poleId;
     S.poleTop = poleTop;
     S.poleBot = poleBot;
@@ -388,6 +393,7 @@ static void SpawnPickup(int type, const float* mn, const float* mx, bool moves)
     float pos[3] = { (mn[0] + mx[0]) * 0.5f, mx[1] - sz * 0.5f, (mn[2] + mx[2]) * 0.5f };   // starts inside the block
     int id = G->Spawn(GHOST_API_MESH_QUAD, pos);                                             // a sprite, not a cube
     if (!id) return;
+    Sfx("powerup_appear");
     const float size[3] = { sz, sz, sz };
     G->SetScale(id, size);
     G->SetTag(id, kPickupTag[type]);
@@ -421,6 +427,7 @@ static void Pay(int id, const GhostObjectProps& pr, int give, bool isBlock, bool
     if (!G->GetBounds(id, mn, mx)) return;
     if (give == 2)                                         // coins: one per hit until empty
     {
+        Sfx("coin");
         Coins_Add(1);
         Score_Add(200);
         if (isBlock) { if (--CoinsLeft(id, pr.coinCount) <= 0) SetUsed(id); }
@@ -441,7 +448,7 @@ void Blocks_Bump(int id)
     if (!G->GetTag(id, tag, sizeof tag)) return;
     const bool hidden = strcmp(tag, "HiddenBlock") == 0;
     const bool block = hidden || strcmp(tag, "Block") == 0, brick = strcmp(tag, "Breakable") == 0;
-    if (!block && !brick) return;
+    if (!block && !brick) { Sfx("bump"); return; }
 
     GhostObjectProps pr = {};
     G->GetObjectProps(id, &pr);
@@ -450,7 +457,7 @@ void Blocks_Bump(int id)
 
     if (brick && give == 1)                                // plain brick: only big Mario breaks it
     {
-        if (S.big || Cfg::SmallBreaksBricks) BreakBrick(id, pr.breakEffect);
+        if (S.big || Cfg::SmallBreaksBricks) BreakBrick(id, pr.breakEffect); else Sfx("bump");
         return;
     }
     if (brick) BreakBrick(id, pr.breakEffect);             // brick with contents breaks and pays out
@@ -588,7 +595,7 @@ void Fireball_Spawn()
 
     int id = G->Spawn(GHOST_API_MESH_QUAD, pos);
     if (!id) return;
-
+    Sfx("fireball");
     const float sz[3] = { Cfg::PickupSize, Cfg::PickupSize, Cfg::PickupSize };
     G->SetScale(id, sz);
     G->SetTag(id, "Fireball");
@@ -781,6 +788,7 @@ static void Boss_Update(float dt)
             {
                 const int id = g_bridgeOrder[g_bridgeNext++];
                 SpawnDebris(id);
+                Sfx("brick_break");
                 G->SetTag(id, "Broken");
                 G->SetVisible(id, 0);
                 g_bridgeTimer = Cfg::BridgeTileDelay;
@@ -799,6 +807,7 @@ static void Boss_Update(float dt)
             S.timeBonus = (int)S.timeLeft * 50;
             Score_Add(S.timeBonus + 5000);
             S.complete = true;
+            Sfx("goal");
         }
     }
 }

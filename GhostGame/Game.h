@@ -9,6 +9,8 @@
 
 extern const GhostGameAPI* G;
 extern float g_faceDir;
+// Plays a sound from the bank by name. Safe when the sound is disabled, missing, or audio is off.
+inline void Sfx(const char* name) { if (G && G->PlaySfx) G->PlaySfx(name); }
 void Shell_Kick(int id, float dx, float dz);   // start sliding along (dx, dz)
 void Shell_Hold(int id);                       // Mario picks it up
 bool Shell_Ready(int id);                      // is a loose, stationary shell past its grace time

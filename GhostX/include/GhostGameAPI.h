@@ -47,6 +47,12 @@ extern "C" {
 #define GHOST_PAD_AXIS_LT 4
 #define GHOST_PAD_AXIS_RT 5
 #define GHOST_PAD_AXIS_COUNT 6
+    // Audio buses (SetBusVolume / SetBusEnabled)
+#define GHOST_API_BUS_MASTER 0
+#define GHOST_API_BUS_MUSIC 1
+#define GHOST_API_BUS_SFX 2
+#define GHOST_API_BUS_AMBIENCE 3
+
     // Settings from Details > Gameplay > Behavior
     typedef struct GhostObjectProps
     {
@@ -166,6 +172,20 @@ extern "C" {
         float (*PadAxis)(int axis);                        // sticks -1..1 (deadzone applied), triggers 0..1
         void  (*PadRumble)(float strong, float weak, float seconds);   // 0..1 each
         int   (*PadActive)(void);                          // 1 if the pad was the last device used
+
+        // ---- audio (names come from Content/Audio/Sounds.ghostaudio: see the Audio Mixer) ----
+        int   (*PlaySfx)(const char* name);                        // one-shot. 1 = played, 0 = unknown / disabled / file missing
+        int   (*PlayMusic)(const char* name, float fadeSeconds);   // looping + crossfade. Safe to call every frame with the same name
+        int   (*PlayAmbience)(const char* name, float fadeSeconds);
+        void  (*StopMusic)(float fadeSeconds);
+        void  (*StopAmbience)(float fadeSeconds);
+        void  (*PlaySceneAudio)(float fadeSeconds);                // the Music / Ambience chosen in Scene Settings
+        void  (*SetBusVolume)(int bus, float volume01);
+        float (*GetBusVolume)(int bus);
+        void  (*SetBusEnabled)(int bus, int enabled);              // 0 = muted
+        int   (*GetBusEnabled)(int bus);
+        void  (*SetSoundEnabled)(const char* name, int enabled);   // runtime only: Stop reloads the bank from disk
+        int   (*GetSoundEnabled)(const char* name);
 
     } GhostGameAPI;
 

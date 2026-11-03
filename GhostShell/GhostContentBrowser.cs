@@ -26,7 +26,7 @@ namespace GhostShell
         private FileSystemWatcher? _watch;
         private bool _rebuildQueued, _inDrag, _pending;
         private static readonly Dictionary<string, Bitmap> ThumbCache = new(StringComparer.OrdinalIgnoreCase);
-        private static Bitmap? _folderIcon, _sceneIcon, _blankIcon, _uiIcon, _animIcon, _modelIcon;
+        private static Bitmap? _folderIcon, _sceneIcon, _blankIcon, _uiIcon, _animIcon, _modelIcon, _audioIcon;
         private Point _pressPoint;
 
        
@@ -111,7 +111,7 @@ namespace GhostShell
             using var dlg = new OpenFileDialog
             {
                 Title = "Import Textures",
-                Filter = "Images and models|*.png;*.jpg;*.jpeg;*.bmp;*.fbx;*.obj;*.gltf;*.glb;*.dae;*.3ds;*.stl;*.ply|All files (*.*)|*.*",
+                Filter = "Images and models|*.png;*.jpg;*.jpeg;*.bmp;*.fbx;*.obj;*.gltf;*.glb;*.dae;*.3ds;*.stl;*.ply;*.wav;*.mp3;*.flac|All files (*.*)|*.*",
                 Multiselect = true,
             };
             if (dlg.ShowDialog(FindForm()) == DialogResult.OK) ImportFiles(dlg.FileNames);
@@ -131,6 +131,21 @@ namespace GhostShell
                         failed.Add($"{Path.GetFileName(f)}: the engine refused it (texture limit reached?)");
                 }
                 catch (Exception ex) { failed.Add($"{Path.GetFileName(f)}: {ex.Message}"); }
+            }
+            if (all.Any(IsAudioFile))
+            {
+                if (GhostProject.ContentDir == null) failed.Add("Open a project first: audio files are copied into Content/Audio.");
+                else
+                    foreach (string f in all.Where(IsAudioFile))
+                    {
+                        try
+                        {
+                            string audioDir = Path.Combine(GhostProject.ContentDir, "Audio");
+                            Directory.CreateDirectory(audioDir);
+                            GhostProject.EnsureInContent(f, audioDir);
+                        }
+                        catch (Exception ex) { failed.Add($"{Path.GetFileName(f)}: {ex.Message}"); }
+                    }
             }
             if (failed.Count > 0)
                 MessageBox.Show(string.Join("\n", failed), "Import failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -157,7 +172,7 @@ namespace GhostShell
 
         private static bool HasImageFiles(DragEventArgs e)
        => e.Data?.GetData(DataFormats.FileDrop) is string[] f &&
-          f.Any(x => GhostAssets.IsImage(x) || GhostModels.IsModelFile(x));
+              f.Any(x => GhostAssets.IsImage(x) || GhostModels.IsModelFile(x) || IsAudioFile(x));
 
         private void OnFileDrag(object? sender, DragEventArgs e)
             => e.Effect = HasImageFiles(e) ? DragDropEffects.Copy : DragDropEffects.None;
@@ -181,7 +196,7 @@ namespace GhostShell
             public Bitmap Thumb = null!;
             public int TexId = -1;          // built-in or already-loaded texture
             public string? Path;            // file or folder on disk
-            public bool IsFolder, IsScene, IsUI, IsAnim, IsModel;
+            public bool IsFolder, IsScene, IsUI, IsAnim, IsModel, IsAudio;
         }
 
         // Rebuilding while a tile is being clicked or dragged would dispose that tile, so it's deferred
@@ -332,6 +347,16 @@ namespace GhostShell
                                 Path = f,
                                 IsModel = true
                             });
+                        else if (IsAudioFile(f))
+                            entries.Add(new Entry
+                            {
+                                Key = "f:" + f,
+                                Label = Path.GetFileName(f),
+                                Tip = f,
+                                Thumb = AudioIcon(),
+                                Path = f,
+                                IsAudio = true
+                            });
                     }
                 }
                 catch { /* folder vanished or is unreadable: show what we have */ }
@@ -429,7 +454,7 @@ namespace GhostShell
                 };
                 c.MouseMove += (s, ev) =>
                 {
-                    if (ev.Button != MouseButtons.Left || _pressKey != e.Key || e.IsFolder || e.IsScene || e.IsUI || e.IsAnim) return;
+                    if (ev.Button != MouseButtons.Left || _pressKey != e.Key || e.IsFolder || e.IsScene || e.IsUI || e.IsAnim || e.IsAudio) return;
                     Size d = SystemInformation.DragSize;
                     Point p = Control.MousePosition;
                     if (Math.Abs(p.X - _pressPoint.X) < d.Width && Math.Abs(p.Y - _pressPoint.Y) < d.Height) return;
@@ -468,6 +493,8 @@ namespace GhostShell
                         BeginInvoke(new Action(() => OpenUIRequested?.Invoke(e.Path!)));
                     else if (e.IsAnim)
                         BeginInvoke(new Action(() => OpenAnimRequested?.Invoke(e.Path!)));
+                    else if (e.IsAudio)
+                        GhostEngine.GhostEngine_PreviewFile(e.Path!);
                     else if (e.IsModel)
                     {
                         int mid = GhostModels.LoadFile(e.Path!);
@@ -499,7 +526,10 @@ namespace GhostShell
         private static Bitmap UiIcon() => _uiIcon ??= DrawIcon(3);
         private static Bitmap AnimIcon() => _animIcon ??= DrawIcon(4);
         private static Bitmap ModelIcon() => _modelIcon ??= DrawIcon(5);
-  
+        private static Bitmap AudioIcon() => _audioIcon ??= DrawIcon(6);
+        private static readonly string[] AudioExts = { ".wav", ".mp3", ".flac" };
+        private static bool IsAudioFile(string f) => AudioExts.Any(x => f.EndsWith(x, StringComparison.OrdinalIgnoreCase));
+
 
         private static Bitmap DrawIcon(int kind)
         {
@@ -540,6 +570,13 @@ namespace GhostShell
                 g.FillPolygon(br, new[] { new Point(48, 14), new Point(80, 32), new Point(80, 64), new Point(48, 82), new Point(16, 64), new Point(16, 32) });
                 using var f = new Font("Segoe UI", 10f, FontStyle.Bold);
                 g.DrawString("MESH", f, Brushes.White, 26, 38);
+            }
+            else if (kind == 6)                               // audio
+            {
+                using var br = new SolidBrush(Color.FromArgb(0xC0, 0x4A, 0x6A));
+                g.FillRectangle(br, 18, 22, 60, 52);
+                using var f = new Font("Segoe UI", 10f, FontStyle.Bold);
+                g.DrawString("AUDIO", f, Brushes.White, 22, 40);
             }
             else                                              // unreadable image
             {

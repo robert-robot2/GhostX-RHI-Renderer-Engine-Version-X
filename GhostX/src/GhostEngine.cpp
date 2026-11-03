@@ -17,6 +17,8 @@
 #include "../include/GhostMSAA.h"
 #include "../include/GhostTAA.h"
 #include "../include/GhostPad.h"
+#include "../include/GhostAudio.h"
+#include "../include/GhostAudioBank.h"
 #include <string.h>
 #include <filesystem>
 #include <map>
@@ -110,6 +112,22 @@ static int LoadModelFile(const std::string& absFile, std::string& err);
 static std::string g_modelWarn;                     // warnings from model files loaded during a scene load
 static void PerformSceneSwitch();
 
+// ---- Audio helpers ----
+static float g_preBusVol[GHOST_BUS_COUNT] = {};
+static bool  g_preBusMute[GHOST_BUS_COUNT] = {};
+static bool  g_haveBusSnap = false;
+
+// Plays the scene's Music / Ambience from Scene Settings (an empty or disabled entry stops that channel)
+static void PlaySceneAudio(float fade)
+{
+    const std::string* names[2] = { &g_scene.music, &g_scene.ambience };
+    for (int k = 0; k < 2; k++)
+    {
+        const int i = names[k]->empty() ? -1 : GhostAudioBank_Find(names[k]->c_str());
+        if (i >= 0 && GhostAudioBank_PlayIndex(i, fade, false)) continue;
+        if (k == 0) GhostAudio_StopMusic(fade); else GhostAudio_StopAmbience(fade);
+    }
+}
 
 // ---- Gizmo drag state (13.B) ----
 struct GizmoState
@@ -244,7 +262,8 @@ int GhostEngine_Init(HWND hwnd, unsigned int width, unsigned int height)
     //add failure is not fatal, MSAA just stays unavailable??
     GhostMSAA_Init(g_rhi, g_msaa);
     GhostTAA_Init(g_rhi, g_taa);                  // failure is not fatal: TAA just stays unavailable
-
+    GhostAudio_Init();                            // not fatal: with no sound device every audio call does nothing
+    if (GhostAudioBank_Count() == 0) GhostAudioBank_Load(g_projectRoot);
     // ---- Built-in textures: id 0 = white (untextured draws), id 1 = checkerboard (UV debugging) ----
     {
         const unsigned char white[4] = { 255, 255, 255, 255 };
@@ -2225,6 +2244,7 @@ struct UndoSnap
     float ambientColor[3] = { 1, 1, 1 };
     float ambientIntensity = 0.15f, shadowStrength = 1.0f;
     bool  shadowsEnabled = true;
+    std::string music, ambience;
     int   activeCameraId = 0, gameStartCameraId = 0, nextId = 1;
 };
 static std::vector<UndoSnap> g_undo, g_redo;
@@ -2241,6 +2261,7 @@ static void UndoCapture(UndoSnap& s)
     s.ambientIntensity = g_scene.ambientIntensity; s.shadowStrength = g_scene.shadowStrength;
     s.shadowsEnabled = g_scene.shadowsEnabled;
     s.activeCameraId = g_scene.activeCameraId; s.gameStartCameraId = g_scene.gameStartCameraId; s.nextId = g_scene.nextId;
+    s.music = g_scene.music; s.ambience = g_scene.ambience;
 }
 
 static void UndoReset() { g_undo.clear(); g_redo.clear(); g_undoHaveBase = false; }
@@ -2278,6 +2299,7 @@ static void UndoRestore(const UndoSnap& s)
     for (int i = 0; i < 3; i++) g_scene.ambientColor[i] = s.ambientColor[i];
     g_scene.ambientIntensity = s.ambientIntensity; g_scene.shadowStrength = s.shadowStrength;
     g_scene.shadowsEnabled = s.shadowsEnabled;
+    g_scene.music = s.music; g_scene.ambience = s.ambience;
     g_scene.activeCameraId = s.activeCameraId; g_scene.gameStartCameraId = s.gameStartCameraId;
     if (s.nextId > g_scene.nextId) g_scene.nextId = s.nextId;      // ids never go backwards
 
@@ -2475,7 +2497,9 @@ void GhostEngine_Tick()
         cam->pitchDeg = g_pitch * (180.0f / GHOST_PI);
     }
     UpdateOrbitCameras(dt, g_playState != GhostPlayState::Editing);
-    UpdateSprites(dt);                                // animation clips run in the editor and while playing
+    UpdateSprites(dt); // animation clips run in the editor and while playing
+    GhostAudio_Update(dt);
+
     if (g_playState == GhostPlayState::Editing)
     {
         UndoTick(dt);
@@ -2506,8 +2530,10 @@ void GhostEngine_Shutdown()
 {
     GhostPad_Shutdown();
     GhostGameModule_Unload();
+    GhostAudio_Shutdown();
     GhostMSAA_Shutdown(g_msaa);
     GhostTAA_Shutdown(g_taa);
+
     GhostPipelineDestroy(g_pipeline);
     g_pipeline = nullptr;
 
@@ -2827,6 +2853,7 @@ static int LoadSceneTexture(const std::string& absPath, const std::string& name)
 void GhostEngine_SetProjectRoot(const char* path)
 {
     g_projectRoot = GhostPath_Normalize(path ? path : "");
+    GhostAudioBank_Load(g_projectRoot);
 }
 
 int GhostEngine_SaveScene(const char* path, char* msg, int msgSize)
@@ -2880,6 +2907,7 @@ void GhostEngine_ClearScene()
     g_scene.ambientIntensity = 0.15f;    g_scene.shadowsEnabled = true;
     g_scene.shadowStrength = 1.0f;
     g_scene.nextId = 1;
+    g_scene.music.clear(); g_scene.ambience.clear();
     g_scene.selectedId = 0;
     g_scene.selectedFace = -1;
     g_scene.activeCameraId = 0;
@@ -3440,6 +3468,36 @@ static float Api_PadAxis(int a) { return GhostPad_Axis(a); }
 static void  Api_PadRumble(float s, float w, float sec) { GhostPad_Rumble(s, w, sec); }
 static int   Api_PadActive() { return GhostPad_PadActive() ? 1 : 0; }
 
+static int AudioPlayKind(const char* n, int kind, float fade)
+{
+    const int i = GhostAudioBank_Find(n);
+    GhostSoundDef* d = GhostAudioBank_At(i);
+    return (d && d->kind == kind && GhostAudioBank_PlayIndex(i, fade, false)) ? 1 : 0;
+}
+static int   Api_PlaySfx(const char* n) { return AudioPlayKind(n, GHOST_SND_SFX, 0.0f); }
+static int   Api_PlayMusic(const char* n, float f) { return AudioPlayKind(n, GHOST_SND_MUSIC, f); }
+static int   Api_PlayAmbience(const char* n, float f) { return AudioPlayKind(n, GHOST_SND_AMBIENCE, f); }
+static void  Api_StopMusic(float f) { GhostAudio_StopMusic(f); }
+static void  Api_StopAmbience(float f) { GhostAudio_StopAmbience(f); }
+static void  Api_PlaySceneAudio(float f) { PlaySceneAudio(f); }
+static void  Api_SetBusVolume(int b, float v) { GhostAudio_SetBusVolume(b, v); }
+static float Api_GetBusVolume(int b) { return GhostAudio_GetBusVolume(b); }
+static void  Api_SetBusEnabled(int b, int e) { GhostAudio_SetBusMute(b, e == 0); }
+static int   Api_GetBusEnabled(int b) { return GhostAudio_GetBusMute(b) ? 0 : 1; }
+static void  Api_SetSoundEnabled(const char* n, int e)
+{
+    GhostSoundDef* d = GhostAudioBank_At(GhostAudioBank_Find(n));
+    if (!d) return;
+    d->enabled = (e != 0);
+    if (!d->enabled && d->kind != GHOST_SND_SFX)               // switching off the track that is playing stops it
+    {
+        const std::string p = GhostAudioBank_Resolve(*d);
+        if (d->kind == GHOST_SND_MUSIC && p == GhostAudio_MusicPath()) GhostAudio_StopMusic(0.3f);
+        if (d->kind == GHOST_SND_AMBIENCE && p == GhostAudio_AmbiencePath()) GhostAudio_StopAmbience(0.3f);
+    }
+}
+static int   Api_GetSoundEnabled(const char* n) { GhostSoundDef* d = GhostAudioBank_At(GhostAudioBank_Find(n)); return (d && d->enabled) ? 1 : 0; }
+
 static void BuildGameApi()
 {
     GhostGameAPI& a = g_gameApi;
@@ -3474,6 +3532,11 @@ static void BuildGameApi()
     a.PadConnected = Api_PadConnected;  a.PadButtonDown = Api_PadButtonDown;
     a.PadButtonPressed = Api_PadButtonPressed;  a.PadButtonReleased = Api_PadButtonReleased;
     a.PadAxis = Api_PadAxis;  a.PadRumble = Api_PadRumble;  a.PadActive = Api_PadActive;
+    a.PlaySfx = Api_PlaySfx;  a.PlayMusic = Api_PlayMusic;  a.PlayAmbience = Api_PlayAmbience;
+    a.StopMusic = Api_StopMusic;  a.StopAmbience = Api_StopAmbience;  a.PlaySceneAudio = Api_PlaySceneAudio;
+    a.SetBusVolume = Api_SetBusVolume;  a.GetBusVolume = Api_GetBusVolume;
+    a.SetBusEnabled = Api_SetBusEnabled;  a.GetBusEnabled = Api_GetBusEnabled;
+    a.SetSoundEnabled = Api_SetSoundEnabled;  a.GetSoundEnabled = Api_GetSoundEnabled;
 }
 
 // Runs between steps (never inside game code). The editor's own scene stays safe in g_playBackup.
@@ -3513,7 +3576,8 @@ static void PerformSceneSwitch()
     g_wheelAccum = g_apiWheel = 0.0f;
     g_hudText.clear();
     g_stepper.Reset();
-
+    GhostAudio_StopOneShots();
+    PlaySceneAudio(1.0f);                          // the new level's music crossfades in
     BuildGameApi();
     if (GhostGameModule_Load(g_gameModulePath, &g_gameApi, g_playMessage) == GhostModuleResult::Error)
     {
@@ -3550,7 +3614,11 @@ int GhostEngine_Play()
     g_uiMouseX = g_uiMouseY = -1.0f; g_uiMouseInside = false;
     g_hoverId = 0; g_dragging = false; g_dragId = 0;
     g_playState = GhostPlayState::Playing;
-
+    for (int b = 0; b < GHOST_BUS_COUNT; b++) { g_preBusVol[b] = GhostAudio_GetBusVolume(b); g_preBusMute[b] = GhostAudio_GetBusMute(b); }
+    g_haveBusSnap = true;                          // the game may change the buses: Stop puts them back
+    GhostAudio_SetPaused(false);
+    GhostAudio_StopAll(0.0f);                      // editor previews never leak into the game
+    PlaySceneAudio(0.5f);                          // before the module loads, so its Init can override
     BuildGameApi();
     GhostModuleResult r = GhostGameModule_Load(g_gameModulePath, &g_gameApi, g_playMessage);
     OutputDebugStringA(("[GhostX] " + g_playMessage + "\n").c_str());
@@ -3569,6 +3637,14 @@ void GhostEngine_Stop()
     g_scenePath = g_playBackupPath;                  // the editor goes back to the scene you were editing
     g_pendingScene.clear();
     GhostGameModule_Unload();                        // Shutdown, then free the temp copy
+    GhostAudio_SetPaused(false);
+    GhostAudio_StopAll(0.25f);
+    if (g_haveBusSnap)
+    {
+        for (int b = 0; b < GHOST_BUS_COUNT; b++) { GhostAudio_SetBusVolume(b, g_preBusVol[b]); GhostAudio_SetBusMute(b, g_preBusMute[b]); }
+        g_haveBusSnap = false;
+    }
+    GhostAudioBank_Load(g_projectRoot);            // drops runtime SetSoundEnabled changes
     g_hudText.clear(); g_uiQuads.clear();
     g_uiAssets.clear();
     g_uiMouseX = g_uiMouseY = -1.0f; g_uiMouseInside = false;
@@ -3586,8 +3662,8 @@ void GhostEngine_Stop()
 
 void GhostEngine_SetPaused(int paused)
 {
-    if (paused && g_playState == GhostPlayState::Playing) g_playState = GhostPlayState::Paused;
-    else if (!paused && g_playState == GhostPlayState::Paused) g_playState = GhostPlayState::Playing;
+    if (paused && g_playState == GhostPlayState::Playing) { g_playState = GhostPlayState::Paused; GhostAudio_SetPaused(true); }
+    else if (!paused && g_playState == GhostPlayState::Paused) { g_playState = GhostPlayState::Playing; GhostAudio_SetPaused(false); }
 }
 
 int GhostEngine_GetPlayState() { return (int)g_playState; }
@@ -4723,3 +4799,67 @@ int GhostEngine_GetPadInfo(GhostPadInfo* out)
 }
 
 void GhostEngine_PadTestRumble(int on) { GhostPad_TestRumble(on != 0); }
+
+// ============================================================
+//  Exported: audio
+// ============================================================
+int GhostEngine_GetSoundCount()
+{
+    if (GhostAudioBank_Count() == 0) GhostAudioBank_Load(g_projectRoot);     // the mixer can ask before Init
+    return GhostAudioBank_Count();
+}
+
+int GhostEngine_GetSoundInfo(int i, GhostSoundInfo* out)
+{
+    GhostSoundDef* d = GhostAudioBank_At(i);
+    if (!d || !out) return 0;
+    memset(out, 0, sizeof * out);
+    out->bus = d->bus; out->kind = d->kind; out->enabled = d->enabled ? 1 : 0;
+    out->volume = d->volume; out->pitchVar = d->pitchVar;
+    strncpy_s(out->name, sizeof out->name, d->name.c_str(), _TRUNCATE);
+    strncpy_s(out->file, sizeof out->file, d->file.c_str(), _TRUNCATE);
+    return 1;
+}
+
+void GhostEngine_SetSoundInfo(int i, const GhostSoundInfo* in)
+{
+    GhostSoundDef* d = GhostAudioBank_At(i);
+    if (!d || !in) return;
+    auto cf = [](float v, float lo, float hi) { return v != v ? lo : (v < lo ? lo : (v > hi ? hi : v)); };
+    d->enabled = (in->enabled != 0);
+    d->bus = in->bus < 1 ? 1 : (in->bus > 3 ? 3 : in->bus);
+    d->volume = cf(in->volume, 0.0f, 2.0f);
+    d->pitchVar = cf(in->pitchVar, 0.0f, 0.5f);
+    char f[261]; memcpy(f, in->file, 260); f[260] = 0;
+    d->file = f;
+    GhostAudio_ClearMissing();
+}
+
+int  GhostEngine_SaveSoundBank() { std::string err; return GhostAudioBank_Save(err) ? 1 : 0; }
+int  GhostEngine_TestSound(int i) { return GhostAudioBank_PlayIndex(i, 0.3f, true) ? 1 : 0; }
+void GhostEngine_StopAudio() { GhostAudio_StopAll(0.2f); }
+
+void  GhostEngine_SetBusVolume(int b, float v) { GhostAudio_SetBusVolume(b, v); }
+float GhostEngine_GetBusVolume(int b) { return GhostAudio_GetBusVolume(b); }
+void  GhostEngine_SetBusMute(int b, int m) { GhostAudio_SetBusMute(b, m != 0); }
+int   GhostEngine_GetBusMute(int b) { return GhostAudio_GetBusMute(b) ? 1 : 0; }
+
+int GhostEngine_PreviewFile(const char* path)
+{
+    if (!path || g_playState != GhostPlayState::Editing) return 0;
+    return GhostAudio_PlayMusic(path, 1.0f, 0.1f, false) ? 1 : 0;      // streamed, so long tracks start at once
+}
+
+int GhostEngine_GetSceneAudio(int which, char* buf, int size)
+{
+    if (!buf || size <= 0) return 0;
+    CopyMsg(which == 0 ? g_scene.music : g_scene.ambience, buf, size);
+    return 1;
+}
+
+void GhostEngine_SetSceneAudio(int which, const char* utf8)
+{
+    std::string s = utf8 ? utf8 : "";
+    if (s.size() > 47) s.resize(47);
+    (which == 0 ? g_scene.music : g_scene.ambience) = s;               // the scene hash notices, so the title gets its *
+}

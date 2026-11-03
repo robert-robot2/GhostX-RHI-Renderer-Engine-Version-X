@@ -90,6 +90,12 @@
     <ClInclude Include="include\GhostCustomGamepad.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="include\GhostAudio.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="include\GhostAudioBank.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\GhostPipeline.cpp">
@@ -141,6 +147,15 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\GhostCustomGamepad.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\GhostAudio.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\GhostAudioBank.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\GhostAudioImpl.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

@@ -56,6 +56,7 @@ namespace GhostShell
             string dir = Path.Combine(parent, name);
             Directory.CreateDirectory(Path.Combine(dir, "Content"));
             Directory.CreateDirectory(Path.Combine(dir, "Content", "UI"));
+            Directory.CreateDirectory(Path.Combine(dir, "Content", "Audio"));
             Directory.CreateDirectory(Path.Combine(dir, "Scenes"));
             Directory.CreateDirectory(Path.Combine(dir, "Binaries"));
 
@@ -78,6 +79,7 @@ namespace GhostShell
                 Current = m;
                 ManifestPath = Path.GetFullPath(manifestPath);
                 Directory.CreateDirectory(ContentDir!);
+                Directory.CreateDirectory(Path.Combine(ContentDir!, "Audio"));
                 Directory.CreateDirectory(ScenesDir!);
 
                 GhostSceneFile.ProjectRoot = Root;           // scene files store texture paths relative to this

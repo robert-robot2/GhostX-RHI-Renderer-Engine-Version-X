@@ -115,6 +115,13 @@ struct GhostPadInfo
     float axes[6];                 // LX LY RX RY LT RT
     int   raw;                     // physical button bits of a generic pad (bit n = button n + 1)
 };
+struct GhostSoundInfo
+{
+    int   bus, kind, enabled;      // bus: 1 music, 2 sfx, 3 ambience. kind: 0 sfx, 1 music, 2 ambience
+    float volume, pitchVar;
+    char  name[48];
+    char  file[260];
+};
 
 extern "C"
 {
@@ -312,5 +319,20 @@ extern "C"
     GHOST_API void GhostEngine_SetPadSettings(float deadzone, int rumble, int slot);   // slot -1 = auto
     GHOST_API int  GhostEngine_GetPadInfo(GhostPadInfo* out);                          // 1 = a pad is connected
     GHOST_API void GhostEngine_PadTestRumble(int on);
+
+    // ---- Audio ----
+    GHOST_API int  GhostEngine_GetSoundCount();
+    GHOST_API int  GhostEngine_GetSoundInfo(int index, GhostSoundInfo* out);
+    GHOST_API void GhostEngine_SetSoundInfo(int index, const GhostSoundInfo* in);   // enabled, bus, volume, pitchVar, file
+    GHOST_API int  GhostEngine_SaveSoundBank();
+    GHOST_API int  GhostEngine_TestSound(int index);
+    GHOST_API void GhostEngine_StopAudio();
+    GHOST_API void  GhostEngine_SetBusVolume(int bus, float v);
+    GHOST_API float GhostEngine_GetBusVolume(int bus);
+    GHOST_API void  GhostEngine_SetBusMute(int bus, int mute);
+    GHOST_API int   GhostEngine_GetBusMute(int bus);
+    GHOST_API int  GhostEngine_PreviewFile(const char* utf8Path);       // editor only, streamed on the Music bus
+    GHOST_API int  GhostEngine_GetSceneAudio(int which, char* buf, int bufSize);   // 0 music, 1 ambience
+    GHOST_API void GhostEngine_SetSceneAudio(int which, const char* utf8Name);
 
 }

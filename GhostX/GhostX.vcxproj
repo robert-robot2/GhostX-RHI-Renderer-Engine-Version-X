@@ -162,6 +162,8 @@ xcopy /Y /E /I "$(ProjectDir)shaders" "$(SolutionDir)GhostShell\bin\x64\Release\
   <ItemGroup>
     <ClInclude Include="include\Ghost3D1.h" />
     <ClInclude Include="include\GhostAnim.h" />
+    <ClInclude Include="include\GhostAudio.h" />
+    <ClInclude Include="include\GhostAudioBank.h" />
     <ClInclude Include="include\GhostCustomGamepad.h" />
     <ClInclude Include="include\GhostEngine.h" />
     <ClInclude Include="include\GhostGameAPI.h" />
@@ -189,6 +191,9 @@ xcopy /Y /E /I "$(ProjectDir)shaders" "$(SolutionDir)GhostShell\bin\x64\Release\
     <ClCompile Include="src\GhostAnim.cpp">
       <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NDEBUG;GHOSTENGINE_EXPORTS;_WINDOWS;_USRDLL;WIN32;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
+    <ClCompile Include="src\GhostAudio.cpp" />
+    <ClCompile Include="src\GhostAudioBank.cpp" />
+    <ClCompile Include="src\GhostAudioImpl.cpp" />
     <ClCompile Include="src\GhostCustomGamepad.cpp" />
     <ClCompile Include="src\GhostEngine.cpp" />
     <ClCompile Include="src\GhostGameModule.cpp" />

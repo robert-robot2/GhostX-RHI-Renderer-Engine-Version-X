@@ -58,7 +58,7 @@ static void SetPower(Body& b, int level)
 static void Collect(Body& b, int type)
 {
     G->PadRumble(0.3f, 0.3f, 0.15f);
-    if (type != PU_ONEUP) Score_Add(1000);
+    if (type != PU_ONEUP) { Sfx("powerup_collect"); Score_Add(1000); }     // the 1-up sound plays inside Life_Add
     switch (type)
     {
     case PU_MUSHROOM: if (PowerLevel() == 0) SetPower(b, 1); else Coins_Add(1); break;
@@ -73,7 +73,7 @@ static bool Hurt(Body& b)
 {
     if (S.starTime > 0.0f || S.invuln > 0.0f) return false;
     G->PadRumble(S.big ? 0.6f : 1.0f, 0.8f, S.big ? 0.25f : 0.5f);
-    if (S.big) { SetPower(b, 0); S.invuln = Cfg::Invulnerable; S.hurt = 0.45f; g_vel[1] = 6.0f; return false; }
+    if (S.big) { Sfx("hurt"); SetPower(b, 0); S.invuln = Cfg::Invulnerable; S.hurt = 0.45f; g_vel[1] = 6.0f; return false; }
     Game_Restart(true);
     return true;
 }
@@ -86,7 +86,7 @@ static bool TryPortal(Body& b, int entry)
         (pr.portalTrigger == 1 && (G->KeyPressed(VK_DOWN) || G->KeyPressed('S'))) ||
         (pr.portalTrigger == 2 && G->KeyPressed('F'));
     if (!go) return false;
-    if (strstr(pr.link, ".ghostscene")) return G->LoadScene(pr.link) != 0;
+    if (strstr(pr.link, ".ghostscene")) { const bool ok = G->LoadScene(pr.link) != 0; if (ok) Sfx("pipe"); return ok; }
 
     int ids[64];
     const int n = G->FindAllByTag("PortalExit", ids, 64);
@@ -105,6 +105,7 @@ static bool TryPortal(Body& b, int entry)
         memset(g_vel, 0, sizeof g_vel);
         S.camSnap = true;
         S.portalCool = 0.4f;
+        Sfx("pipe");
         return true;
     }
     return false;
@@ -234,7 +235,7 @@ void Player_Update(float dt)
     // ---- Jump ----
     g_jumpBuf = G->KeyPressed(VK_SPACE) ? Cfg::JumpBuffer : g_jumpBuf - dt;
     g_coyote = g_grounded ? Cfg::CoyoteTime : g_coyote - dt;
-    if (g_jumpBuf > 0.0f && g_coyote > 0.0f) { g_vel[1] = Cfg::Jump; g_jumpBuf = 0.0f; g_coyote = 0.0f; }
+    if (g_jumpBuf > 0.0f && g_coyote > 0.0f) { g_vel[1] = Cfg::Jump; g_jumpBuf = 0.0f; g_coyote = 0.0f; Sfx(S.big ? "big_jump" : "jump"); }
     if (G->KeyReleased(VK_SPACE) && g_vel[1] > 0.0f) g_vel[1] *= 0.5f;
 
     g_vel[1] -= Cfg::Gravity * dt;

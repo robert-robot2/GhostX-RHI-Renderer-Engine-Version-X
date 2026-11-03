@@ -129,6 +129,7 @@ bool GhostScene_Save(const GhostScene& s, const std::string& root, const std::st
         amb["intensity"] = s.ambientIntensity;
         j["ambient"] = amb;
         j["shadows"] = json{ { "enabled", s.shadowsEnabled },{ "strength", s.shadowStrength } };
+        j["audio"] = json{ { "music", s.music },{ "ambience", s.ambience } };
         std::set<int> saved;
         json texs = json::array();
         for (const GhostTextureInfo& t : s.textures)
@@ -402,6 +403,14 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
             float st = j["shadows"].value("strength", 1.0f);
             s.shadowStrength = st < 0.0f ? 0.0f : (st > 1.0f ? 1.0f : st);
         }
+        s.music.clear(); s.ambience.clear();
+        if (j.contains("audio") && j["audio"].is_object())
+        {
+            s.music = j["audio"].value("music", std::string());
+            s.ambience = j["audio"].value("ambience", std::string());
+            if (s.music.size() > 47) s.music.resize(47);
+            if (s.ambience.size() > 47) s.ambience.resize(47);
+        }
         if (j.contains("objects") && j["objects"].is_array())
             for (const json& jo : j["objects"])
             {
@@ -664,6 +673,7 @@ unsigned int GhostScene_Hash(const GhostScene& s)
     I(s.activeCameraId);
     I(s.gameStartCameraId);
     I(s.shadowsEnabled ? 1 : 0); F(s.shadowStrength);
+    S(s.music); S(s.ambience);
     F(s.ambientColor[0]); F(s.ambientColor[1]); F(s.ambientColor[2]); F(s.ambientIntensity);
 
     for (const GhostObject& o : s.objects)

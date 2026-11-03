@@ -276,6 +276,7 @@ namespace GhostShell
                 _engineReady = true;
                 GhostFontAtlas.BakeDefault();     // the on-screen text font (the player needs it too)
                 GhostPadDialog.ApplySaved();      // saved deadzone / rumble / pad slot (the standalone player runs this too)
+                GhostAudioMixer.ApplySaved();     // saved bus volumes and mutes (the standalone player needs them too)
                 _viewBar?.ApplyStartup();                        // the overlay text needs the font, and the settings need the engine
                 GhostSceneFile.MarkClean();       // the starting scene counts as saved
                 if (GhostPlayer.IsPlayer && !GhostPlayer.Launch(this)) return;
