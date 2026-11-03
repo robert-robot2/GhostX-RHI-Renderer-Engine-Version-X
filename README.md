@@ -137,12 +137,12 @@ F / G	F toggles face-pick mode, G toggles the grid
 - [x] Phase 20.M: Level 2 Build // Instruction Set 2 Complete
 - [x] Phase 31: Antialiasing MSAA 2x/4x/8x
 - [x] Phase 32: Antialiasing TAA with Jitter adjustment
-- [x] Phase 34.A: Gamepad Editor/ Gameplay, ZUG only supports Microsoft CONtroller
+- [x] Phase 34.A: Gamepad Editor/ Gameplay, XInput Controller support
+- [x] Phase 34.B: Gamepad Menu Pad, HID Controller Support
 - **Active Core**
 - [ ] Phase 20.G: Collision, Polish for Levels
 - [ ] Phase 20.O: FINAL FORM YET IS MY POWER LEVEL OVER 9000??? Flying Shell Drops, Doppelgangers, Bopper Spinners
 - [ ] Phase 33: Audio
-- [ ] Phase 34.B: Gamepad Menu Pad, support for  OTHER CONTROLLERS 
 - [ ] Phase 20.N: Play Packaged Exe //Instruction Set 3
 - **Active Replicant Core**
 - [ ] Phase : Base Demo Gameplay Package to Download on site without installer
@@ -158,7 +158,7 @@ F / G	F toggles face-pick mode, G toggles the grid
 - [ ] Phase : Particle Editor Manager
 - [ ] Phase 30: Upgrade Roles to Show only their Behaviours not all Behaviours.
 - [ ] Phase 29.C: Thicc Editor Upgrade Part Drei: Collision Rotation
-- [ ] Phase : Render Polis
+- [ ] Phase : Render Polish
 - **Active SubCore**
 - [ ] Phase : Antialiasing SMAA/FXAA/TAA
 - [ ] Phase : Co-op Multiplayer
