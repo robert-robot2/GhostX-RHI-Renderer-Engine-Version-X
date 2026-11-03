@@ -86,6 +86,53 @@ static void Game_ToMenu()
     }
 }
 
+// ---- Menu navigation: W/S/A/D or arrows or pad move a focus marker, Space / Enter / A presses, B / Backspace goes back ----
+struct NavItem { const char* widget; const char* label; };
+static const NavItem kNavMain[] = { { "StartButton", "Start" },{ "TwoPlayerButton", "2 Player" },{ "OptionsButton", "Options" },{ "QuitButton", "Quit" } };
+static const NavItem kNavOptBack[] = { { "OptionsBackButton", "Back" } };
+static const NavItem kNavSel[] = { { "MarioButton", "Mario" },{ "LuigiButton", "Luigi" },{ "StartButton", "Start" },{ "BackButton", "Back to Main Menu" } };
+static const NavItem kNavPause[] = { { "ResumeButton", "Resume" },{ "RestartButton", "Restart Game" },{ "MenuButton", "Main Menu" } };
+static const NavItem kNavOver[] = { { "RestartButton", "Restart" },{ "MenuButton", "Main Menu" } };
+static const NavItem kNavDone[] = { { "AgainButton", "Play Again" },{ "QuitButton", "Quit" } };
+
+static const NavItem* g_navItems = nullptr;
+static int  g_navUi = 0, g_navIdx = 0;
+static bool g_navPress = false, g_navBack = false, g_navShow = false;
+
+static void Nav_Idle() { g_navItems = nullptr; g_navPress = g_navBack = false; }
+
+static void Nav_Update(int ui, const NavItem* items, int count)
+{
+    if (!ui || count <= 0) { Nav_Idle(); return; }
+    if (g_navItems != items) { g_navItems = items; g_navIdx = 0; g_navShow = G->PadConnected() != 0; }   // new screen: first button
+    g_navUi = ui;
+
+    const bool next = G->KeyPressed('S') || G->KeyPressed(VK_DOWN) || G->KeyPressed('D') || G->KeyPressed(VK_RIGHT);
+    const bool prev = G->KeyPressed('W') || G->KeyPressed(VK_UP) || G->KeyPressed('A') || G->KeyPressed(VK_LEFT);
+    if (next || prev)
+    {
+        if (g_navShow) g_navIdx = next ? (g_navIdx + 1) % count : (g_navIdx + count - 1) % count;   // the first press only shows the marker
+        g_navShow = true;
+    }
+    g_navPress = g_navShow && (G->KeyPressed(VK_SPACE) || G->KeyPressed(VK_RETURN));
+    g_navBack = G->PadButtonPressed(GHOST_PAD_B) || G->KeyPressed(VK_BACK);
+
+    for (int i = 0; i < count; i++)
+    {
+        char t[96];
+        if (g_navShow && i == g_navIdx) snprintf(t, sizeof t, "> %s <", items[i].label);
+        else snprintf(t, sizeof t, "%s", items[i].label);
+        G->UISetText(ui, items[i].widget, t);
+    }
+}
+
+// A mouse click, or the focused button pressed from the keyboard / pad
+static bool Clicked(int ui, const char* widget)
+{
+    if (G->UIButtonClicked(ui, widget)) return true;
+    return g_navPress && g_navUi == ui && g_navItems && strcmp(g_navItems[g_navIdx].widget, widget) == 0;
+}
+
 void Game_Restart(bool died)
 {
     if (died) { S.deaths++; if (--S.lives <= 0) { S.lives = 0; S.mode = MODE_OVER; return; } }   // freeze on the Game Over screen
@@ -272,19 +319,21 @@ static bool Screens_Update()
             G->UISetVisible(g_menuUi, "OptionsPanel", g_menuOptions ? 1 : 0);
             if (g_menuOptions)
             {
-                if (G->UIButtonClicked(g_menuUi, "OptionsBackButton")) g_menuOptions = false;
+                Nav_Update(g_menuUi, kNavOptBack, 1);
+                if (Clicked(g_menuUi, "OptionsBackButton") || g_navBack) g_menuOptions = false;
                 return true;                                  // the buttons behind the panel stay dead
             }
-            if (G->UIButtonClicked(g_menuUi, "StartButton")) { S.twoPlayer = false; S.mode = MODE_SELECT; }
-            if (G->UIButtonClicked(g_menuUi, "TwoPlayerButton"))
+            Nav_Update(g_menuUi, kNavMain, 4);
+            if (Clicked(g_menuUi, "StartButton")) { S.twoPlayer = false; S.mode = MODE_SELECT; }
+            else if (Clicked(g_menuUi, "TwoPlayerButton"))
             {
                 S.twoPlayer = true; S.character = 0;          // 1-1 is Mario; later levels pick in Init
                 g_started = true;
                 S.mode = MODE_PLAY;
                 Game_Restart(false);
             }
-            if (G->UIButtonClicked(g_menuUi, "OptionsButton")) g_menuOptions = true;
-            if (G->UIButtonClicked(g_menuUi, "QuitButton")) G->Quit();
+            else if (Clicked(g_menuUi, "OptionsButton")) g_menuOptions = true;
+            else if (Clicked(g_menuUi, "QuitButton")) G->Quit();
         }
         return true;
     }
@@ -294,19 +343,20 @@ static bool Screens_Update()
         if (g_ui) G->UIShow(g_ui, 0);
         if (g_selUi)
         {
-            if (G->UIButtonClicked(g_selUi, "MarioButton")) S.character = 0;
-            if (G->UIButtonClicked(g_selUi, "LuigiButton")) S.character = 1;
+            Nav_Update(g_selUi, kNavSel, 4);
+            if (Clicked(g_selUi, "MarioButton")) S.character = 0;
+            if (Clicked(g_selUi, "LuigiButton")) S.character = 1;
             const float lit[4] = { 1, 1, 1, 1 }, dim[4] = { 0.45f, 0.45f, 0.45f, 1 };
             G->UISetColor(g_selUi, "MarioButton", S.character == 0 ? lit : dim);
             G->UISetColor(g_selUi, "LuigiButton", S.character == 1 ? lit : dim);
             G->UISetText(g_selUi, "SelectedText", S.character == 1 ? "LUIGI" : "MARIO");
-            if (G->UIButtonClicked(g_selUi, "StartButton"))
+            if (Clicked(g_selUi, "StartButton"))
             {
                 g_started = true;
                 S.mode = MODE_PLAY;
                 Game_Restart(false);
             }
-            if (G->UIButtonClicked(g_selUi, "BackButton")) S.mode = MODE_MENU;
+            else if (Clicked(g_selUi, "BackButton") || g_navBack) S.mode = MODE_MENU;
         }
         return true;
     }
@@ -315,9 +365,10 @@ static bool Screens_Update()
     {
         if (g_optUi)
         {
-            if (G->UIButtonClicked(g_optUi, "ResumeButton")) S.mode = MODE_PLAY;
-            if (G->UIButtonClicked(g_optUi, "RestartButton")) { S.mode = MODE_PLAY; Game_FullRestart(); }
-            if (G->UIButtonClicked(g_optUi, "MenuButton")) Game_ToMenu();
+            Nav_Update(g_optUi, kNavPause, 3);
+            if (Clicked(g_optUi, "ResumeButton") || g_navBack) S.mode = MODE_PLAY;
+            else if (Clicked(g_optUi, "RestartButton")) { S.mode = MODE_PLAY; Game_FullRestart(); }
+            else if (Clicked(g_optUi, "MenuButton")) Game_ToMenu();
         }
         return true;
     }
@@ -327,6 +378,7 @@ static bool Screens_Update()
         if (g_ui) G->UIShow(g_ui, 0);
         if (g_overUi)
         {
+            Nav_Update(g_overUi, kNavOver, 2);
             char t[128];
             snprintf(t, sizeof t, "Score %06d      Coins %d      Deaths %d", S.score, S.coins, S.deaths);
             G->UISetText(g_overUi, "GameOverStats", t);
@@ -334,16 +386,16 @@ static bool Screens_Update()
             char p[200];
             snprintf(p, sizeof p, "Scenes/%s", kLevels[0]);
 
-            if (G->UIButtonClicked(g_overUi, "RestartButton"))
+            if (Clicked(g_overUi, "RestartButton"))
             {
-                if (S.level <= 0 || !G->LoadScene(p))      // same pattern as your Play Again button
+                if (S.level <= 0 || !G->LoadScene(p))
                 {
                     S.lives = 3; S.score = 0; S.deaths = 0;
                     S.mode = MODE_PLAY;
                     Game_Restart(false);
                 }
             }
-            if (G->UIButtonClicked(g_overUi, "MenuButton"))
+            else if (Clicked(g_overUi, "MenuButton"))
             {
                 g_started = false;                         // Init will show the menu after the scene reloads
                 if (S.level <= 0 || !G->LoadScene(p))
@@ -362,21 +414,23 @@ static bool Screens_Update()
 GHOST_GAME_EXPORT void GhostGame_Update(float dt)
 {
     if (!S.player) { S.error = "No object with Role = Player in this scene"; Hud(); return; }
-    if (Screens_Update()) { Camera_Update(dt); return; }
-    if (G->KeyPressed(VK_F10))                             // Esc opens and closes the options panel
+    if (G->KeyPressed(VK_F10))                             // before Screens_Update, so it can also CLOSE the options panel
     {
         if (S.mode == MODE_PLAY && !S.complete && !S.onPole) S.mode = MODE_OPTIONS;
         else if (S.mode == MODE_OPTIONS) S.mode = MODE_PLAY;
     }
+    if (Screens_Update()) { Camera_Update(dt); return; }
+    if (g_ui && S.complete && S.lastLevel) Nav_Update(g_ui, kNavDone, 2);
+    else Nav_Idle();
     if (g_ui && S.complete)
     {
-        if (G->UIButtonClicked(g_ui, "AgainButton"))
+        if (Clicked(g_ui, "AgainButton"))
         {
             char p[200];
             snprintf(p, sizeof p, "Scenes/%s", kLevels[0]);
             if (S.level <= 0 || !G->LoadScene(p)) Game_Restart(false);       // the last level starts over from Level 1
         }
-        if (G->UIButtonClicked(g_ui, "QuitButton")) G->Quit();
+        if (Clicked(g_ui, "QuitButton")) G->Quit();
     }
     Movers_Update(dt);
     Timer_Update(dt);

@@ -4717,7 +4717,7 @@ int GhostEngine_GetPadInfo(GhostPadInfo* out)
     memset(out, 0, sizeof * out);
     out->slot = -1;
     int slot = -1, buttons = 0;
-    if (!GhostPad_Probe(slot, buttons, out->axes)) return 0;
+    if (!GhostPad_Probe(slot, buttons, out->axes, &out->raw)) return 0;
     out->connected = 1; out->slot = slot; out->buttons = buttons;
     return 1;
 }

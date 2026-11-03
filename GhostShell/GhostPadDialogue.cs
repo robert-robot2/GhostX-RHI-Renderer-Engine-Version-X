@@ -102,7 +102,7 @@ namespace GhostShell
             var slotLabel = new Label { Text = "Controller", Location = new Point(14, 330), AutoSize = true };
             _slot.Location = new Point(100, 326); _slot.Width = 150; _slot.DropDownStyle = ComboBoxStyle.DropDownList;
             _slot.FlatStyle = FlatStyle.Flat; _slot.BackColor = Bg2; _slot.ForeColor = Fg;
-            _slot.Items.AddRange(new object[] { "Auto", "Pad 1", "Pad 2", "Pad 3", "Pad 4" });
+            _slot.Items.AddRange(new object[] { "Auto", "Pad 1", "Pad 2", "Pad 3", "Pad 4", "Generic (Logitech)" });
 
             var test = new Button { Text = "Test rumble", Location = new Point(270, 322), Size = new Size(136, 30), FlatStyle = FlatStyle.Flat, BackColor = Bg2, ForeColor = Fg };
             var close = new Button { Text = "Close", Location = new Point(306, 360), Size = new Size(100, 30), FlatStyle = FlatStyle.Flat, BackColor = Bg2, ForeColor = Fg, DialogResult = DialogResult.OK };
@@ -113,7 +113,7 @@ namespace GhostShell
             GhostSettingsData d = GhostSettings.Data;
             _dz.Value = Math.Clamp((int)Math.Round(d.PadDeadzone * 100f), 5, 50);
             _rumble.Checked = d.PadRumble;
-            _slot.SelectedIndex = Math.Clamp(d.PadSlot + 1, 0, 4);
+            _slot.SelectedIndex = Math.Clamp(d.PadSlot + 1, 0, 5);
             _loading = false;
             Apply();
 
@@ -151,7 +151,9 @@ namespace GhostShell
                 _view.Connected = true;
                 _view.Axes = info.axes ?? new float[6];
                 _view.Buttons = info.buttons;
-                _status.Text = $"Controller {info.slot + 1} connected";
+                _status.Text = info.slot == 4
+        ? $"Generic controller connected   (buttons: {RawText(info.raw)})"
+        : $"Controller {info.slot + 1} connected";
             }
             else
             {
@@ -160,5 +162,12 @@ namespace GhostShell
             }
             _view.Invalidate();
         }
+        private static string RawText(int raw)
+        {
+            var l = new System.Collections.Generic.List<string>();
+            for (int i = 0; i < 32; i++) if ((raw & (1 << i)) != 0) l.Add((i + 1).ToString());
+            return l.Count == 0 ? "none" : string.Join(", ", l);
+        }
+
     }
 }

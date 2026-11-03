@@ -87,6 +87,9 @@
     <ClInclude Include="include\GhostPad.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="include\GhostCustomGamepad.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\GhostPipeline.cpp">
@@ -135,6 +138,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\GhostPad.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\GhostCustomGamepad.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

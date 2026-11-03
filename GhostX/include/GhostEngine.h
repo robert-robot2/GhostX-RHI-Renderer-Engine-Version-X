@@ -113,6 +113,7 @@ struct GhostPadInfo
     int   connected, slot;
     int   buttons;                 // bit i = GHOST_PAD_* button i
     float axes[6];                 // LX LY RX RY LT RT
+    int   raw;                     // physical button bits of a generic pad (bit n = button n + 1)
 };
 
 extern "C"

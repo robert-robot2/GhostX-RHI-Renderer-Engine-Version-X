@@ -123,7 +123,7 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalDependencies>d3d12.lib;
 dxgi.lib;
-d3dcompiler.lib;xinput.lib;Comdlg32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+d3dcompiler.lib;Comdlg32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <Manifest>
       <EnableSegmentHeap>true</EnableSegmentHeap>
@@ -162,6 +162,7 @@ xcopy /Y /E /I "$(ProjectDir)shaders" "$(SolutionDir)GhostShell\bin\x64\Release\
   <ItemGroup>
     <ClInclude Include="include\Ghost3D1.h" />
     <ClInclude Include="include\GhostAnim.h" />
+    <ClInclude Include="include\GhostCustomGamepad.h" />
     <ClInclude Include="include\GhostEngine.h" />
     <ClInclude Include="include\GhostGameAPI.h" />
     <ClInclude Include="include\GhostGameModule.h" />
@@ -188,6 +189,7 @@ xcopy /Y /E /I "$(ProjectDir)shaders" "$(SolutionDir)GhostShell\bin\x64\Release\
     <ClCompile Include="src\GhostAnim.cpp">
       <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NDEBUG;GHOSTENGINE_EXPORTS;_WINDOWS;_USRDLL;WIN32;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
+    <ClCompile Include="src\GhostCustomGamepad.cpp" />
     <ClCompile Include="src\GhostEngine.cpp" />
     <ClCompile Include="src\GhostGameModule.cpp" />
     <ClCompile Include="src\GhostImage.cpp" />

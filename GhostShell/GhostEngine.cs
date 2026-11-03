@@ -123,6 +123,7 @@ namespace GhostShell
     {
         public int connected, slot, buttons;
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = 6)] public float[] axes;
+        public int raw;
     }
 
     internal static class GhostEngine

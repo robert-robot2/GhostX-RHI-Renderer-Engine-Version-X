@@ -2,6 +2,7 @@
 #define NOMINMAX
 #endif
 #include "../include/GhostPad.h"
+#include "../include/GhostCustomGamepad.h"
 #include <Windows.h>
 #include <Xinput.h>
 #include <math.h>
@@ -18,6 +19,8 @@ static bool  s_rumbling = false, s_padLast = false;
 static bool  s_down[GHOST_PAD_BUTTON_COUNT], s_pressed[GHOST_PAD_BUTTON_COUNT], s_released[GHOST_PAD_BUTTON_COUNT];
 static float s_axis[GHOST_PAD_AXIS_COUNT];
 static bool  s_key[256];
+static bool  s_customOn = false;                    // the generic pad is the one in use
+
 
 // Radial deadzone: the stick starts at 0 right after the deadzone and still reaches 1
 static void Stick(SHORT x, SHORT y, float dz, float& ox, float& oy)
@@ -85,6 +88,40 @@ static bool Acquire(XINPUT_STATE& st, ULONGLONG now)
     return false;
 }
 
+static void StickF(float fx, float fy, float& ox, float& oy)       // same radial deadzone as Stick(), for floats
+{
+    const float m = sqrtf(fx * fx + fy * fy);
+    if (m <= s_dead) { ox = oy = 0.0f; return; }
+    const float k = (fminf(m, 1.0f) - s_dead) / (1.0f - s_dead) / m;
+    ox = fx * k; oy = fy * k;
+}
+
+static void FromRaw(const GhostRawPad& rp, bool* dn, float* ax)
+{
+    memcpy(dn, rp.btn, sizeof(bool) * GHOST_PAD_BUTTON_COUNT);
+    StickF(rp.axis[GHOST_PAD_AXIS_LX], rp.axis[GHOST_PAD_AXIS_LY], ax[GHOST_PAD_AXIS_LX], ax[GHOST_PAD_AXIS_LY]);
+    StickF(rp.axis[GHOST_PAD_AXIS_RX], rp.axis[GHOST_PAD_AXIS_RY], ax[GHOST_PAD_AXIS_RX], ax[GHOST_PAD_AXIS_RY]);
+    ax[GHOST_PAD_AXIS_LT] = rp.axis[GHOST_PAD_AXIS_LT];
+    ax[GHOST_PAD_AXIS_RT] = rp.axis[GHOST_PAD_AXIS_RT];
+}
+
+// XInput first, then the generic pad. Slot 4 = generic only, slots 0..3 = XInput only.
+static bool ReadPad(bool* dn, float* ax, ULONGLONG now)
+{
+    s_customOn = false;
+    if (s_cfgSlot != 4)
+    {
+        XINPUT_STATE st = {};
+        if (Acquire(st, now)) { Decode(st.Gamepad, dn, ax); return true; }
+    }
+    if (s_cfgSlot == -1 || s_cfgSlot == 4)
+    {
+        GhostRawPad rp;
+        if (GhostCustomPad_Read(rp, now)) { FromRaw(rp, dn, ax); s_customOn = true; return true; }
+    }
+    return false;
+}
+
 void GhostPad_Poll(bool enabled)
 {
     const ULONGLONG now = GetTickCount64();
@@ -101,8 +138,7 @@ void GhostPad_Poll(bool enabled)
 
     bool dn[GHOST_PAD_BUTTON_COUNT] = {};
     float ax[GHOST_PAD_AXIS_COUNT] = {};
-    XINPUT_STATE st = {};
-    if (Acquire(st, now)) Decode(st.Gamepad, dn, ax);
+    ReadPad(dn, ax, now);
 
     for (int i = 0; i < GHOST_PAD_BUTTON_COUNT; i++)
     {
@@ -132,7 +168,7 @@ void GhostPad_Poll(bool enabled)
 void GhostPad_EndStep() { memset(s_pressed, 0, sizeof s_pressed); memset(s_released, 0, sizeof s_released); }
 void GhostPad_Shutdown() { StopRumble(); }
 
-bool  GhostPad_Connected() { return s_active >= 0; }
+bool  GhostPad_Connected() { return s_active >= 0 || s_customOn; }
 bool  GhostPad_ButtonDown(int b) { return b >= 0 && b < GHOST_PAD_BUTTON_COUNT && s_down[b]; }
 bool  GhostPad_ButtonPressed(int b) { return b >= 0 && b < GHOST_PAD_BUTTON_COUNT && s_pressed[b]; }
 bool  GhostPad_ButtonReleased(int b) { return b >= 0 && b < GHOST_PAD_BUTTON_COUNT && s_released[b]; }
@@ -154,40 +190,51 @@ void GhostPad_SetSettings(float deadzone, bool rumble, int slot)
     s_dead = deadzone != deadzone ? 0.22f : (deadzone < 0.05f ? 0.05f : (deadzone > 0.6f ? 0.6f : deadzone));
     s_rumbleOn = rumble;
     if (!rumble) StopRumble();
-    slot = slot < -1 ? -1 : (slot > 3 ? 3 : slot);
+    slot = slot < -1 ? -1 : (slot > 4 ? 4 : slot);
     if (slot != s_cfgSlot)                             // switch pads: rescan right away
     {
         StopRumble();
         s_cfgSlot = slot; s_active = -1; s_nextScan = 0; s_probeSlot = -1; s_probeScan = 0;
+        GhostCustomPad_Reset();
     }
 }
 
-bool GhostPad_Probe(int& slot, int& buttons, float* axes6)
+bool GhostPad_Probe(int& slot, int& buttons, float* axes6, int* raw)
 {
-    XINPUT_STATE st = {};
     const ULONGLONG now = GetTickCount64();
+    bool dn[GHOST_PAD_BUTTON_COUNT] = {};
+    float ax[GHOST_PAD_AXIS_COUNT] = {};
+    int rw = 0;
     bool ok = false;
-    if (s_probeSlot >= 0)
+
+    if (s_cfgSlot != 4)
     {
-        ok = XInputGetState((DWORD)s_probeSlot, &st) == ERROR_SUCCESS;
-        if (!ok) { s_probeSlot = -1; s_probeScan = now + 500; }
+        XINPUT_STATE st = {};
+        if (s_probeSlot >= 0)
+        {
+            ok = XInputGetState((DWORD)s_probeSlot, &st) == ERROR_SUCCESS;
+            if (!ok) { s_probeSlot = -1; s_probeScan = now + 500; }
+        }
+        else if (now >= s_probeScan)
+        {
+            s_probeScan = now + 500;
+            const int from = s_cfgSlot >= 0 ? s_cfgSlot : 0, to = s_cfgSlot >= 0 ? s_cfgSlot : 3;
+            for (int i = from; i <= to && !ok; i++)
+                if (XInputGetState((DWORD)i, &st) == ERROR_SUCCESS) { ok = true; s_probeSlot = i; }
+        }
+        if (ok) { Decode(st.Gamepad, dn, ax); slot = s_probeSlot; }
     }
-    else if (now >= s_probeScan)
+    if (!ok && (s_cfgSlot == -1 || s_cfgSlot == 4))
     {
-        s_probeScan = now + 500;
-        const int from = s_cfgSlot >= 0 ? s_cfgSlot : 0, to = s_cfgSlot >= 0 ? s_cfgSlot : 3;
-        for (int i = from; i <= to && !ok; i++)
-            if (XInputGetState((DWORD)i, &st) == ERROR_SUCCESS) { ok = true; s_probeSlot = i; }
+        GhostRawPad rp;
+        if (GhostCustomPad_Read(rp, now)) { ok = true; FromRaw(rp, dn, ax); slot = 4; rw = rp.rawButtons; }
     }
     if (!ok) return false;
 
-    bool dn[GHOST_PAD_BUTTON_COUNT] = {};
-    float ax[GHOST_PAD_AXIS_COUNT] = {};
-    Decode(st.Gamepad, dn, ax);
-    slot = s_probeSlot;
     buttons = 0;
     for (int i = 0; i < GHOST_PAD_BUTTON_COUNT; i++) if (dn[i]) buttons |= (1 << i);
     if (axes6) memcpy(axes6, ax, sizeof ax);
+    if (raw) *raw = rw;
     return true;
 }
 

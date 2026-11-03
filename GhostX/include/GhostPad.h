@@ -18,6 +18,6 @@ bool  GhostPad_PadActive();                           // true if the pad was the
 void  GhostPad_Rumble(float strong, float weak, float seconds);
 void  GhostPad_SetSettings(float deadzone, bool rumble, int slot);   // slot -1 = first connected, 0..3 = that pad
 
-// For the editor's Gamepad window: reads a pad directly, works outside Play. false = no pad.
-bool  GhostPad_Probe(int& slot, int& buttons, float* axes6);
+// slot -1 = auto (XInput, then generic), 0..3 = that XInput pad, 4 = generic pad only
+bool  GhostPad_Probe(int& slot, int& buttons, float* axes6, int* raw = nullptr);
 void  GhostPad_TestRumble(bool on);
