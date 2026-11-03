@@ -279,7 +279,7 @@ void Player_Update(float dt)
 
             if (S.starTime > 0.0f) { Enemy_Kill(ids[i]); continue; }
             const bool stomp = preVy < 0.0f && feetBefore >= emx[1] - 0.25f;
-            if (stomp) { Enemy_Kill(ids[i]); g_vel[1] = G->KeyDown(VK_SPACE) ? Cfg::StompBounceHeld : Cfg::StompBounce; G->PadRumble(0.0f, 0.4f, 0.08f); }
+            if (stomp) { Enemy_Kill(ids[i],true); g_vel[1] = G->KeyDown(VK_SPACE) ? Cfg::StompBounceHeld : Cfg::StompBounce; G->PadRumble(0.0f, 0.4f, 0.08f); }
             else if (Hurt(b)) return;
         }
     }

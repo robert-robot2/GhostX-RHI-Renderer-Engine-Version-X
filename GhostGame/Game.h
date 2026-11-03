@@ -112,7 +112,7 @@ void Level_Init();
 void Level_Reset();
 void Entities_Update(float dt);
 void Coin_Collect(int id);
-void Enemy_Kill(int id);
+void Enemy_Kill(int id, bool stomp = false);   // stomp = true: a winged enemy loses its wings first
 void Blocks_Bump(int id);
 void PowerUp_Remove(int id);
 void Movers_Update(float dt);

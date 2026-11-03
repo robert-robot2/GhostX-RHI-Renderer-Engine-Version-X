@@ -542,8 +542,8 @@ namespace GhostShell
     internal sealed class PortalTriggerConverter : FixedListConverter
     { public static readonly string[] Names = { "Touch (walk through)", "Press Down", "Press F" }; protected override string[] Items => Names; }
 
-    internal sealed class PowerTypeConverter : FixedListConverter
-    { public static readonly string[] Names = { "Auto (mushroom, then flower)", "Mushroom", "Fire Flower", "Star", "1-Up" }; protected override string[] Items => Names; }
+     internal sealed class PowerTypeConverter : FixedListConverter
+    { public static readonly string[] Names = { "Auto (mushroom, then flower)", "Mushroom", "Fire Flower", "Star", "1-Up", "Spinning Coin" }; protected override string[] Items => Names; }
     internal sealed class ItemMoveConverter : FixedListConverter
     { public static readonly string[] Names = { "By type", "Moves", "Stays put" }; protected override string[] Items => Names; }
 
@@ -554,7 +554,7 @@ namespace GhostShell
     { public static readonly string[] Names = { "Vanish", "Bounce off screen", "Flatten", "Drop Shell" }; protected override string[] Items => Names; }
 
     internal sealed class FlyingEnemyConverter : FixedListConverter
-    { public static readonly string[] Names = { "No", "Yes (no gravity)" }; protected override string[] Items => Names; }
+    { public static readonly string[] Names = { "No", "Yes (no gravity)", "Winged (first stomp drops it)" }; protected override string[] Items => Names; }
 
 
 
@@ -614,7 +614,7 @@ namespace GhostShell
         [DisplayName("Flying Enemy (no gravity)"), TypeConverter(typeof(FlyingEnemyConverter))]
         public string FlyingEnemy
         {
-            get => FlyingEnemyConverter.Names[Math.Clamp(Get().flying, 0, 1)];
+            get => FlyingEnemyConverter.Names[Math.Clamp(Get().flying, 0, 2)];
             set { int i = Array.IndexOf(FlyingEnemyConverter.Names, value); if (i >= 0) { var g = Get(); g.flying = i; Set(g); } }
         }
         [DisplayName("Enemy Death Effect"), TypeConverter(typeof(EnemyDeathEffectConverter))]
@@ -642,7 +642,7 @@ namespace GhostShell
         [DisplayName("Power-Up Type (contents = Power-up)"), TypeConverter(typeof(PowerTypeConverter))]
         public string PowerType
         {
-            get => PowerTypeConverter.Names[Math.Clamp(Get().powerType, 0, 4)];
+            get => PowerTypeConverter.Names[Math.Clamp(Get().powerType, 0, 5)];
             set { int i = Array.IndexOf(PowerTypeConverter.Names, value); if (i >= 0) { var g = Get(); g.powerType = i; Set(g); } }
         }
         [DisplayName("Pickup Movement"), TypeConverter(typeof(ItemMoveConverter))]

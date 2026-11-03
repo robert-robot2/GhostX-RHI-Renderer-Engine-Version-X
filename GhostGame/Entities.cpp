@@ -4,7 +4,7 @@
 //Entities.cpp
 
 struct Saved { int id; float pos[3], scale[3], color[3]; char tag[32]; int visible; };
-struct Enemy { int id; float a[3], b[3]; float speed, pause, wait; int mode; int dir; float vy; bool alive, done, grounded; float dieTimer; };
+struct Enemy { int id; float a[3], b[3]; float speed, pause, wait; int mode; int dir; float vy; bool alive, done, grounded, wingless; float dieTimer; };
 
 static std::vector<Saved> g_saved;
 static std::vector<int>   g_coins, g_enemyIds, g_blocks;
@@ -30,7 +30,8 @@ struct Debris { int id; float vel[3]; float life; };
 static std::vector<Debris> g_debris;
 static void Boss_Init();
 static void Boss_Reset();
-
+struct CoinPop { int id; float vy, y0, life; };
+static std::vector<CoinPop> g_coinPops;
 
 static float g_skyBase = 12.0f, g_skyCur = 12.0f;   // the level's own hour, and the hour we are showing
 extern float g_faceDir;
@@ -152,6 +153,7 @@ void Level_Init()
 {
     g_saved.clear(); g_coins.clear(); g_enemyIds.clear(); g_blocks.clear(); g_enemies.clear(); g_pickups.clear(); g_blockMem.clear(); g_hidden.clear();
     g_breaking.clear(); g_moverIds.clear(); g_projIds.clear(); g_movers.clear(); g_debris.clear();    g_shells.clear(); g_shellSwapped.clear(); g_castleFlags.clear();
+    g_coinPops.clear();
     Snapshot("Player", nullptr);
     Snapshot("Coin", &g_coins);
     Snapshot("Enemy", &g_enemyIds);
@@ -163,6 +165,7 @@ void Level_Init()
     Snapshot("HiddenBlock", &g_hidden);
     std::vector<int> cf;
     Snapshot("CastleFlag", &cf);
+    Snapshot("Doppelganger", &g_blocks);       // restores its tag on restart, and counts its coins
     for (int id : cf)
     {
         float p[3]; G->GetPosition(id, p);
@@ -198,7 +201,10 @@ void Level_Reset()
     g_shellSwapped.clear();
     for (const Debris& d : g_debris) G->Destroy(d.id);
     g_debris.clear();
+    for (const CoinPop& c : g_coinPops) G->Destroy(c.id);
+    g_coinPops.clear();
     g_breaking.clear();
+
     for (const Pickup& p : g_pickups) G->Destroy(p.id);
     g_pickups.clear(); g_blockMem.clear();
     for (const Fireball& fb : g_fireballs) G->Destroy(fb.id);
@@ -231,11 +237,21 @@ void Coin_Collect(int id)
     Score_Add(200);
 }
 
-void Enemy_Kill(int id)
+void Enemy_Kill(int id, bool stomp)
 {
     for (Enemy& e : g_enemies)
         if (e.id == id && e.alive)
         {
+            GhostObjectProps wp = {};
+            if (stomp && !e.wingless && G->GetObjectProps(id, &wp) && wp.flying == 2)
+            {
+                e.wingless = true;                 // first stomp: wings gone, gravity takes over, it keeps patrolling
+                e.vy = 0.0f;
+                Score_Add(100);
+                return;
+            }
+            e.alive = false;
+            // ...the rest of your function stays exactly as it is
             Sfx("stomp");
             e.alive = false;
             S.enemiesDown++;
@@ -421,15 +437,36 @@ static void SetUsed(int id)
     }
 }
 
+static void SpawnCoinPop(const float* mn, const float* mx)
+{
+    const float sz = Cfg::PickupSize;
+    float pos[3] = { (mn[0] + mx[0]) * 0.5f, mx[1] + sz * 0.5f, (mn[2] + mx[2]) * 0.5f };
+    int id = G->Spawn(GHOST_API_MESH_QUAD, pos);
+    if (!id) return;
+    const float size[3] = { sz, sz, sz };
+    G->SetScale(id, size);
+    G->SetTag(id, "Broken");                       // not solid, nothing reacts to it
+    if (!G->SpriteSetAnim(id, "Content/Animations/CoinSpin.ghostanim"))
+    {
+        const float gold[3] = { 1.0f, 0.85f, 0.2f };
+        G->SetColor(id, gold);
+    }
+    CoinPop c = {};
+    c.id = id; c.y0 = pos[1]; c.vy = 11.0f; c.life = 1.0f;
+    g_coinPops.push_back(c);
+}
+
 static void Pay(int id, const GhostObjectProps& pr, int give, bool isBlock, bool hidden)
 {
     float mn[3], mx[3];
     if (!G->GetBounds(id, mn, mx)) return;
+    if (give == 3 && pr.powerType == 5) give = 2;          // the Spinning Coin power-up is a coin
     if (give == 2)                                         // coins: one per hit until empty
     {
         Sfx("coin");
         Coins_Add(1);
         Score_Add(200);
+        SpawnCoinPop(mn, mx);
         if (isBlock) { if (--CoinsLeft(id, pr.coinCount) <= 0) SetUsed(id); }
         return;
     }
@@ -446,6 +483,16 @@ void Blocks_Bump(int id)
 {
     char tag[32];
     if (!G->GetTag(id, tag, sizeof tag)) return;
+    if (strcmp(tag, "Doppelganger") == 0)           // fake brick: the first hit turns it into a real ? block
+    {
+        G->SetTag(id, "Block");
+        if (!Sprite_Play(id, "Question", nullptr))  // no clip (a plain cube): tint it gold instead
+        {
+            const float gold[3] = { 1.0f, 0.8f, 0.2f };
+            G->SetColor(id, gold);
+        }
+        return;
+    }
     const bool hidden = strcmp(tag, "HiddenBlock") == 0;
     const bool block = hidden || strcmp(tag, "Block") == 0, brick = strcmp(tag, "Breakable") == 0;
     if (!block && !brick) { Sfx("bump"); return; }
@@ -879,6 +926,19 @@ void Entities_Update(float dt)
         if (d.life <= 0.0f) { G->Destroy(d.id); g_debris.erase(g_debris.begin() + i); continue; }
         i++;
     }
+    for (size_t i = 0; i < g_coinPops.size(); )
+    {
+        CoinPop& c = g_coinPops[i];
+        float pos[3];
+        if (!G->GetPosition(c.id, pos)) { g_coinPops.erase(g_coinPops.begin() + i); continue; }
+        c.vy -= Cfg::Gravity * dt;
+        pos[1] += c.vy * dt;
+        c.life -= dt;
+        G->SetPosition(c.id, pos);
+        if (c.life <= 0.0f || (c.vy < 0.0f && pos[1] <= c.y0)) { G->Destroy(c.id); g_coinPops.erase(g_coinPops.begin() + i); continue; }
+        i++;
+    }
+
     for (size_t i = 0; i < g_fireballs.size(); )
     {
         Fireball& fb = g_fireballs[i];
@@ -1005,7 +1065,7 @@ void Entities_Update(float dt)
         if (!LoadBody(e.id, b)) continue;
 
         GhostObjectProps epr = {};
-        const bool isFlying = G->GetObjectProps(e.id, &epr) && epr.flying;
+        const bool isFlying = G->GetObjectProps(e.id, &epr) && (epr.flying == 1 || (epr.flying == 2 && !e.wingless));
         if (!isFlying)
         {
             e.vy -= Cfg::Gravity * dt;
@@ -1057,7 +1117,8 @@ void Entities_Update(float dt)
 
         const float yaw = S.camYaw * 0.0174532925f;
         Sprite_FaceScreen(e.id, vx * cosf(yaw) - vz * sinf(yaw));          // same formula the Player uses
-        Sprite_Play(e.id, walking ? "Walk" : "Idle", "Idle");
+        if (!(e.wingless && Sprite_Play(e.id, walking ? "WalkGround" : "IdleGround", nullptr)))
+            Sprite_Play(e.id, walking ? "Walk" : "Idle", "Idle");
         StoreBody(b);
     }
 }

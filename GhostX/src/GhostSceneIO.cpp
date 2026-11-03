@@ -466,7 +466,7 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
                     o.movePause = mv.value("pause", 0.0f);
                     o.pathMode = Clampi(mv.value("mode", 0), 0, 2);
                     o.enemyPathMode = Clampi(mv.value("enemyMode", 0), 0, 3);
-                    o.flying = jo.value("flying", 0);
+                    o.flying = Clampi(jo.value("flying", 0), 0, 2);
                     o.enemyDeathEffect = Clampi(jo.value("enemyDeathEffect", 0), 0, 3);
                 }
                 o.breakEffect = Clampi(jo.value("breakEffect", 0), 0, 2);
@@ -475,7 +475,7 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
                 if (jo.contains("item") && jo["item"].is_object())
                 {
                     const json& it = jo["item"];
-                    o.powerType = Clampi(it.value("powerType", 0), 0, 4);
+                    o.powerType = Clampi(it.value("powerType", 0), 0, 5);
                     o.itemMoves = Clampi(it.value("moves", 0), 0, 2);
                     o.coinCount = Clampi(it.value("coins", 1), 1, 999);
                 }

@@ -3456,7 +3456,7 @@ static int Api_GetObjectProps(int id, GhostObjectProps* out)
     out->pathMode = o->pathMode;    out->breakEffect = o->breakEffect;
     out->contents = o->contents;    out->portalTrigger = o->portalTrigger;
     out->locked = o->locked ? 1 : 0;
-    out->powerType = o->powerType; out->enemyPathMode = o->enemyPathMode; out->flying = o->flying ? 1 : 0; out->enemyDeathEffect = o->enemyDeathEffect; out->itemMoves = o->itemMoves; out->coinCount = o->coinCount;
+    out->powerType = o->powerType; out->enemyPathMode = o->enemyPathMode; out->flying = o->flying; out->enemyDeathEffect = o->enemyDeathEffect; out->itemMoves = o->itemMoves; out->coinCount = o->coinCount;
     return 1;
 }
 
@@ -3681,7 +3681,7 @@ int GhostEngine_GetGameplay(int objectId, GhostGameplayInfo* out)
              o->visible ? 1 : 0,
              o->locked ? 1 : 0, o->pathMode, o->breakEffect, o->contents, o->portalTrigger,
                          o->pathOffset.x, o->pathOffset.y, o->pathOffset.z, o->moveSpeed, o->movePause, o->powerType, o->itemMoves, o->coinCount,
-             o->enemyPathMode, o->flying ? 1 : 0, o->enemyDeathEffect };
+             o->enemyPathMode,o->flying , o->enemyDeathEffect };
         
     return 1;
 }
@@ -3707,11 +3707,11 @@ void GhostEngine_SetGameplay(const GhostGameplayInfo* in)
     o->pathOffset = { cf(in->moveX, -10000.0f, 10000.0f), cf(in->moveY, -10000.0f, 10000.0f), cf(in->moveZ, -10000.0f, 10000.0f) };
     o->moveSpeed = cf(in->moveSpeed, 0.01f, 100.0f);
     o->movePause = cf(in->movePause, 0.0f, 60.0f);
-    o->powerType = ci(in->powerType, 0, 4);
+    o->powerType = ci(in->powerType, 0, 5);
     o->itemMoves = ci(in->itemMoves, 0, 2);
     o->coinCount = ci(in->coinCount, 1, 999);
     o->enemyPathMode = ci(in->enemyPathMode, 0, 3);
-    o->flying = ci(in->flying, 0, 1);
+    o->flying = ci(in->flying, 0, 2);
     o->enemyDeathEffect = ci(in->enemyDeathEffect, 0, 3);
 }
 
