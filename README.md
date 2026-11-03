@@ -26,11 +26,9 @@
 ![Visual Studio](https://img.shields.io/badge/IDE-Visual%20Studio-5C2D91?style=flat-square&logo=visualstudio&logoColor=white)
 ![Blender](https://img.shields.io/badge/3D-Blender-F5792A?style=flat-square&logo=blender&logoColor=white)
 ![GIMP](https://img.shields.io/badge/Graphics-GIMP-5C5543?style=flat-square&logo=gimp&logoColor=white)
-<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/fad68328-6737-4dbf-ad7d-3b0c50f293b9" />
-<img width="1920" height="1080" alt="Screenshot 2026-10-31 162621" src="https://github.com/user-attachments/assets/66efe97f-c789-43e3-8be8-d801d581e807" />
-<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/c483fa0b-3f8c-48b7-91e9-af07a9afeda6" />
-<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/4baca29d-6da9-4062-9977-8452f064a448" />
-<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/532a1ed9-a29d-4704-b6c2-c16f4fd5d46a" />
+<img width="1920" height="1080" alt="Screenshot 2026-11-03 170938" src="https://github.com/user-attachments/assets/cc521253-99ab-4b27-9150-2adc91b3cdfd" />
+<img width="1920" height="1080" alt="Screenshot 2026-11-03 170950" src="https://github.com/user-attachments/assets/23762b8a-a681-4798-9bc9-08eda7bce034" />
+
 
 
 
