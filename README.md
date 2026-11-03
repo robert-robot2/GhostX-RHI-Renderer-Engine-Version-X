@@ -142,6 +142,7 @@ F / G	F toggles face-pick mode, G toggles the grid
 - **Active Core**
 - [ ] Phase 20.G: Collision, Polish for Levels
 - [ ] Phase 20.O: FINAL FORM YET IS MY POWER LEVEL OVER 9000??? Flying Shell Drops, Doppelgangers, Bopper Spinners
+- [ ] Phase 28: Animations: Mario/Luigi Flag Slide Down, Death, Transform, Swimming
 - [ ] Phase 33: Audio
 - [ ] Phase 35: Hidden Objective
 - [ ] Phase 20.N: Play Packaged Exe //Instruction Set 3
@@ -152,7 +153,6 @@ F / G	F toggles face-pick mode, G toggles the grid
 - [ ] Phase : Install Wizard Setup for Standalone Game
 - [ ] Phase : Program Launcher
 - [ ] Phase : Download Patcher
-- [ ] Phase 28: Animations: Mario/Luigi Flag Slide Down, Death, Transform, Swimming
 - [ ] Phase 24: Check All Editor Windows/ Move To window Palette/ Add DropDowns
 - [ ] Phase 26: Mario Dance
 - [ ] Phase 27: Editor Upgrade to Quat Camera
