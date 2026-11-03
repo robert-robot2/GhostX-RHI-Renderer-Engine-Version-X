@@ -1,7 +1,7 @@
 <div align="center">
   
 ## Game on Wayne!
-## BY THE POWER OF GREYsKULL Super Mario Infinitus Playable Demo WILL BE RELASE TODAY!
+## BY THE POWER OF GREYSKULL Super Mario Infinitus Playable Demo WILL BE RELEASE TOMMORROW!
 ## Downloadable Engine Release Coming Soon!
 
 # 👻🎃🎃🎃🎃🎃🎃🎃🎃🎃🎃🎃👻 GhostX Version X 👻🎃🎃🎃🎃🎃🎃🎃🎃🎃🎃🎃👻
