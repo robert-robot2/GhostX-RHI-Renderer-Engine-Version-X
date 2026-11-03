@@ -3,10 +3,7 @@
 ## Game on Wayne!
 ## BY THE POWER OF GREYsKULL Super Mario Infinitus Playable Demo WILL BE RELASE TODAY!
 ## Downloadable Engine Release Coming Soon!
-## CAN SOMEONE TELL ME WHY I DONT NEED VERTICAL SYNC?
-## MAJOR GAME FLAW TO SUPER MARIO 1 MARIO AND LUIGI ARE THE SAME GUY BUT WHY?
-## THEY COULDNT HAVE AT least MADE THEM PHSYICALLY DIFFERENT ITS JSUT MARIO BUT WITH WHITE AND green CLOTHES NANI??!!?!?!?!?
-## IS IT THE GREEN MUSTACHE THAT MAKES HIM LUIGI SPECIFICLALY CAN SOMEOEN TELL ME?
+
 # 👻🎃🎃🎃🎃🎃🎃🎃🎃🎃🎃🎃👻 GhostX Version X 👻🎃🎃🎃🎃🎃🎃🎃🎃🎃🎃🎃👻
 
 **DirectX12 RHI Renderer Engine Winforms Blazor WASM UI with a Visual Studio Docking Suite Editor**
