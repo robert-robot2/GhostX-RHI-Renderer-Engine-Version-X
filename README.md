@@ -145,6 +145,7 @@ F / G	F toggles face-pick mode, G toggles the grid
 - [ ] Phase 28: Animations: Mario/Luigi Flag Slide Down, Death, Transform, Swimming
 - [ ] Phase 33: Audio
 - [ ] Phase 35: Hidden Objective
+- [ ] Phase 29.C: Thicc Editor Upgrade Part Drei: Collision Rotation
 - [ ] Phase 20.N: Play Packaged Exe //Instruction Set 3
 - **Active Replicant Core**
 - [ ] Phase : Base Demo Gameplay Package to Download on site without installer
@@ -158,7 +159,6 @@ F / G	F toggles face-pick mode, G toggles the grid
 - [ ] Phase 27: Editor Upgrade to Quat Camera
 - [ ] Phase : Particle Editor Manager
 - [ ] Phase 30: Upgrade Roles to Show only their Behaviours not all Behaviours.
-- [ ] Phase 29.C: Thicc Editor Upgrade Part Drei: Collision Rotation
 - [ ] Phase : Render Polish
 - **Active SubCore**
 - [ ] Phase : Antialiasing SMAA/FXAA/TAA
