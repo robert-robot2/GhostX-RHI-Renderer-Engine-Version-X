@@ -3,6 +3,7 @@
 ## Game on Wayne!
 ## BY THE POWER OF GREYsKULL Super Mario Infinitus Playable Demo WILL BE RELASE TODAY!
 ## Downloadable Engine Release Coming Soon!
+## New Sequal coming Soon MARIO MUST DIE!
 
 # 👻🎃🎃🎃🎃🎃🎃🎃🎃🎃🎃🎃👻 GhostX Version X 👻🎃🎃🎃🎃🎃🎃🎃🎃🎃🎃🎃👻
 
