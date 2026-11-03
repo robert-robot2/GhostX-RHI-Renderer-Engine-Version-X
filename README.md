@@ -141,7 +141,7 @@ F / G	F toggles face-pick mode, G toggles the grid
 - [x] Phase 33: Audio Mixer Editor/ Game Sounds
 - [x] Phase 33.A: Construct Game Sounds
 - [x] Phase 20.O: FINAL FORM YET IS MY POWER LEVEL OVER 9000??? Flying Shell Drops, Doppelgangers, Bopper Spinners
-- [x] Phase 36: Patch Fix, Fireball, Black Olive Turtle Animation
+- [x] Phase 36: Patch Fix, Fireball, Black Olive Turtle Shell Drop Enemies Animation
 - **Active Core**
 - [ ] Phase 20.G: Collision, Polish for Levels
 - [ ] Phase 20.P: Doppelgangers Need Texture Swap
