@@ -139,11 +139,12 @@ F / G	F toggles face-pick mode, G toggles the grid
 - [x] Phase 34.A: Gamepad Editor/ Gameplay, XInput Controller support
 - [x] Phase 34.B: Gamepad Menu Pad, HID Controller Support
 - [x] Phase 33: Audio Mixer Editor/ Game Sounds
+- [x] Phase 33.A: Construct Game Sounds
+- [x] Phase 20.O: FINAL FORM YET IS MY POWER LEVEL OVER 9000??? Flying Shell Drops, Doppelgangers, Bopper Spinners
 - **Active Core**
 - [ ] Phase 20.G: Collision, Polish for Levels
-- [ ] Phase 20.O: FINAL FORM YET IS MY POWER LEVEL OVER 9000??? Flying Shell Drops, Doppelgangers, Bopper Spinners
+- [ ] Phase 20.P: Doppelgangers Need Texture Swap
 - [ ] Phase 28: Animations: Mario/Luigi Flag Slide Down, Death, Transform, Swimming
-- [ ] Phase 33.A: Construct Game Sounds
 - [ ] Phase 35: Hidden Objective
 - [ ] Phase 29.C: Thicc Editor Upgrade Part Drei: Collision Rotation
 - [ ] Phase 20.N: Play Packaged Exe //Instruction Set 3
