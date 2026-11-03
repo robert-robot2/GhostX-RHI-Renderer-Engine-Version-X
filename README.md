@@ -150,6 +150,7 @@ F / G	F toggles face-pick mode, G toggles the grid
 - [ ] Phase 37: Gamepad add Zoom, R2, Z for Recenter
 - [ ] Phase 38: More resolutions to UI Editor, Resolution Select
 - [ ] Phase 39: UI FINAL FORM, Sound Options, KeyBinds, Cleanup
+- [ ] Phase 40: Transition Audio Effects
 - [ ] Phase 29.C: Thicc Editor Upgrade Part Drei: Collision Rotation
 - [ ] Phase 20.N: Play Packaged Exe //Instruction Set 3
 - **Active Replicant Core**
