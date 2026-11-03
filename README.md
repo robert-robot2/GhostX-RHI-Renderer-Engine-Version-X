@@ -143,6 +143,7 @@ F / G	F toggles face-pick mode, G toggles the grid
 - [ ] Phase 20.G: Collision, Polish for Levels
 - [ ] Phase 20.O: FINAL FORM YET IS MY POWER LEVEL OVER 9000??? Flying Shell Drops, Doppelgangers, Bopper Spinners
 - [ ] Phase 33: Audio
+- [ ] Phase 35: Hidden Objective
 - [ ] Phase 20.N: Play Packaged Exe //Instruction Set 3
 - **Active Replicant Core**
 - [ ] Phase : Base Demo Gameplay Package to Download on site without installer
