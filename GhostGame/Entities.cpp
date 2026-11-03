@@ -38,10 +38,24 @@ extern float g_faceDir;
 
 struct ShellState { int id; float dx, dz, vy, cool; };
 static std::vector<ShellState> g_shells;
-static std::vector<int>        g_shellSwapped;     // enemies whose anim set was swapped to the shell art
+
 static const float kShellSpeed = 10.0f;
-// The anim set a shell-dropping enemy goes back to on restart. Set this to your turtle's .ghostanim.
+
+// replace the old g_shellSwapped / kEnemyAnimDefault declarations
+struct Swapped { int id; char shell[128]; };
+static std::vector<Swapped> g_shellSwapped;
+
 static const char* kEnemyAnimDefault = "Content/Animations/Turtle.ghostanim";
+static const struct { const char* shell; const char* walk; } kWalkAnim[] =
+{
+    { "Content/Animations/Shell.ghostanim",         "Content/Animations/Turtle.ghostanim" },
+    { "Content/Animations/BlackOliveShell.ghostanim","Content/Animations/BlackOlive.ghostanim" },  // use your real file names
+};
+static const char* WalkAnimFor(const char* shell)
+{
+    for (const auto& k : kWalkAnim) if (_stricmp(k.shell, shell) == 0) return k.walk;
+    return kEnemyAnimDefault;
+}
 
 struct CastleFlag { int id; float y0; bool shown; };
 static std::vector<CastleFlag> g_castleFlags;
@@ -193,10 +207,10 @@ void Level_Init()
 void Level_Reset()
 {
     g_shells.clear();
-    for (int id : g_shellSwapped)
+    for (const Swapped& sw : g_shellSwapped)
     {
-        G->SpriteSetAnim(id, kEnemyAnimDefault);   // turtle art back, not the shell art
-        G->SpriteSetFlip(id, 0);
+        G->SpriteSetAnim(sw.id, WalkAnimFor(sw.shell));
+        G->SpriteSetFlip(sw.id, 0);
     }
     g_shellSwapped.clear();
     for (const Debris& d : g_debris) G->Destroy(d.id);
@@ -273,11 +287,17 @@ void Enemy_Kill(int id, bool stomp)
 
                 G->SpriteSetClip(id, "");                  // clear the walk/die clip
                 if (dpr.link[0] != '\0') G->SpriteSetAnim(id, dpr.link);
-                else G->SpriteSetAnim(id, "Content/Animations/Shell.ghostanim");
+                const char* shellAnim = dpr.link[0] ? dpr.link : "Content/Animations/Shell.ghostanim";
+                G->SpriteSetAnim(id, shellAnim);
 
                 bool known = false;
-                for (int sid : g_shellSwapped) if (sid == id) known = true;
-                if (!known) g_shellSwapped.push_back(id);
+                for (const Swapped& sw : g_shellSwapped) if (sw.id == id) known = true;
+                if (!known)
+                {
+                    Swapped sw = {}; sw.id = id;
+                    strncpy_s(sw.shell, shellAnim, _TRUNCATE);
+                    g_shellSwapped.push_back(sw);
+                }
 
                 ShellState& ss = ShellOf(id);
                 ss.dx = ss.dz = ss.vy = 0.0f;
@@ -636,9 +656,11 @@ void Fireball_Spawn()
     float pos[3];
     G->GetPosition(S.player, pos);
 
-    extern float g_faceDir;   // defined in Player.cpp
-    pos[2] += g_faceDir * 0.6f;
+    const float yaw = S.camYaw * 0.0174532925f;           // same as FaceVec in Player.cpp
+    const float fx = cosf(yaw) * g_faceDir, fz = -sinf(yaw) * g_faceDir;
+    pos[0] += fx * 0.6f;
     pos[1] += 0.3f;
+    pos[2] += fz * 0.6f;
 
     int id = G->Spawn(GHOST_API_MESH_QUAD, pos);
     if (!id) return;
@@ -647,12 +669,14 @@ void Fireball_Spawn()
     G->SetScale(id, sz);
     G->SetTag(id, "Fireball");
     G->SpriteSetAnim(id, "Content/Animations/Fireball.ghostanim");
+    G->SpriteSetFlip(id, g_faceDir < 0.0f ? 1 : 0);
 
     Fireball f = {};
     f.id = id;
-    f.vel[0] = 0.0f;
+    f.life = 3.0f;                                         // was never set
+    f.vel[0] = fx * 8.0f;
     f.vel[1] = 3.0f;
-    f.vel[2] = g_faceDir * 8.0f;   // Z axis, direction Mario faces
+    f.vel[2] = fz * 8.0f;
     g_fireballs.push_back(f);
 }
 static void CastleFlag_Update(float dt)
@@ -954,11 +978,15 @@ void Entities_Update(float dt)
             b.vel[0] = fb.vel[0]; b.vel[1] = fb.vel[1]; b.vel[2] = fb.vel[2];
             MoveResult r = MoveBody(b, dt);
             if (r.hitFloor) fb.vel[1] = 5.0f;
-            if (r.hitZ) { G->Destroy(fb.id); g_fireballs.erase(g_fireballs.begin() + i); continue; }
+            if (r.hitX || r.hitZ) { G->Destroy(fb.id); g_fireballs.erase(g_fireballs.begin() + i); continue; }   // was hitZ only
             fb.vel[0] = b.vel[0]; fb.vel[1] = b.vel[1]; fb.vel[2] = b.vel[2];
             StoreBody(b);
         }
-        else for (int k = 0; k < 3; k++) pos[k] += fb.vel[k] * dt;
+        else
+        {
+            for (int k = 0; k < 3; k++) pos[k] += fb.vel[k] * dt;
+            G->SetPosition(fb.id, pos);        // the no-collider fallback never wrote the position back
+        }
 
         // Check enemy hits
         Body fb2;
