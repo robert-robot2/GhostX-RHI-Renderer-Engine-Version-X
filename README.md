@@ -142,6 +142,7 @@ F / G	F toggles face-pick mode, G toggles the grid
 - [x] Phase 20.O: FINAL FORM YET IS MY POWER LEVEL OVER 9000??? Flying Shell Drops, Doppelgangers, Bopper Spinners
 - [x] Phase 36: Patch Fix, Fireball, Black Olive Turtle Shell Drop Enemies Animation
 - [x] Phase 20.P: Doppelgangers Mesh Texture Swapping
+- [x] Phase 41: FIREBALL FINAL FORM
 - **Active Core**
 - [ ] Phase 20.G: Collision, Polish for Levels
 - [ ] Phase 28: Animations: Mario/Luigi Flag Slide Down, Death, Transform, Swimming
@@ -150,7 +151,6 @@ F / G	F toggles face-pick mode, G toggles the grid
 - [ ] Phase 38: More resolutions to UI Editor, Resolution Select
 - [ ] Phase 39: UI FINAL FORM, Sound Options, KeyBinds, Cleanup
 - [ ] Phase 40: Transition Audio Effects
-- [ ] Phase 41: FIREBALL FINAL FORM
 - [ ] Phase 29.C: Thicc Editor Upgrade Part Drei: Collision Rotation
 - [ ] Phase 20.N: Play Packaged Exe //Instruction Set 3
 - **Active Replicant Core**
