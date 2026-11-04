@@ -162,6 +162,7 @@ F / G	F toggles face-pick mode, G toggles the grid
 - [ ] Phase : Download Patcher
 - [ ] Phase 24: Check All Editor Windows/ Move To window Palette/ Add DropDowns
 - [ ] Phase 26: Mario Dance
+- [ ] Phase : Levels 1-2 to 8-4
 - [ ] Phase 27: Editor Upgrade to Quat Camera
 - [ ] Phase : Particle Editor Manager
 - [ ] Phase 30: Upgrade Roles to Show only their Behaviours not all Behaviours.
