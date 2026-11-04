@@ -144,7 +144,6 @@ F / G	F toggles face-pick mode, G toggles the grid
 - [x] Phase 29.C: Thicc Editor Upgrade Part Drei: Collision Rotation
 - [x] Phase 37: Gamepad Zoom (R2 L2), Gamepad/Keyboard Recenter Orbit Camera (R1 Z)
 - **Active Core**
-- [ ] Phase 37.A: Restore Patch
 - [ ] Phase 39: UI FINAL FORM, Sound Options, Key Binds, Gamepad Binds, Video Options, Cleanup
 - [ ] Phase 40: Transition Audio Effects
 - [ ] Phase 41: Timed Elevators
