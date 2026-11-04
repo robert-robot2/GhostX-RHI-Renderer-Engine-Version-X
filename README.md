@@ -155,8 +155,7 @@ F / G	F toggles face-pick mode, G toggles the grid
 - **Active Replicant Core**
 - [ ] Phase 39: UI FINAL FORM, Sound Options, Key Binds, Gamepad Binds, Video Options, Cleanup
 - [ ] Phase 40: Transition Audio Effects
-- [ ] Phase 41: Timed Elevators
-- [ ] Phase 28: Animations: Mario/Luigi Flag Slide Down, Death, Transform
+- [ ] Phase 28: Animations: Timed Elevators, Mario/Luigi Flag Slide Down, Death, Transform
 - [ ] Phase 42: Thicc Editor Upgrade Part Quattro: Resolutions
 - **Active SubCore**
 - [ ] Phase : Base Engine For Use Without Package Installer for Download
