@@ -324,8 +324,8 @@ The layout is saved when you close the editor.
 | Button 1 | Jump |
 | Button 2 | Sprint / Hold to Grab Shell |
 | Button 3 | Attack |
-| Button 4 | Use Pipe |
-| L1 | TBD |
+| Button 4 | TBD |
+| L1 | Use / Pipe |
 | L2 | Zoom Out |
 | R1 | Recenter Camera |
 | R2 | Zoom In |
@@ -341,7 +341,7 @@ The layout is saved when you close the editor.
 | Space | Jump |
 | Shift | Sprint / Hold to Grab Shell |
 | Left Mouse Button | Attack |
-| F | Use Pipe |
+| F | Use / Pipe |
 | Middle Mouse Button | Zoom |
 | Z | Recenter Camera |
 
