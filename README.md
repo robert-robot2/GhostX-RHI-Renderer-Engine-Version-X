@@ -149,7 +149,7 @@ F / G	F toggles face-pick mode, G toggles the grid
 - [ ] Phase 35: Hidden Objective
 - [ ] Phase 37: Gamepad Zoom (R2 L2), Gamepad/Keyboard Recenter Orbit Camera (R1 Z)
 - [ ] Phase 38: UI Editor: More resolutions 
-- [ ] Phase 39: UI FINAL FORM, Sound Options, Key Binds, Video Options, Cleanup
+- [ ] Phase 39: UI FINAL FORM, Sound Options, Key Binds, Gamepad Binds, Video Options, Cleanup
 - [ ] Phase 40: Transition Audio Effects
 - [ ] Phase 41: Timed Elevators
 - [ ] Phase 42: Editor Upgrade: Resolutions
