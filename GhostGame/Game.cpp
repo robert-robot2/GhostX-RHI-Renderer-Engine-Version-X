@@ -185,18 +185,53 @@ void Game_Restart(bool died)
 
 }
 
+static bool  g_camFocus = false;
+static float g_camFocusYaw = 90.0f;
+
+static void Camera_Focus(float dt, float& yaw)            // eases the yaw toward the target by the short way round
+{
+    float d = fmodf(g_camFocusYaw - yaw, 360.0f);
+    if (d > 180.0f) d -= 360.0f;
+    if (d < -180.0f) d += 360.0f;
+    const float step = 600.0f * dt;
+    if (fabsf(d) <= step) { yaw = g_camFocusYaw; g_camFocus = false; }
+    else yaw += d > 0.0f ? step : -step;
+}
+
 static void Camera_Update(float dt)
 {
     if (!S.camId || !S.player) return;
     // Orbit camera: the engine follows the target and handles right-drag and wheel.
-// The game only needs the camera's heading for camera-relative movement.
+  // The game only needs the camera's heading for camera-relative movement.
+
+
     S.orbit = (G->GetCameraMode(S.camId) == 1);
+
     if (S.orbit)
     {
         float yp[2];
-        if (G->GetCamera(S.camId, nullptr, yp, nullptr)) S.camYaw = yp[0];
+
+        if (G->GetCamera(S.camId, nullptr, yp, nullptr))
+        {
+            S.camYaw = yp[0];
+
+            // Only recenter when explicitly requested
+            if (g_camFocus)
+            {
+                Camera_Focus(dt, yp[0]);
+                G->SetCamera(S.camId, nullptr, yp, nullptr);
+                S.camYaw = yp[0];
+            }
+        }
+
         return;
     }
+
+    // Game-driven camera
+    if (g_camFocus)
+        Camera_Focus(dt, S.camYaw);
+
+
     if (G->KeyDown('Q')) S.camYaw -= Cfg::CamTurnSpeed * dt;     // until 4D adds mouse orbit
     if (G->KeyDown('E')) S.camYaw += Cfg::CamTurnSpeed * dt;
 
@@ -460,6 +495,11 @@ GHOST_GAME_EXPORT void GhostGame_Update(float dt)
         else if (S.mode == MODE_OPTIONS) S.mode = MODE_PLAY;
     }
     if (Screens_Update()) { Camera_Update(dt); return; }
+    if (S.mode == MODE_PLAY && !S.complete && !S.onPole && !S.bossCut && G->KeyPressed('Z'))
+    {
+        g_camFocus = true;
+        g_camFocusYaw = g_haveMoveYaw ? g_moveYawDeg : S.camYaw;   // no movement yet: nothing to turn to
+    }
     if (g_ui && S.complete && S.lastLevel) Nav_Update(g_ui, kNavDone, 2);
     else Nav_Idle();
     if (g_ui && S.complete)

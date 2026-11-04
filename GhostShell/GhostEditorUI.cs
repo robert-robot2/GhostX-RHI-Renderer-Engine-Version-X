@@ -685,6 +685,9 @@ namespace GhostShell
             ColliderOffset = new Vec3Edit(
     () => { var g = GetG(); return (g.cox, g.coy, g.coz); },
     (x, y, z) => { var g = GetG(); g.cox = x; g.coy = y; g.coz = z; SetG(g); });
+            ColliderRotation = new Vec3Edit(
+() => { var g = GetG(); return (g.crx, g.cry, g.crz); },
+(x, y, z) => { var g = GetG(); g.crx = x; g.cry = y; g.crz = z; SetG(g); });
             Dimensions = new DimEdit(id);
             Behavior = new BehaviorEdit(id);
         }
@@ -1030,6 +1033,9 @@ namespace GhostShell
 
         [Category("Gameplay"), DisplayName("Collider Offset")]
         public Vec3Edit ColliderOffset { get; }
+
+        [Category("Gameplay"), DisplayName("Collider Rotation (deg)")]
+        public Vec3Edit ColliderRotation { get; }
 
         [Category("Gameplay"), DisplayName("Visible In Game")]
         public bool VisibleInGame

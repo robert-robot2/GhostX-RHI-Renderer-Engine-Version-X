@@ -7,7 +7,8 @@ static float g_coyote, g_jumpBuf;
 static bool  g_grounded;
 static float g_baseScale[3] = { 1, 1, 1 };
 float g_faceDir = 1.0f;
-
+float g_moveYawDeg = 0.0f;
+bool  g_haveMoveYaw = false;
 static float Approach(float v, float target, float maxStep)
 {
     float d = target - v;
@@ -37,6 +38,7 @@ void Player_Reset()
     S.heldShell = 0;
     S.shellSliding = false;
     G->SpriteSetAnim(S.player, PowerAnim(0));
+    g_haveMoveYaw = false;
 }
 
 static void SetPower(Body& b, int level)
@@ -226,7 +228,7 @@ void Player_Update(float dt)
     float dz = cy * iz - sy * ix;
     float len = sqrtf(dx * dx + dz * dz);
     if (len > 1.0f) { dx /= len; dz /= len; }
-
+    if (len > 0.3f) { g_moveYawDeg = atan2f(dx, dz) * 57.2957795f; g_haveMoveYaw = true; }
     const float speed = G->KeyDown(VK_SHIFT) ? Cfg::Run : Cfg::Walk;
     const float accel = (g_grounded ? Cfg::GroundAccel : Cfg::AirAccel) * dt;
     g_vel[0] = Approach(g_vel[0], dx * speed, accel);

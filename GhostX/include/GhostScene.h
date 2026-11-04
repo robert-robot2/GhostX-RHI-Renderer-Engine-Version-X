@@ -233,6 +233,7 @@ struct GhostObject
     bool        collider = false;
     GhostVec3   colliderSize = { 1, 1, 1 };   // world size = colliderSize * scale
     GhostVec3   colliderOffset = { 0, 0, 0 }; // local-space center of the collider (multiplied by scale)
+    GhostVec3   colliderRotation = { 0, 0, 0 }; // degrees, around the collider center (Ry * Rx * Rz, like objects)
     bool        visible = true;               // false = hidden while playing
     GhostSprite sprite;                       // only used when meshId == GHOST_MESH_QUAD
     int  shadowMode = 1;                      // 0 = off, 1 = casts from every light, 2 = casts only from shadowLightId

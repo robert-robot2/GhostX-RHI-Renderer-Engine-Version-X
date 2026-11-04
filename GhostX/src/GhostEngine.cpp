@@ -136,7 +136,7 @@ struct GizmoState
     int  id = 0, axis = -1, tool = 0;                    // axis: 0..2 = X Y Z, 3 = uniform scale
     GhostVec3 startPos, startRot, startScale, dir, u, v;
     float t0 = 0.0f, d0 = 0.0f, ox = 0.0f, oy = 0.0f, lastAngle = 0.0f, accum = 0.0f, value = 0.0f;
-    bool col = false;  GhostVec3 startColSize, startColOff;
+    bool col = false;  GhostVec3 startColSize, startColOff, startColRot;
 };
 static GizmoState g_gizmo;
 struct GroupItem { int id; GhostVec3 pos, rot, scale; };
@@ -1286,7 +1286,21 @@ static void OverlayBounds(const GhostObject& o, const GhostVec3& eye)
     const float col[4] = { 1.0f, 0.62f, 0.12f, 0.85f };
     for (int e = 0; e < 12; e++) g_ov.Line(c[E[e][0]], c[E[e][1]], col, 1.5f, false);
 }
+
 // The gameplay collider: axis-aligned (rotation is ignored, like the game), drawn in red
+// The collider's three axes in world space. Returns false when it isn't rotated.
+static bool ColliderAxes(const GhostObject& o, GhostVec3 ax[3])
+{
+    ax[0] = GhostVec3(1, 0, 0); ax[1] = GhostVec3(0, 1, 0); ax[2] = GhostVec3(0, 0, 1);
+    const GhostVec3 r = o.colliderRotation;
+    if (fabsf(r.x) < 0.01f && fabsf(r.y) < 0.01f && fabsf(r.z) < 0.01f) return false;
+    const float d2r = GHOST_PI / 180.0f;
+    const GhostMat4 R = GhostMat4::RotationY(r.y * d2r) * GhostMat4::RotationX(r.x * d2r) * GhostMat4::RotationZ(r.z * d2r);
+    for (int k = 0; k < 3; k++) ax[k] = GhostVec3(R.m[0][k], R.m[1][k], R.m[2][k]);
+    return true;
+}
+
+// The gameplay collider, drawn in red (rotated by Collider Rotation)
 static void OverlayCollider(const GhostObject& o)
 {
     const GhostVec3 h(fabsf(o.colliderSize.x * o.scale.x) * 0.5f,
@@ -1295,13 +1309,19 @@ static void OverlayCollider(const GhostObject& o)
     const GhostVec3 c(o.position.x + o.colliderOffset.x * o.scale.x,
         o.position.y + o.colliderOffset.y * o.scale.y,
         o.position.z + o.colliderOffset.z * o.scale.z);
+    GhostVec3 ax[3];
+    ColliderAxes(o, ax);
     GhostVec3 p[8];
     for (int i = 0; i < 8; i++)
-        p[i] = GhostVec3(c.x + ((i & 1) ? h.x : -h.x), c.y + ((i & 2) ? h.y : -h.y), c.z + ((i & 4) ? h.z : -h.z));
+    {
+        const float sx = (i & 1) ? h.x : -h.x, sy = (i & 2) ? h.y : -h.y, sz = (i & 4) ? h.z : -h.z;
+        p[i] = c + ax[0] * sx + ax[1] * sy + ax[2] * sz;
+    }
     static const int E[12][2] = { { 0,1 },{ 2,3 },{ 4,5 },{ 6,7 },{ 0,2 },{ 1,3 },{ 4,6 },{ 5,7 },{ 0,4 },{ 1,5 },{ 2,6 },{ 3,7 } };
     const float col[4] = { 1.0f, 0.2f, 0.2f, 0.95f };
     for (int e = 0; e < 12; e++) g_ov.Line(p[E[e][0]], p[E[e][1]], col, 2.0f, false);
 }
+
 // ---------------- Gizmo: shared frame, hit testing, dragging, drawing ----------------
 struct GizmoFrame
 {
@@ -1337,7 +1357,7 @@ static bool GizmoFrameOf(int selId, GizmoFrame& f)
     if (tool == 4) tool = 0;                                   // the Dimension tool has no handles
     if (!o && (tool == 2 || tool == 3)) tool = 0;              // only objects can be rotated and scaled
     if (o && o->locked) tool = 0;                              // a locked object shows plain axes and nothing can be grabbed
-    if (f.col && tool == 2) tool = 0;                   // colliders can't rotate
+
     f.tool = tool;
 
     f.ax[0] = GhostVec3(1, 0, 0); f.ax[1] = GhostVec3(0, 1, 0); f.ax[2] = GhostVec3(0, 0, 1);
@@ -1453,7 +1473,7 @@ static bool GizmoBegin(int x, int y)
     g.startPos = f.pos;
     if (o) { g.startRot = o->rotationDeg; g.startScale = o->scale; }
     g.col = f.col;
-    if (o) { g.startColSize = o->colliderSize; g.startColOff = o->colliderOffset; }
+    if (o) { g.startColSize = o->colliderSize; g.startColOff = o->colliderOffset; g.startColRot = o->colliderRotation; }
     if (h < 3) { g.dir = f.ax[h]; g.u = f.ax[(h + 1) % 3]; g.v = f.ax[(h + 2) % 3]; }
 
     if (f.tool == 1 || (f.tool == 3 && h < 3))                 // slide along an axis
@@ -1487,7 +1507,7 @@ static bool GizmoBegin(int x, int y)
 }
 
 // Euler order is the engine's: model = Ry * Rx * Rz
-static void ApplyRotation(GhostObject& o, const GizmoState& g, float rad)
+static void ApplyRotationTo(GhostVec3& outDeg, const GizmoState& g, float rad)
 {
     const float d2r = GHOST_PI / 180.0f, r2d = 180.0f / GHOST_PI;
     const GhostMat4 R0 = GhostMat4::RotationY(g.startRot.y * d2r) * GhostMat4::RotationX(g.startRot.x * d2r) *
@@ -1516,8 +1536,10 @@ static void ApplyRotation(GhostObject& o, const GizmoState& g, float rad)
         ey = atan2f(-Rn.m[2][0], Rn.m[0][0]);
         ez = 0.0f;
     }
-    o.rotationDeg = GhostVec3(Round3(ex * r2d), Round3(ey * r2d), Round3(ez * r2d));
+    outDeg = GhostVec3(Round3(ex * r2d), Round3(ey * r2d), Round3(ez * r2d));
 }
+static void ApplyRotation(GhostObject& o, const GizmoState& g, float rad) { ApplyRotationTo(o.rotationDeg, g, rad); }
+
 
 static void GizmoUpdate(int x, int y)
 {
@@ -1529,7 +1551,7 @@ static void GizmoUpdate(int x, int y)
 
     if (GetAsyncKeyState(VK_ESCAPE) & 0x8000)                  // cancel: put everything back
     {
-        if (g.col) { o->colliderOffset = g.startColOff; o->colliderSize = g.startColSize; }
+        if (g.col) { o->colliderOffset = g.startColOff; o->colliderSize = g.startColSize; o->colliderRotation = g.startColRot; }
         else { *pos = g.startPos; if (o) { o->rotationDeg = g.startRot; o->scale = g.startScale; } }
         for (const GroupItem& it : g_group)
         {
@@ -1584,9 +1606,21 @@ static void GizmoUpdate(int x, int y)
 
         float deg = g.accum * (180.0f / GHOST_PI);
         if (g.snapping) deg = SnapTo(deg, g_gizSet.rotStep);
-        ApplyRotation(*o, g, deg * (GHOST_PI / 180.0f));
-        for (const GroupItem& it : g_group)
-            if (GhostObject* go = FindObject(it.id)) { GizmoState gg = g; gg.startRot = it.rot; ApplyRotation(*go, gg, deg * (GHOST_PI / 180.0f)); }
+        const float rad = deg * (GHOST_PI / 180.0f);
+        if (g.col)                                             // turn the collider, not the object
+        {
+            GizmoState gg = g;
+            gg.startRot = g.startColRot;
+            GhostVec3 cr = o->colliderRotation;
+            ApplyRotationTo(cr, gg, rad);
+            o->colliderRotation = cr;
+        }
+        else
+        {
+            ApplyRotation(*o, g, rad);
+            for (const GroupItem& it : g_group)
+                if (GhostObject* go = FindObject(it.id)) { GizmoState gg = g; gg.startRot = it.rot; ApplyRotation(*go, gg, rad); }
+        }
         g.value = deg;
     }
     else                                                       // scale
@@ -1909,7 +1943,7 @@ static void DrawViewportOverlay(const GhostMat4& view, const GhostMat4& proj, co
     if (editing && g_colMode)
     {
         const float rc[4] = { 1.0f, 0.35f, 0.35f, 1.0f };
-        g_ov.TextPx(14.0f, (float)rh - 58.0f, 20.0f, "COLLIDER EDIT MODE  (H to leave. Move = offset, Scale = size)", rc);
+        g_ov.TextPx(14.0f, (float)rh - 58.0f, 20.0f, "COLLIDER EDIT MODE  (H to leave. Move = offset, Rotate = angle, Scale = size)", rc);
     }
     if (editing && !g_multi.empty())
     {
@@ -2458,7 +2492,7 @@ void GhostEngine_Tick()
         g_looking = false;
         ShowCursor(TRUE);
     }
-    if (playing && orbitCam && g_inputEnabled && GhostPad_Connected())      // right stick orbits the camera
+    if (playing && orbitCam && g_inputEnabled && GhostPad_Connected())      // right stick orbits, triggers zoom
     {
         const float rx = GhostPad_Axis(GHOST_PAD_AXIS_RX), ry = GhostPad_Axis(GHOST_PAD_AXIS_RY);
         if (rx != 0.0f || ry != 0.0f)
@@ -2468,6 +2502,13 @@ void GhostEngine_Tick()
             const float hi = cam->maxPitchDeg * toRad, lo = cam->minPitchDeg * toRad;
             if (g_pitch > hi) g_pitch = hi;
             if (g_pitch < lo) g_pitch = lo;
+        }
+        const float zin = GhostPad_Axis(GHOST_PAD_AXIS_RT), zout = GhostPad_Axis(GHOST_PAD_AXIS_LT);
+        if (zin != zout)                                                    // R2 in, L2 out (same direction as the wheel)
+        {
+            float d = cam->distance - (zin - zout) * 8.0f * dt;
+            d = d < cam->minDist ? cam->minDist : (d > cam->maxDist ? cam->maxDist : d);
+            cam->distance = d;
         }
     }
 
@@ -3060,11 +3101,26 @@ static bool ColliderBounds(const GhostObject& o, GhostVec3& mn, GhostVec3& mx)
     GhostVec3 c = { o.position.x + o.colliderOffset.x * o.scale.x,
                     o.position.y + o.colliderOffset.y * o.scale.y,
                     o.position.z + o.colliderOffset.z * o.scale.z };
+    GhostVec3 ax[3];
+    if (ColliderAxes(o, ax))                              // enclosing axis-aligned box of the rotated one
+        h = GhostVec3(fabsf(ax[0].x) * h.x + fabsf(ax[1].x) * h.y + fabsf(ax[2].x) * h.z,
+            fabsf(ax[0].y) * h.x + fabsf(ax[1].y) * h.y + fabsf(ax[2].y) * h.z,
+            fabsf(ax[0].z) * h.x + fabsf(ax[1].z) * h.y + fabsf(ax[2].z) * h.z);
     mn = c - h;
     mx = c + h;
     return true;
 }
-
+static int Api_GetCollider(int id, float* c3, float* h3, float* ax9)
+{
+    GhostObject* o = FindObject(id);
+    if (!o || !o->collider) return 0;
+    GhostVec3 ax[3];
+    const bool rot = ColliderAxes(*o, ax);
+    if (c3) { c3[0] = o->position.x + o->colliderOffset.x * o->scale.x; c3[1] = o->position.y + o->colliderOffset.y * o->scale.y; c3[2] = o->position.z + o->colliderOffset.z * o->scale.z; }
+    if (h3) { h3[0] = fabsf(o->colliderSize.x * o->scale.x) * 0.5f; h3[1] = fabsf(o->colliderSize.y * o->scale.y) * 0.5f; h3[2] = fabsf(o->colliderSize.z * o->scale.z) * 0.5f; }
+    if (ax9) for (int k = 0; k < 3; k++) { ax9[k * 3] = ax[k].x; ax9[k * 3 + 1] = ax[k].y; ax9[k * 3 + 2] = ax[k].z; }
+    return rot ? 2 : 1;
+}
 static int Api_GetBounds(int id, float* mn3, float* mx3)
 {
     GhostObject* o = FindObject(id);
@@ -3545,6 +3601,7 @@ static void BuildGameApi()
     a.SetBusEnabled = Api_SetBusEnabled;  a.GetBusEnabled = Api_GetBusEnabled;
     a.SetSoundEnabled = Api_SetSoundEnabled;  a.GetSoundEnabled = Api_GetSoundEnabled;
     a.GetTextureId = Api_GetTextureId;  a.SetTextureId = Api_SetTextureId;
+    a.GetCollider = Api_GetCollider;
 }
 
 // Runs between steps (never inside game code). The editor's own scene stays safe in g_playBackup.
@@ -3685,11 +3742,11 @@ int GhostEngine_GetGameplay(int objectId, GhostGameplayInfo* out)
     if (!o || !out) return 0;
     *out = { o->id, o->role, o->collider ? 1 : 0,
              o->colliderSize.x, o->colliderSize.y, o->colliderSize.z,
-             o->colliderOffset.x, o->colliderOffset.y, o->colliderOffset.z,
+             o->colliderOffset.x, o->colliderOffset.y, o->colliderOffset.z, o->colliderRotation.x, o->colliderRotation.y, o->colliderRotation.z,
              o->visible ? 1 : 0,
              o->locked ? 1 : 0, o->pathMode, o->breakEffect, o->contents, o->portalTrigger,
                          o->pathOffset.x, o->pathOffset.y, o->pathOffset.z, o->moveSpeed, o->movePause, o->powerType, o->itemMoves, o->coinCount,
-             o->enemyPathMode,o->flying , o->enemyDeathEffect };
+             o->enemyPathMode,o->flying , o->enemyDeathEffect,};
         
     return 1;
 }
@@ -3721,6 +3778,7 @@ void GhostEngine_SetGameplay(const GhostGameplayInfo* in)
     o->enemyPathMode = ci(in->enemyPathMode, 0, 3);
     o->flying = ci(in->flying, 0, 2);
     o->enemyDeathEffect = ci(in->enemyDeathEffect, 0, 3);
+    o->colliderRotation = { cf(in->crx, -720.0f, 720.0f), cf(in->cry, -720.0f, 720.0f), cf(in->crz, -720.0f, 720.0f) };
 }
 
 int GhostEngine_GetCustomTag(int objectId, char* buf, int bufSize)

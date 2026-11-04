@@ -149,6 +149,9 @@ void GhostPad_Poll(bool enabled)
     memcpy(s_axis, ax, sizeof s_axis);
     if (ax[0] * ax[0] + ax[1] * ax[1] > 0.25f || ax[2] * ax[2] + ax[3] * ax[3] > 0.25f) s_padLast = true;
 
+
+    // For Dual Button Same Usage:    K(VK_SHIFT, dn[GHOST_PAD_X] || ax[GHOST_PAD_AXIS_LT] > s_trigger);              // run / grab shell
+
     // ---- The button layout: change it here and nowhere else ----
     const float th = 0.45f;                            // stick -> digital key threshold
     auto K = [&](int vk, bool v) { if (v) s_key[vk] = true; };
@@ -157,9 +160,10 @@ void GhostPad_Poll(bool enabled)
     K('A', ax[GHOST_PAD_AXIS_LX] < -th || dn[GHOST_PAD_LEFT]);
     K('D', ax[GHOST_PAD_AXIS_LX] > th || dn[GHOST_PAD_RIGHT]);
     K(VK_SPACE, dn[GHOST_PAD_A]);                                                   // jump
-    K(VK_SHIFT, dn[GHOST_PAD_X] || ax[GHOST_PAD_AXIS_LT] > s_trigger);              // run / grab shell
-    K(VK_LBUTTON, dn[GHOST_PAD_B] || dn[GHOST_PAD_Y] || ax[GHOST_PAD_AXIS_RT] > s_trigger);   // attack
-    K('F', dn[GHOST_PAD_RB]);                                                       // interact / portal
+    K(VK_SHIFT, dn[GHOST_PAD_X]);                                                   // run / grab shell (L2 is zoom now)
+    K(VK_LBUTTON, dn[GHOST_PAD_B] || dn[GHOST_PAD_Y]);                              // attack (R2 is zoom now)
+    K('F', dn[GHOST_PAD_LB]);                                                       // interact / portal
+    K('Z', dn[GHOST_PAD_RB]);                                                       // recenter camera
     K(VK_F10, dn[GHOST_PAD_START]);                                                 // options menu
     K('Q', ax[GHOST_PAD_AXIS_RX] < -th);                                            // free camera turn
     K('E', ax[GHOST_PAD_AXIS_RX] > th);

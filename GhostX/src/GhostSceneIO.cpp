@@ -177,6 +177,7 @@ bool GhostScene_Save(const GhostScene& s, const std::string& root, const std::st
             jo["collider"] = o.collider;
             jo["colliderSize"] = V3(o.colliderSize);
             jo["colliderOffset"] = V3(o.colliderOffset);
+            jo["colliderRotation"] = V3(o.colliderRotation);
             jo["visible"] = o.visible;
             jo["locked"] = o.locked;
             jo["link"] = o.link;
@@ -454,6 +455,7 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
                 o.collider = jo.value("collider", false);
                 ReadV3(jo, "colliderSize", o.colliderSize);
                 ReadV3(jo, "colliderOffset", o.colliderOffset);
+                ReadV3(jo, "colliderRotation", o.colliderRotation);
                 o.visible = jo.value("visible", true);
                 o.locked = jo.value("locked", false);
                 o.link = jo.value("link", std::string());
@@ -681,7 +683,7 @@ unsigned int GhostScene_Hash(const GhostScene& s)
         I(o.id); I(o.meshId); S(o.name);
         V(o.position); V(o.rotationDeg); V(o.scale);
         I(o.useVertexColor ? 1 : 0);
-        I(o.role); S(o.customTag); I(o.collider ? 1 : 0); V(o.colliderSize); V(o.colliderOffset); I(o.visible ? 1 : 0);
+        I(o.role); S(o.customTag); I(o.collider ? 1 : 0); V(o.colliderSize); V(o.colliderOffset); V(o.colliderRotation); I(o.visible ? 1 : 0);
         I(o.shadowMode); I(o.shadowLightId); I(o.receiveShadows ? 1 : 0);
         I(o.locked ? 1 : 0); S(o.link); V(o.pathOffset); F(o.moveSpeed); F(o.movePause);
         I(o.pathMode); I(o.enemyPathMode); I(o.flying ? 1 : 0); I(o.enemyDeathEffect); I(o.breakEffect); I(o.contents); I(o.portalTrigger);

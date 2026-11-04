@@ -190,6 +190,9 @@ extern "C" {
         // ---- textures (cube meshes and sprites) ----
         int   (*GetTextureId)(int id);                     // texture on the object's first face (0 = none)
         int   (*SetTextureId)(int id, int textureId);      // every face; use LoadTexture() to get an id
+        // ---- oriented colliders ----
+// Returns 0 = no collider, 1 = axis-aligned, 2 = rotated. axes9 = the box's three world axes (x, y, z), 3 floats each.
+        int   (*GetCollider)(int id, float* outCenter3, float* outHalf3, float* outAxes9);
 
     } GhostGameAPI;
 
