@@ -3,7 +3,7 @@
 #include <algorithm>
 //Entities.cpp
 
-struct Saved { int id; float pos[3], scale[3], color[3]; char tag[32]; int visible; };
+struct Saved { int id; float pos[3], scale[3], color[3]; char tag[32]; int visible; int tex; };
 struct Enemy { int id; float a[3], b[3]; float speed, pause, wait; int mode; int dir; float vy; bool alive, done, grounded, wingless; float dieTimer; };
 
 static std::vector<Saved> g_saved;
@@ -18,13 +18,15 @@ static const char* kPickupTag[5] = { "", "Mushroom", "FireFlower", "Star", "OneU
 static const char* kPickupAnim[5] = { "", "Content/Animations/Mushroom.ghostanim", "Content/Animations/FireFlower.ghostanim",
                                       "Content/Animations/Star.ghostanim", "Content/Animations/OneUp.ghostanim" };
 static const float kPickupColor[5][3] = { { 1,1,1 },{ 1,0.3f,0.3f },{ 1,0.6f,0.1f },{ 1,0.9f,0.2f },{ 0.3f,1,0.4f } };   // used if the .ghostanim is missing
+static const char* kQuestionTex = "Content/Textures/QuestionBlock.png";   // used when the Doppelganger has no Link ID
+
 static float g_spin = 0.0f;
 struct Mover { int id; bool platform; float a[3], b[3]; float speed, pause; int mode; int dir; float wait; bool done; float delta[3]; };
 struct Breaking { int id; float timer; };
 static std::vector<Mover>    g_movers;
 static std::vector<Breaking> g_breaking;
 static std::vector<int>      g_moverIds, g_projIds;
-struct Fireball { int id; float vel[3]; float life; bool facingRight; };
+struct Fireball { int id; float vel[3]; float life; bool facingRight; bool straight; };
 static std::vector<Fireball> g_fireballs;
 struct Debris { int id; float vel[3]; float life; };
 static std::vector<Debris> g_debris;
@@ -110,6 +112,7 @@ static void Snapshot(const char* tag, std::vector<int>* idsOut)
         G->GetColor(s.id, s.color);
         strncpy_s(s.tag, tag, _TRUNCATE);
         s.visible = G->GetVisible(s.id);
+        s.tex = G->GetTextureId(s.id);
         g_saved.push_back(s);
         if (idsOut) idsOut->push_back(s.id);
     }
@@ -228,6 +231,7 @@ void Level_Reset()
     {
         G->SetPosition(s.id, s.pos);
         G->SetScale(s.id, s.scale);
+        if (G->GetTextureId(s.id) != s.tex) G->SetTextureId(s.id, s.tex);   // only objects whose texture changed (the fake brick)
         G->SetColor(s.id, s.color);
         G->SetTag(s.id, s.tag);
         G->SetVisible(s.id, s.visible);
@@ -506,10 +510,13 @@ void Blocks_Bump(int id)
     if (strcmp(tag, "Doppelganger") == 0)           // fake brick: the first hit turns it into a real ? block
     {
         G->SetTag(id, "Block");
-        if (!Sprite_Play(id, "Question", nullptr))  // no clip (a plain cube): tint it gold instead
+        if (!Sprite_Play(id, "Question", nullptr))  // a sprite plays its Question clip...
         {
-            const float gold[3] = { 1.0f, 0.8f, 0.2f };
-            G->SetColor(id, gold);
+            GhostObjectProps dp = {};               // ...a cube swaps its texture
+            G->GetObjectProps(id, &dp);
+            const int tex = G->LoadTexture(dp.link[0] ? dp.link : kQuestionTex);
+            if (tex > 0) G->SetTextureId(id, tex);
+            else { const float gold[3] = { 1.0f, 0.8f, 0.2f }; G->SetColor(id, gold); }   // missing image: gold tint
         }
         return;
     }
@@ -650,17 +657,22 @@ void Sky_Update(float dt)
     G->SkySetTime(g_skyCur);                        // set every frame while night, so it holds even if Cycle Speed is not 0
 }
 
-void Fireball_Spawn()
+void Fireball_Spawn(float dx, float dy, float dz)
 {
     if (!S.player) return;
+    const float l = sqrtf(dx * dx + dy * dy + dz * dz);
+    if (l < 0.0001f) return;
+    const float a = Cfg::FireYawOffset * 0.0174532925f;
+    const float rx = dx * cosf(a) - dz * sinf(a);
+    const float rz = dx * sinf(a) + dz * cosf(a);
+    dx = rx; dz = rz;                                  // dy is untouched
+    dx /= l; dy /= l; dz /= l;
+
     float pos[3];
     G->GetPosition(S.player, pos);
-
-    const float yaw = S.camYaw * 0.0174532925f;           // same as FaceVec in Player.cpp
-    const float fx = cosf(yaw) * g_faceDir, fz = -sinf(yaw) * g_faceDir;
-    pos[0] += fx * 0.6f;
-    pos[1] += 0.3f;
-    pos[2] += fz * 0.6f;
+    pos[0] += dx * 0.8f;
+    pos[1] += dy * 0.8f + (dy == 0.0f ? 0.3f : 0.0f);   // flat shots leave from chest height
+    pos[2] += dz * 0.8f;
 
     int id = G->Spawn(GHOST_API_MESH_QUAD, pos);
     if (!id) return;
@@ -669,16 +681,21 @@ void Fireball_Spawn()
     G->SetScale(id, sz);
     G->SetTag(id, "Fireball");
     G->SpriteSetAnim(id, "Content/Animations/Fireball.ghostanim");
-    G->SpriteSetFlip(id, g_faceDir < 0.0f ? 1 : 0);
+
+    const float yaw = S.camYaw * 0.0174532925f;
+    const float screenVx = dx * cosf(yaw) - dz * sinf(yaw);   // same formula the Player uses
+    G->SpriteSetFlip(id, screenVx < -0.2f ? 1 : 0);
 
     Fireball f = {};
     f.id = id;
-    f.life = 3.0f;                                         // was never set
-    f.vel[0] = fx * 8.0f;
-    f.vel[1] = 3.0f;
-    f.vel[2] = fz * 8.0f;
+    f.life = 3.0f;
+    f.straight = (dy != 0.0f);
+    f.vel[0] = dx * 8.0f;
+    f.vel[1] = f.straight ? dy * 8.0f : 3.0f;   // flat shots keep the small upward arc
+    f.vel[2] = dz * 8.0f;
     g_fireballs.push_back(f);
 }
+
 static void CastleFlag_Update(float dt)
 {
     if (!S.complete) return;
@@ -969,16 +986,26 @@ void Entities_Update(float dt)
         float pos[3];
         if (!G->GetPosition(fb.id, pos)) { g_fireballs.erase(g_fireballs.begin() + i); continue; }
 
-        fb.vel[1] -= Cfg::Gravity * dt;
-        if (fb.vel[1] < -Cfg::MaxFall) fb.vel[1] = -Cfg::MaxFall;
+        if (!fb.straight)                                   // straight shots ignore gravity
+        {
+            fb.vel[1] -= Cfg::Gravity * dt;
+            if (fb.vel[1] < -Cfg::MaxFall) fb.vel[1] = -Cfg::MaxFall;
+        }
 
         Body b;
         if (LoadBody(fb.id, b))
         {
             b.vel[0] = fb.vel[0]; b.vel[1] = fb.vel[1]; b.vel[2] = fb.vel[2];
             MoveResult r = MoveBody(b, dt);
-            if (r.hitFloor) fb.vel[1] = 5.0f;
-            if (r.hitX || r.hitZ) { G->Destroy(fb.id); g_fireballs.erase(g_fireballs.begin() + i); continue; }   // was hitZ only
+            if (fb.straight)
+            {
+                if (r.hitX || r.hitZ || r.hitFloor || r.hitCeiling) { G->Destroy(fb.id); g_fireballs.erase(g_fireballs.begin() + i); continue; }
+            }
+            else
+            {
+                if (r.hitFloor) fb.vel[1] = 5.0f;
+                if (r.hitX || r.hitZ) { G->Destroy(fb.id); g_fireballs.erase(g_fireballs.begin() + i); continue; }
+            }
             fb.vel[0] = b.vel[0]; fb.vel[1] = b.vel[1]; fb.vel[2] = b.vel[2];
             StoreBody(b);
         }

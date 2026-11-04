@@ -3497,6 +3497,13 @@ static void  Api_SetSoundEnabled(const char* n, int e)
     }
 }
 static int   Api_GetSoundEnabled(const char* n) { GhostSoundDef* d = GhostAudioBank_At(GhostAudioBank_Find(n)); return (d && d->enabled) ? 1 : 0; }
+static int Api_GetTextureId(int id)
+{
+    GhostObject* o = FindObject(id);
+    if (!o) return 0;
+    return o->meshId == GHOST_MESH_QUAD ? o->sprite.textureId : o->faces[0].textureId;
+}
+static int Api_SetTextureId(int id, int tex) { return GhostEngine_SetObjectTexture(id, tex); }
 
 static void BuildGameApi()
 {
@@ -3537,6 +3544,7 @@ static void BuildGameApi()
     a.SetBusVolume = Api_SetBusVolume;  a.GetBusVolume = Api_GetBusVolume;
     a.SetBusEnabled = Api_SetBusEnabled;  a.GetBusEnabled = Api_GetBusEnabled;
     a.SetSoundEnabled = Api_SetSoundEnabled;  a.GetSoundEnabled = Api_GetSoundEnabled;
+    a.GetTextureId = Api_GetTextureId;  a.SetTextureId = Api_SetTextureId;
 }
 
 // Runs between steps (never inside game code). The editor's own scene stays safe in g_playBackup.

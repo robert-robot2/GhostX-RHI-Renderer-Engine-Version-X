@@ -42,6 +42,7 @@ namespace Cfg
     constexpr float CastleFlagSpeed = 0.5f;   // units per second it rises
     constexpr float BridgeTileDelay = 0.15f;   // seconds between bridge tiles falling
     constexpr float BossHopInterval = 1.4f;    // seconds between boss hops
+    constexpr float FireYawOffset = 0.0f;   // was 90.0f; rotation now lives in Player.cpp
 }
 
 enum { MODE_MENU = 0, MODE_PLAY, MODE_OVER, MODE_SELECT, MODE_OPTIONS };
@@ -117,7 +118,7 @@ void Blocks_Bump(int id);
 void PowerUp_Remove(int id);
 void Movers_Update(float dt);
 void Coins_Add(int n);
-void Fireball_Spawn();
+void Fireball_Spawn(float dx, float dy, float dz);
 void Life_Add();
 bool Pickup_TypeFromTag(const char* tag, int& type);
 bool Hidden_Try(Body& b, float vy, float dt);

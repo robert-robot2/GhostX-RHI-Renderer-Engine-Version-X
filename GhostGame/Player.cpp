@@ -308,7 +308,15 @@ void Player_Update(float dt)
         S.attackCool = 0.4f;
         if (PowerLevel() == 0)      Sprite_Play(S.player, "SpinAttack", "Idle");
         else if (PowerLevel() == 1) Sprite_Play(S.player, "Punch", "Idle");
-        else if (PowerLevel() == 2) Fireball_Spawn();
+        else if (PowerLevel() == 2)
+        {
+            const float up = (G->KeyDown(VK_UP) ? 1.0f : 0.0f) - (G->KeyDown(VK_DOWN) ? 1.0f : 0.0f);
+            float ax = 0.0f, az = 0.0f;
+            const float hl = sqrtf(dx * dx + dz * dz);
+            if (hl > 0.1f) { ax = dx / hl; az = dz / hl; }
+            else if (up == 0.0f) { ax = 0.0f; az = 1.0f; }   // world forward
+            Fireball_Spawn(ax, up, az);
+        }
     }
 
     if (S.onPole)

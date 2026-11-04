@@ -187,6 +187,10 @@ extern "C" {
         void  (*SetSoundEnabled)(const char* name, int enabled);   // runtime only: Stop reloads the bank from disk
         int   (*GetSoundEnabled)(const char* name);
 
+        // ---- textures (cube meshes and sprites) ----
+        int   (*GetTextureId)(int id);                     // texture on the object's first face (0 = none)
+        int   (*SetTextureId)(int id, int textureId);      // every face; use LoadTexture() to get an id
+
     } GhostGameAPI;
 
     // A game module must export:
