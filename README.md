@@ -332,6 +332,9 @@ The layout is saved when you close the editor.
 - [WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/)
 - DirectX 12 compatible GPU
 - **NuGet packages (GhostShell):** `DockPanelSuite`, `DockPanelSuite.ThemeVS2015`, `Microsoft.Web.WebView2`, `Assimp`
+## Sound Resources:
+- https://www.zophar.net/music/nintendo-nes-nsf/super-mario-bros
+- https://sounds.spriters-resource.com/nes/supermariobros/
 ---
 
 # 🎮 Level Build, Playtest & Packaging Guide
