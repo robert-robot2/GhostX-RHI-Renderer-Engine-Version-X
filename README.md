@@ -145,12 +145,13 @@ F / G	F toggles face-pick mode, G toggles the grid
 - [x] Phase 41: FIREBALL FINAL FORM
 - **Active Core**
 - [ ] Phase 20.G: Collision, Polish for Levels
-- [ ] Phase 28: Animations: Mario/Luigi Flag Slide Down, Death, Transform, Swimming
+- [ ] Phase 28: Animations: Mario/Luigi Flag Slide Down, Death, Transform
 - [ ] Phase 35: Hidden Objective
 - [ ] Phase 37: Gamepad Zoom (R2 L2), Gamepad/Keyboard Recenter Orbit Camera (R1 Z)
 - [ ] Phase 38: More resolutions to UI Editor, Resolution Select
 - [ ] Phase 39: UI FINAL FORM, Sound Options, KeyBinds, Cleanup
 - [ ] Phase 40: Transition Audio Effects
+- [ ] Phase 41: Timed Elevators
 - [ ] Phase 29.C: Thicc Editor Upgrade Part Drei: Collision Rotation
 - [ ] Phase 20.N: Play Packaged Exe //Instruction Set 3
 - **Active Replicant Core**
@@ -162,7 +163,7 @@ F / G	F toggles face-pick mode, G toggles the grid
 - [ ] Phase : Download Patcher
 - [ ] Phase 24: Check All Editor Windows/ Move To window Palette/ Add DropDowns
 - [ ] Phase 26: Mario Dance
-- [ ] Phase : Levels 1-2 to 8-4
+- [ ] Phase : Levels 1-2 to 8-4, Swimming, Springs
 - [ ] Phase 27: Editor Upgrade to Quat Camera
 - [ ] Phase : Particle Editor Manager
 - [ ] Phase 30: Upgrade Roles to Show only their Behaviours not all Behaviours.
