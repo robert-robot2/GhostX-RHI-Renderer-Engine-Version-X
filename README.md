@@ -146,8 +146,8 @@ F / G	F toggles face-pick mode, G toggles the grid
 - [x] Phase 38: UI Editor: More resolutions, Restore Center Main Title In main Menu
 - [x] Phase 29.C: Thicc Editor Upgrade Part Drei: Collision Rotation
 - [x] Phase 37: Gamepad Zoom (R2 L2), Gamepad/Keyboard Recenter Orbit Camera (R1 Z)
+- [x] Phase 35: Hidden Objective
 - **Active Core**
-- [ ] Phase 35: Hidden Objective
 - [ ] Phase 20.G: Collision Check, Polish for Levels
 - [ ] Phase 20.N: Play Packaged Exe //Instruction Set 3
 - [ ] Phase 43: Base Demo Gameplay Package to Download on site without installer
