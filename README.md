@@ -147,7 +147,7 @@ F / G	F toggles face-pick mode, G toggles the grid
 - [ ] Phase 39: UI FINAL FORM, Sound Options, Key Binds, Gamepad Binds, Video Options, Cleanup
 - [ ] Phase 40: Transition Audio Effects
 - [ ] Phase 41: Timed Elevators
-- [ ] Phase 20.G: Collision, Polish for Levels
+- [ ] Phase 20.G: Collision Check, Polish for Levels
 - [ ] Phase 28: Animations: Mario/Luigi Flag Slide Down, Death, Transform
 - [ ] Phase 35: Hidden Objective
 - [ ] Phase 42: Editor Upgrade: Resolutions
