@@ -299,7 +299,6 @@ The layout is saved when you close the editor.
 | `W` `A` `S` `D` / arrow keys | Move (relative to the camera) |
 | `Shift` | Run |
 | `Space` | Jump (tap for a short hop, hold for full height) |
-| `S` / `Down` | Crouch; also enters a pipe set to Press Down |
 | `F` | Enter a portal set to Press F |
 | `Q` / `E` | Turn a free camera |
 | Right mouse + move | Orbit an orbit camera |
@@ -307,8 +306,51 @@ The layout is saved when you close the editor.
 | `R` | Restart the level |
 
 > The editor camera and gizmos are off while playing. Stopping Play restores the scene exactly as it was.
+# 🎮 Mario Game – Controls List
 
-- Coming soon: right-click features, copy and paste, and key rebinding.
+## Gamepad Controls
+
+| Button | Action |
+|---|---|
+| Left Digital (D-Pad) | Move / Menu Navigation (Up, Down, Left, Right) |
+| Right Digital (D-Pad) | Camera Orbit |
+| Left Analog Stick | TBD |
+| Start | Pause / Menu |
+| Select | TBD |
+| Button 1 | Jump |
+| Button 2 | Sprint / Hold to Grab Shell |
+| Button 3 | Attack |
+| Button 4 | Use Pipe |
+| L1 | TBD |
+| L2 | Zoom Out |
+| R1 | Recenter Camera |
+| R2 | Zoom In |
+| R3 | TBD |
+
+## ⌨️ Keyboard & Mouse Controls
+
+| Key / Input | Action |
+|---|---|
+| WASD | Move / Menu Navigation (Up, Down, Left, Right) |
+| Right Mouse Button | Camera Orbit |
+| F10 | Pause / Menu |
+| Space | Jump |
+| Shift | Sprint / Hold to Grab Shell |
+| Left Mouse Button | Attack |
+| F | Use Pipe |
+| Middle Mouse Button | Zoom |
+| Z | Recenter Camera |
+
+## 📝 Notes
+
+- **TBD** indicates a control that still needs to be assigned.
+- Camera controls allow players to orbit, zoom, and recenter the camera.
+- Sprint can also be used to hold and grab shells.
+
+---
+
+**More controls coming soon!** 🎃🎮
+
 ## How To FAQ
 
 - Coming Soon
