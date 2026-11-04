@@ -251,13 +251,25 @@ namespace GhostShell
             ("21:9  (2520 x 1080)", 2520f), ("3:2  (1620 x 1080)", 1620f),
         };
 
+        private static readonly (string Label, float W, float H)[] Previews =
+{
+            ("1280 x 720  (16:9)", 1280f, 720f), ("1920 x 1080  (16:9)", 1920f, 1080f), ("2560 x 1440  (16:9)", 2560f, 1440f),
+            ("3440 x 1440  (21:9)", 3440f, 1440f), ("1024 x 768  (4:3)", 1024f, 768f), ("1280 x 800  (16:10)", 1280f, 800f),
+            ("2400 x 1080  (20:9 phone)", 2400f, 1080f), ("1080 x 1920  (9:16 portrait)", 1080f, 1920f),
+        };
+        private static readonly float[] SafeSteps = { 0f, 0.025f, 0.05f, 0.075f, 0.1f };
+
         private DesignDoc _doc = new();
         private string? _path;
         private string _committed = "", _saved = "";
         private readonly List<string> _undo = new(), _redo = new();
         private DWidget? _sel;
         private bool _syncing;
-        private float _refW = 1920f;
+        private int _previewIdx = 1;
+        private bool _uiSync;
+        private ComboBox _cRef = null!, _cMode = null!, _cPrev = null!, _cSafe = null!;
+        private float PreviewW => 1080f * Previews[_previewIdx].W / Previews[_previewIdx].H;
+        private static DesignDoc NewBlankDoc() => new DesignDoc { RefW = 1920f, ScaleMode = 1 };   // new UIs start in Expand
 
         private readonly UICanvas _canvas = new();
         private readonly TreeView _tree = new();
@@ -299,28 +311,42 @@ namespace GhostShell
             bar.Controls.Add(_bBack = Btn("Send Back", () => MoveSelected(-1), "Draw earlier (underneath its siblings)"));
             bar.Controls.Add(_bFwd = Btn("Bring Forward", () => MoveSelected(1), "Draw later (on top of its siblings)"));
 
-            var aspect = new ComboBox
+            bar.Controls.Add(Btn("Auto-Anchor All", AutoAnchorAll, "Re-anchor every top-left widget to its nearest edge or center"));
+            _previewIdx = Math.Clamp(GhostSettings.Data.UiPreview, 0, Previews.Length - 1);
+            bar.Controls.Add(Lbl("Reference"));
+            bar.Controls.Add(_cRef = MakeCombo(Aspects.Select(a => a.Label), 150, "The width this UI was designed for"));
+            bar.Controls.Add(Lbl("Scale"));
+            bar.Controls.Add(_cMode = MakeCombo(UIView.ModeNames, 170, "How the UI scales to the screen"));
+            bar.Controls.Add(Lbl("Safe"));
+            bar.Controls.Add(_cSafe = MakeCombo(SafeSteps.Select(s => $"{s * 100f:0.#}%"), 70, "Safe-area margin on every side (TVs, handhelds)"));
+            bar.Controls.Add(Lbl("Preview"));
+            bar.Controls.Add(_cPrev = MakeCombo(Previews.Select(p => p.Label), 190, "Screen size shown in the canvas (editor only)"));
+            var guides = new CheckBox { Text = "Guides", AutoSize = true, ForeColor = Fg, Margin = new Padding(6, 6, 6, 0) };
+            _tip.SetToolTip(guides, "Show the design frame and 4:3, 16:10, 16:9, 21:9 and 9:16 aspect guides");
+            guides.CheckedChanged += (s, e) => _canvas.ShowGuides = guides.Checked;
+            bar.Controls.Add(guides);
+
+            _uiSync = true;
+            _cPrev.SelectedIndex = _previewIdx;
+            _uiSync = false;
+            _cRef.SelectedIndexChanged += (s, e) => { if (_uiSync) return; _doc.RefW = Aspects[Math.Max(_cRef.SelectedIndex, 0)].W; DocSettingChanged(); };
+            _cMode.SelectedIndexChanged += (s, e) => { if (_uiSync) return; _doc.ScaleMode = Math.Max(_cMode.SelectedIndex, 0); DocSettingChanged(); };
+            _cSafe.SelectedIndexChanged += (s, e) => { if (_uiSync) return; _doc.SafeArea = SafeSteps[Math.Max(_cSafe.SelectedIndex, 0)]; DocSettingChanged(); };
+            _cPrev.SelectedIndexChanged += (s, e) =>
             {
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                FlatStyle = FlatStyle.Flat,
-                BackColor = Bg2,
-                ForeColor = Fg,
-                Width = 170,
-                Margin = new Padding(8, 2, 6, 0),
-            };
-            foreach (var a in Aspects) aspect.Items.Add(a.Label);
-            aspect.SelectedIndex = 0;
-            aspect.SelectedIndexChanged += (s, e) =>
-            {
-                _refW = Aspects[Math.Max(aspect.SelectedIndex, 0)].W;
-                _doc.RefW = _refW;
+                if (_uiSync) return;
+                _previewIdx = Math.Max(_cPrev.SelectedIndex, 0);
+                _doc.PreviewW = PreviewW;
+                GhostSettings.Data.UiPreview = _previewIdx;      // the preview is a view setting: it never dirties the file
+                GhostSettings.Save();
                 _canvas.Invalidate();
             };
-            bar.Controls.Add(aspect);
 
             _title.AutoSize = true;
             _title.ForeColor = Accent;
             _title.Margin = new Padding(8, 6, 0, 0);
+
+
             bar.Controls.Add(_title);
 
             // ---- left: palette + hierarchy ----
@@ -379,7 +405,88 @@ namespace GhostShell
             Controls.Add(bar);
 
             WireEvents();
-            SetDoc(new DesignDoc { RefW = _refW }, null);
+            SetDoc(NewBlankDoc(), null);
+        }
+
+        private Label Lbl(string t) => new Label { Text = t, AutoSize = true, ForeColor = Color.Gray, Margin = new Padding(8, 7, 2, 0) };
+
+        private ComboBox MakeCombo(IEnumerable<string> items, int width, string tip)
+        {
+            var c = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Bg2,
+                ForeColor = Fg,
+                Width = width,
+                Margin = new Padding(2, 2, 6, 0),
+            };
+            foreach (string s in items) c.Items.Add(s);
+            c.SelectedIndex = 0;
+            _tip.SetToolTip(c, tip);
+            return c;
+        }
+
+        private void DocSettingChanged() { _canvas.Invalidate(); Commit(); _grid.Refresh(); }
+
+        // Shows the document's saved settings in the toolbar without firing the change handlers
+        private void SyncToolbar()
+        {
+            _uiSync = true;
+            int r = 0; float best = float.MaxValue;
+            for (int i = 0; i < Aspects.Length; i++)
+            {
+                float d = Math.Abs(Aspects[i].W - _doc.RefW);
+                if (d < best) { best = d; r = i; }
+            }
+            _cRef.SelectedIndex = r;
+            _cMode.SelectedIndex = Math.Clamp(_doc.ScaleMode, 0, UIView.ModeNames.Length - 1);
+            int sidx = 0; best = float.MaxValue;
+            for (int i = 0; i < SafeSteps.Length; i++)
+            {
+                float d = Math.Abs(SafeSteps[i] - _doc.SafeArea);
+                if (d < best) { best = d; sidx = i; }
+            }
+            _cSafe.SelectedIndex = sidx;
+            _uiSync = false;
+        }
+
+        // Where does this widget sit inside its parent? Pick the nearest of the 9 anchors and keep it in place.
+        private void AutoAnchor(DWidget w)
+        {
+            _doc.Layout();
+            var pr = _doc.ParentRect(w.Parent);
+            float fx = (w.X + w.W / 2f - pr.x) / MathF.Max(pr.w, 1f);
+            float fy = (w.Y + w.H / 2f - pr.y) / MathF.Max(pr.h, 1f);
+            int col = fx < 0.33f ? 0 : (fx > 0.67f ? 2 : 1), row = fy < 0.33f ? 0 : (fy > 0.67f ? 2 : 1);
+            string[,] names =
+            {
+                { "TopLeft", "TopCenter", "TopRight" },
+                { "CenterLeft", "Center", "CenterRight" },
+                { "BottomLeft", "BottomCenter", "BottomRight" },
+            };
+            _doc.ApplyPreset(w, names[row, col]);
+        }
+
+        // Fixes an old file: every plain top-left widget gets the anchor it should have had
+        private void AutoAnchorAll()
+        {
+            var targets = _doc.All().Where(w => !DesignDoc.Stretched(w, 0) && !DesignDoc.Stretched(w, 1)
+                                                && w.AnchorMin[0] == 0f && w.AnchorMin[1] == 0f).ToList();
+            if (targets.Count == 0) { System.Media.SystemSounds.Beep.Play(); return; }
+            if (MessageBox.Show(FindForm(),
+                    $"Re-anchor {targets.Count} top-left widget(s) to their nearest edge or center?\nThey stay exactly where they are at the reference size.",
+                    "Auto-Anchor All", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+
+            float keep = _doc.PreviewW;
+            _doc.PreviewW = _doc.RefW;                    // judge positions against the design frame, whatever the preview is
+            foreach (DWidget w in targets) AutoAnchor(w);
+            _doc.PreviewW = keep;
+
+            RebuildTree();
+            SelectWidget(_sel);
+            Commit();
+            _canvas.Invalidate();
         }
 
         private Button Btn(string text, Action click, string tip)
@@ -579,9 +686,10 @@ namespace GhostShell
             int index = _sel == null ? -1 : _doc.All().ToList().IndexOf(_sel);
             DesignDoc d = DesignDoc.Parse(json, out _);
             d.Name = _doc.Name;
-            d.RefW = _refW;
+            d.PreviewW = PreviewW;
             _doc = d;
             _canvas.Doc = d;
+            SyncToolbar();
             _committed = json;
 
             List<DWidget> all = d.All().ToList();
@@ -623,11 +731,14 @@ namespace GhostShell
             w.Name = _doc.UniqueName(null, type);
             _doc.Layout();
 
-            float px = parent?.X ?? 0f, py = parent?.Y ?? 0f;
-            float pw = parent?.W ?? _doc.RefW, ph = parent?.H ?? 1080f;
-            float cx = at?.X ?? (px + pw / 2f), cy = at?.Y ?? (py + ph / 2f);
-            w.Offset[0] = MathF.Round(cx - px - w.Size[0] / 2f);
-            w.Offset[1] = MathF.Round(cy - py - w.Size[1] / 2f);
+            var pr = _doc.ParentRect(parent);
+            float cx = at?.X ?? (pr.x + pr.w / 2f), cy = at?.Y ?? (pr.y + pr.h / 2f);
+            w.Offset[0] = MathF.Round(cx - pr.x - w.Size[0] / 2f);
+            w.Offset[1] = MathF.Round(cy - pr.y - w.Size[1] / 2f);
+
+            w.Parent = parent;
+            (parent == null ? _doc.Roots : parent.Children).Add(w);
+            AutoAnchor(w);                                   // NEW: corners hug edges, middles stay centered
 
             w.Parent = parent;
             (parent == null ? _doc.Roots : parent.Children).Add(w);
@@ -672,10 +783,11 @@ namespace GhostShell
         // -------------------------------------------------------
         private void SetDoc(DesignDoc d, string? path)
         {
-            d.RefW = _refW;
+            d.PreviewW = PreviewW;
             _doc = d;
             _path = path;
             _canvas.Doc = d;
+            SyncToolbar();
             _undo.Clear();
             _redo.Clear();
             _committed = _saved = d.ToJson(false);
@@ -688,7 +800,7 @@ namespace GhostShell
         private void NewDoc()
         {
             if (!ConfirmDiscard(FindForm())) return;
-            SetDoc(new DesignDoc(), null);
+            SetDoc(NewBlankDoc(), null);
         }
 
         private string? UiFolder()

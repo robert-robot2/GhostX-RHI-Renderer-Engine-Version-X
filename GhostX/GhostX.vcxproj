@@ -183,6 +183,7 @@ xcopy /Y /E /I "$(ProjectDir)shaders" "$(SolutionDir)GhostShell\bin\x64\Release\
     <ClInclude Include="include\GhostTAA.h" />
     <ClInclude Include="include\GhostText.h" />
     <ClInclude Include="include\GhostUI.h" />
+    <ClInclude Include="include\GhostUIScale.h" />
     <ClInclude Include="include\IGhostRHI.h" />
     <ClInclude Include="include\json.hpp" />
     <ClInclude Include="include\stb_image.h" />

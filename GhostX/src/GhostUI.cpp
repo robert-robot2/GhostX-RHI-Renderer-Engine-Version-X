@@ -1,6 +1,8 @@
 #include "../include/GhostUI.h"
 #include <math.h>
 
+// GhostUI.cpp
+
 static float Clamp01(float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
 
 static void Axis(float pp, float ps, float amin, float amax, float off, float sz, float piv, float& pos, float& len)
@@ -22,22 +24,34 @@ static void Axis(float pp, float ps, float amin, float amax, float off, float sz
 
 void GhostUI_Layout(GhostUIAsset& a, float W, float H)
 {
+    const GhostUIView v = GhostUI_ComputeView(a.scaleMode, a.refW, W, H);
+    a.view = v;
+
+    const float sa = a.safeArea < 0.0f ? 0.0f : (a.safeArea > 0.2f ? 0.2f : a.safeArea);
+    const float root[4] = { v.lw * sa, v.lh * sa, v.lw * (1.0f - 2.0f * sa), v.lh * (1.0f - 2.0f * sa) };
+
     for (size_t i = 0; i < a.widgets.size(); i++)
     {
         GhostWidget& w = a.widgets[i];
-        float px = 0, py = 0, pw = W, ph = H;
+        float px = root[0], py = root[1], pw = root[2], ph = root[3];
         bool pvis = true;
         if (w.parent >= 0 && w.parent < (int)i)
         {
             const GhostWidget& p = a.widgets[(size_t)w.parent];
-            px = p.rect[0]; py = p.rect[1]; pw = p.rect[2]; ph = p.rect[3];
+            px = p.lrect[0]; py = p.lrect[1]; pw = p.lrect[2]; ph = p.lrect[3];   // parents resolve in layout space
             pvis = p.eff;
         }
         w.eff = pvis && w.visible;
         if (!w.eff) { w.hovered = false; w.pressed = false; }
 
-        Axis(px, pw, w.anchorMin[0], w.anchorMax[0], w.offset[0], w.size[0], w.pivot[0], w.rect[0], w.rect[2]);
-        Axis(py, ph, w.anchorMin[1], w.anchorMax[1], w.offset[1], w.size[1], w.pivot[1], w.rect[1], w.rect[3]);
+        Axis(px, pw, w.anchorMin[0], w.anchorMax[0], w.offset[0], w.size[0], w.pivot[0], w.lrect[0], w.lrect[2]);
+        Axis(py, ph, w.anchorMin[1], w.anchorMax[1], w.offset[1], w.size[1], w.pivot[1], w.lrect[1], w.lrect[3]);
+
+        w.rect[0] = v.ox + w.lrect[0] * v.sx;                                     // layout -> screen
+        w.rect[1] = v.oy + w.lrect[1] * v.sy;
+        w.rect[2] = w.lrect[2] * v.sx;
+        w.rect[3] = w.lrect[3] * v.sy;
+        w.drawScale = v.sy;
     }
 }
 
@@ -56,18 +70,19 @@ static void PushText(std::vector<GhostUIQuad>& out, const GhostFont& font, const
     int align, bool centerV, const float* col)
 {
     if (w.text.empty() || col[3] <= 0.001f) return;
-    const float tw = GhostText_Measure(font, w.fontSize, w.text.c_str());
+    const float fs = w.fontSize * w.drawScale;                  // text follows the UI scale, never stretched sideways
+    const float tw = GhostText_Measure(font, fs, w.text.c_str());
     float tx = w.rect[0];
     if (align == 1) tx += (w.rect[2] - tw) * 0.5f;
     else if (align == 2) tx += w.rect[2] - tw;
-    const float ty = centerV ? w.rect[1] + (w.rect[3] - w.fontSize) * 0.5f : w.rect[1];
+    const float ty = centerV ? w.rect[1] + (w.rect[3] - fs) * 0.5f : w.rect[1];
 
     if (w.shadow)
     {
         const float sc[4] = { 0.0f, 0.0f, 0.0f, col[3] * 0.65f };
-        GhostText_Draw(out, font, tx + w.fontSize * 0.05f, ty + w.fontSize * 0.05f, w.fontSize, w.text.c_str(), sc);
+        GhostText_Draw(out, font, tx + fs * 0.05f, ty + fs * 0.05f, fs, w.text.c_str(), sc);
     }
-    GhostText_Draw(out, font, tx, ty, w.fontSize, w.text.c_str(), col);
+    GhostText_Draw(out, font, tx, ty, fs, w.text.c_str(), col);
 }
 
 void GhostUI_Build(const GhostUIAsset& a, const GhostFont& font, std::vector<GhostUIQuad>& out)

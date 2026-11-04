@@ -8,6 +8,33 @@ using System.Text.Json.Nodes;
 
 namespace GhostShell
 {
+    // Mirror of GhostUIView / GhostUI_ComputeView in GhostUIScale.h
+    internal readonly struct UIView
+    {
+        public readonly float Lw, Lh, Sx, Sy, Ox, Oy;
+        public UIView(float lw, float lh, float sx, float sy, float ox, float oy) { Lw = lw; Lh = lh; Sx = sx; Sy = sy; Ox = ox; Oy = oy; }
+
+        public static readonly string[] ModeNames =
+            { "Fit Height (classic)", "Expand (recommended)", "Fit Width", "Letterbox", "Stretch" };
+
+        public static UIView Compute(int mode, float refW, float screenW, float screenH)
+        {
+            const float H = 1080f;
+            if (!(refW >= 1f)) refW = 1920f;
+            if (!(screenW >= 1f)) screenW = 1f;
+            if (!(screenH >= 1f)) screenH = 1f;
+            float fw = screenW / refW, fh = screenH / H, fit = MathF.Min(fw, fh);
+            switch (mode)
+            {
+                case 1: return new UIView(screenW / fit, screenH / fit, fit, fit, 0f, 0f);
+                case 2: return new UIView(refW, screenH / fw, fw, fw, 0f, 0f);
+                case 3: return new UIView(refW, H, fit, fit, (screenW - refW * fit) * 0.5f, (screenH - H * fit) * 0.5f);
+                case 4: return new UIView(refW, H, fw, fh, 0f, 0f);
+                default: return new UIView(screenW / fh, H, fh, fh, 0f, 0f);
+            }
+        }
+    }
+
     internal sealed class DWidget
     {
         public string Name = "Widget";
@@ -80,7 +107,21 @@ namespace GhostShell
         };
 
         public string Name = "NewUI";
-        public float RefW = 1920f;                       // reference width; the height is always 1080
+        public float RefW = 1920f;                       // reference width: saved in the file
+        public int ScaleMode;                          // 0 fit height, 1 expand, 2 fit width, 3 letterbox, 4 stretch (saved)
+        public float SafeArea;                           // 0..0.2 (saved)
+        public float PreviewW = 1920f;                   // editor only: width of the previewed screen (height is 1080)
+
+        public UIView View => UIView.Compute(ScaleMode, RefW, PreviewW, 1080f);
+
+        // The rectangle a widget's anchors resolve against, in layout space
+        public (float x, float y, float w, float h) ParentRect(DWidget? p)
+        {
+            if (p != null) return (p.X, p.Y, p.W, p.H);
+            UIView v = View;
+            float ix = v.Lw * SafeArea, iy = v.Lh * SafeArea;
+            return (ix, iy, v.Lw - 2f * ix, v.Lh - 2f * iy);
+        }
         public readonly List<DWidget> Roots = new();
 
         // ---------------- tree helpers ----------------
@@ -166,7 +207,8 @@ namespace GhostShell
         // ---------------- layout (the same maths as GhostUI.cpp) ----------------
         public void Layout()
         {
-            foreach (DWidget r in Roots) LayoutOne(r, 0f, 0f, RefW, 1080f, true);
+            var r = ParentRect(null);
+            foreach (DWidget w in Roots) LayoutOne(w, r.x, r.y, r.w, r.h, true);
         }
 
         private static void LayoutOne(DWidget w, float px, float py, float pw, float ph, bool pvis)
@@ -210,8 +252,8 @@ namespace GhostShell
             {
                 if (p.Name != name) continue;
                 Layout();
-                float px = w.Parent?.X ?? 0f, py = w.Parent?.Y ?? 0f;
-                float pw = w.Parent?.W ?? RefW, ph = w.Parent?.H ?? 1080f;
+                var pr = ParentRect(w.Parent);
+                float px = pr.x, py = pr.y, pw = pr.w, ph = pr.h;
                 float[] cur = { w.X, w.Y, w.W, w.H };
 
                 for (int a = 0; a < 2; a++)
@@ -276,7 +318,13 @@ namespace GhostShell
             if (Int(o, "version", 0) > 1)
                 throw new InvalidDataException("This UI file was saved by a newer version of GhostX.");
 
-            var d = new DesignDoc { Name = Str(o, "name", "NewUI") };
+            var d = new DesignDoc
+            {
+                Name = Str(o, "name", "NewUI"),
+                RefW = Math.Clamp(Num(o, "referenceWidth", 1920f), 640f, 7680f),
+                ScaleMode = Math.Clamp(Int(o, "scaleMode", 0), 0, UIView.ModeNames.Length - 1),
+                SafeArea = Math.Clamp(Num(o, "safeArea", 0f), 0f, 0.2f),
+            };
             int count = 0;
             if (o["widgets"] is JsonArray list)
                 foreach (JsonNode? n in list)
@@ -402,6 +450,7 @@ namespace GhostShell
         {
             var o = new JsonObject { ["format"] = "ghostui", ["version"] = 1 };
             if (withName) o["name"] = Name;
+            o["referenceWidth"] = R(RefW); o["scaleMode"] = ScaleMode; o["safeArea"] = R(SafeArea);
             var arr = new JsonArray();
             foreach (DWidget r in Roots) arr.Add(SaveWidget(r));
             o["widgets"] = arr;

@@ -2,6 +2,8 @@
 #include <vector>
 #include <stddef.h>
 
+//GhostText.h
+
 constexpr size_t GHOST_UI_MAX_QUADS = 6000;
 
 // Backend-neutral: coordinates are in reference units (1080 tall, origin top-left)

@@ -23,6 +23,9 @@ namespace GhostShell
         private DWidget? _sel;
         private float _s = 1f, _ox, _oy;
 
+        private UIView _v = UIView.Compute(0, 1920f, 1920f, 1080f);
+        private bool _guides;
+
         private enum Mode { None, Move, Resize }
         private Mode _mode = Mode.None;
         private int _mask;                                   // resize handle: 1 left, 2 right, 4 top, 8 bottom
@@ -46,10 +49,10 @@ namespace GhostShell
 
         [Browsable(false), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
         public DWidget? Selected { get => _sel; set { _sel = value; Invalidate(); } }
-        /*
-        public DesignDoc Doc { get => _doc; set { _doc = value; Invalidate(); } }
-        public DWidget? Selected { get => _sel; set { _sel = value; Invalidate(); } }
-        */
+       
+        [Browsable(false), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+        public bool ShowGuides { get => _guides; set { _guides = value; Invalidate(); } }
+
 
         public UICanvas()
         {
@@ -101,16 +104,25 @@ namespace GhostShell
         // ---------------- view ----------------
         private void ComputeView()
         {
-            float W = _doc.RefW;
+            float W = Math.Max(_doc.PreviewW, 100f);           // the screen being previewed (height is always 1080)
             const float m = 28f;
             float aw = Math.Max(Width - 2 * m, 40f), ah = Math.Max(Height - 2 * m, 40f);
             _s = Math.Max(0.02f, Math.Min(aw / W, ah / 1080f));
             _ox = (Width - W * _s) / 2f;
             _oy = (Height - 1080f * _s) / 2f;
+            _v = _doc.View;
         }
 
-        private float RefX(float px) => (px - _ox) / _s;
-        private float RefY(float py) => (py - _oy) / _s;
+        // control pixels -> LAYOUT units (what Offset / Size are measured in)
+        private float RefX(float px) => ((px - _ox) / _s - _v.Ox) / _v.Sx;
+        private float RefY(float py) => ((py - _oy) / _s - _v.Oy) / _v.Sy;
+
+        // layout rectangle -> control pixels
+        private void PixRect(float lx, float ly, float lw, float lh, out float x, out float y, out float w, out float h)
+        {
+            x = _ox + (_v.Ox + lx * _v.Sx) * _s; y = _oy + (_v.Oy + ly * _v.Sy) * _s;
+            w = lw * _v.Sx * _s; h = lh * _v.Sy * _s;
+        }
 
         // ---------------- painting ----------------
         private static int B(float v) => (int)Math.Round(Math.Clamp(v, 0f, 1f) * 255f);
@@ -122,7 +134,7 @@ namespace GhostShell
             g.Clear(BackColor);
             ComputeView();
             _doc.Layout();
-            float W = _doc.RefW;
+            float W = Math.Max(_doc.PreviewW, 100f);
 
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.TextRenderingHint = TextRenderingHint.AntiAlias;
@@ -137,7 +149,14 @@ namespace GhostShell
                 for (float x = 120f; x < W; x += 120f) g.DrawLine(grid, x, 0f, x, 1080f);
                 for (float y = 120f; y < 1080f; y += 120f) g.DrawLine(grid, 0f, y, W, y);
             }
+
+            GraphicsState gs = g.Save();                         // widgets live in layout space: map them onto the screen
+            g.TranslateTransform(_v.Ox, _v.Oy);
+            g.ScaleTransform(_v.Sx, _v.Sy);
             foreach (DWidget r in _doc.Roots) DrawTree(g, r);
+            g.Restore(gs);
+
+            DrawGuides(g, W);
             g.ResetClip();
             g.ResetTransform();
 
@@ -146,7 +165,7 @@ namespace GhostShell
 
             using (var cap = new SolidBrush(Color.FromArgb(0x88, 0x88, 0x90)))
             using (var small = new Font("Segoe UI", 8.5f))
-                g.DrawString($"{W:0} x 1080 reference", small, cap, _ox, Math.Max(_oy - 18f, 2f));
+                g.DrawString($"Preview {W:0} x 1080  -  {UIView.ModeNames[Math.Clamp(_doc.ScaleMode, 0, 4)]}", small, cap, _ox, Math.Max(_oy - 18f, 2f));
 
             if (_doc.Roots.Count == 0)
             {
@@ -159,7 +178,7 @@ namespace GhostShell
 
             if (_sel != null && _sel.Eff)
             {
-                float sx = _ox + _sel.X * _s, sy = _oy + _sel.Y * _s, sw = _sel.W * _s, sh = _sel.H * _s;
+                PixRect(_sel.X, _sel.Y, _sel.W, _sel.H, out float sx, out float sy, out float sw, out float sh);
                 using var pen = new Pen(Accent, 2f);
                 g.DrawRectangle(pen, sx, sy, sw, sh);
                 using var hb = new SolidBrush(Color.White);
@@ -215,18 +234,57 @@ namespace GhostShell
         {
             if (w.Text.Length == 0 || col[3] <= 0.001f) return;
             Font f = FontFor(w.FontSize);
-            float tw = _mg.MeasureString(w.Text, f, PointF.Empty, _fmt).Width;     // widest line, in reference units
+            float k = _v.Sy / _v.Sx;                   // only differs from 1 in Stretch: the engine never stretches glyphs sideways
+            float tw = _mg.MeasureString(w.Text, f, PointF.Empty, _fmt).Width * k;
 
             float tx = w.X;
             if (align == 1) tx += (w.W - tw) * 0.5f;
             else if (align == 2) tx += w.W - tw;
             float ty = centerV ? w.Y + (w.H - w.FontSize) * 0.5f : w.Y;
 
+            GraphicsState gs = g.Save();
+            g.TranslateTransform(tx, ty);
+            g.ScaleTransform(k, 1f);
             if (w.Shadow)
                 using (var sb = new SolidBrush(Color.FromArgb(B(col[3] * 0.65f), 0, 0, 0)))
-                    g.DrawString(w.Text, f, sb, tx + w.FontSize * 0.05f, ty + w.FontSize * 0.05f, _fmt);
+                    g.DrawString(w.Text, f, sb, w.FontSize * 0.05f, w.FontSize * 0.05f, _fmt);
             using (var br = new SolidBrush(Col(col)))
-                g.DrawString(w.Text, f, br, tx, ty, _fmt);
+                g.DrawString(w.Text, f, br, 0f, 0f, _fmt);
+            g.Restore(gs);
+        }
+
+        private static readonly (string Label, float Aspect)[] GuideAspects =
+    { ("9:16", 9f / 16f), ("4:3", 4f / 3f), ("16:10", 16f / 10f), ("16:9", 16f / 9f), ("21:9", 21f / 9f) };
+
+        // Drawn on the previewed screen, in screen reference units
+        private void DrawGuides(Graphics g, float W)
+        {
+            float px = 1f / _s;
+
+            if (_doc.SafeArea > 0f)
+                using (var sp = new Pen(Color.FromArgb(160, 90, 220, 120), px) { DashStyle = DashStyle.Dash })
+                {
+                    float ix = _v.Lw * _doc.SafeArea, iy = _v.Lh * _doc.SafeArea;
+                    g.DrawRectangle(sp, _v.Ox + ix * _v.Sx, _v.Oy + iy * _v.Sy,
+                        (_v.Lw - 2f * ix) * _v.Sx, (_v.Lh - 2f * iy) * _v.Sy);
+                }
+            if (!_guides) return;
+
+            using var font = new Font("Segoe UI", 13f * px, FontStyle.Regular, GraphicsUnit.Pixel);
+            using (var dp = new Pen(Color.FromArgb(150, 0xFF, 0x9F, 0x1C), px) { DashStyle = DashStyle.Dash })
+                g.DrawRectangle(dp, _v.Ox, _v.Oy, _doc.RefW * _v.Sx, 1080f * _v.Sy);     // the frame the UI was designed on
+
+            using var gp = new Pen(Color.FromArgb(110, 120, 200, 255), px) { DashStyle = DashStyle.Dot };
+            using var gb = new SolidBrush(Color.FromArgb(180, 120, 200, 255));
+            int n = 0;
+            foreach (var (label, a) in GuideAspects)
+            {
+                float gw = 1080f * a;
+                if (gw >= W - 1f) continue;                           // as wide as or wider than this preview
+                float x = (W - gw) / 2f;
+                g.DrawRectangle(gp, x, 0f, gw, 1080f);
+                g.DrawString(label, font, gb, x + 4f * px, (6f + 18f * n++) * px);
+            }
         }
 
         private void DrawImageWidget(Graphics g, DWidget w)
@@ -290,7 +348,7 @@ namespace GhostShell
         private int HandleAt(Point p)
         {
             if (_sel == null || !_sel.Eff) return 0;
-            float sx = _ox + _sel.X * _s, sy = _oy + _sel.Y * _s, sw = _sel.W * _s, sh = _sel.H * _s;
+            PixRect(_sel.X, _sel.Y, _sel.W, _sel.H, out float sx, out float sy, out float sw, out float sh);
             foreach (var (hx, hy, mask) in Handles(sx, sy, sw, sh))
                 if (Math.Abs(p.X - hx) <= 7f && Math.Abs(p.Y - hy) <= 7f) return mask;
             return 0;
@@ -298,7 +356,7 @@ namespace GhostShell
 
         private DWidget? HitTest(float rx, float ry)
         {
-            float band = 6f / _s;
+            float band = 6f / (_s * Math.Min(_v.Sx, _v.Sy));
             foreach (DWidget w in _doc.All().Reverse())             // topmost first
             {
                 if (!w.Eff) continue;
@@ -358,7 +416,7 @@ namespace GhostShell
             {
                 if (!_moved && Math.Abs(e.X - _start.X) < 3 && Math.Abs(e.Y - _start.Y) < 3) return;
                 _moved = true;
-                float dx = (e.X - _start.X) / _s, dy = (e.Y - _start.Y) / _s;
+                float dx = (e.X - _start.X) / (_s * _v.Sx), dy = (e.Y - _start.Y) / (_s * _v.Sy);
                 if (_mode == Mode.Move) ApplyMove(dx, dy); else ApplyResize(dx, dy);
                 LiveChanged?.Invoke();
                 Invalidate();
@@ -476,7 +534,7 @@ namespace GhostShell
             Point pt = PointToClient(new Point(e.X, e.Y));
             ComputeView();
             _doc.Layout();
-            float rx = Math.Clamp(RefX(pt.X), 0f, _doc.RefW), ry = Math.Clamp(RefY(pt.Y), 0f, 1080f);
+            float rx = Math.Clamp(RefX(pt.X), 0f, _v.Lw), ry = Math.Clamp(RefY(pt.Y), 0f, _v.Lh);
             WidgetDropped?.Invoke(type, new PointF(rx, ry), CanvasAt(rx, ry));
             Focus();
         }

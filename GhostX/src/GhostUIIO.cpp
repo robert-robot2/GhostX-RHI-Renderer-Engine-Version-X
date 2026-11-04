@@ -9,6 +9,8 @@
 #include <string.h>
 #include <math.h>
 
+// GhostUIIO.cpp
+
 using json = nlohmann::json;
 namespace fs = std::filesystem;
 
@@ -173,7 +175,11 @@ bool GhostUI_Load(GhostUIAsset& a, const std::string& root, const std::string& f
         a.widgets.clear();
         a.shown = true;
         a.name = j.value("name", GhostWideToUtf8(fs::path(GhostUtf8ToWide(file)).stem().wstring()));
-
+        auto cf = [](float v, float lo, float hi) { return v != v ? lo : (v < lo ? lo : (v > hi ? hi : v)); };
+        a.refW = cf(j.value("referenceWidth", 1920.0f), 640.0f, 7680.0f);
+        const int sm = j.value("scaleMode", 0);
+        a.scaleMode = sm < 0 ? 0 : (sm >= GHOST_UI_SCALE_COUNT ? GHOST_UI_SCALE_COUNT - 1 : sm);
+        a.safeArea = cf(j.value("safeArea", 0.0f), 0.0f, 0.2f);
         auto list = j.find("widgets");
         if (list != j.end() && list->is_array())
             for (const json& w : *list) LoadWidget(w, -1, 0, a, root, loadTex, warn);
@@ -235,6 +241,9 @@ bool GhostUI_Save(const GhostUIAsset& a, const std::string& file, std::string& e
         j["format"] = "ghostui";
         j["version"] = 1;
         j["name"] = a.name;
+        j["referenceWidth"] = a.refW;
+        j["scaleMode"] = a.scaleMode;
+        j["safeArea"] = a.safeArea;
         json list = json::array();
         for (int i = 0; i < (int)a.widgets.size(); i++)
             if (a.widgets[(size_t)i].parent < 0) list.push_back(SaveWidget(a, i));

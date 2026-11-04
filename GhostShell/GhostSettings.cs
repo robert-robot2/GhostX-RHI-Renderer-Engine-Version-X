@@ -21,6 +21,7 @@ namespace GhostShell
         public bool PadRumble { get; set; } = true;
         public int PadSlot { get; set; } = -1;        // -1 = auto, 0..3 = that pad
         public string AudioMixer { get; set; } = "";   // "vol0,vol1,vol2,vol3,mute0,mute1,mute2,mute3"
+        public int UiPreview { get; set; } = 1;        // UI Designer preview size (index into its list)
 
     }
 

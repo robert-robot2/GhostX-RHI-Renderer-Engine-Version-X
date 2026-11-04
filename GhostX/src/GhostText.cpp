@@ -1,5 +1,7 @@
 #include "../include/GhostText.h"
 
+//GhostText.cpp
+
 static int GlyphIndex(const GhostFont& f, unsigned char c)
 {
     if (c >= f.firstChar && c < f.firstChar + f.count) return c - f.firstChar;
