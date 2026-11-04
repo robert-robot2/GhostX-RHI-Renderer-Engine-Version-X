@@ -152,7 +152,7 @@ F / G	F toggles face-pick mode, G toggles the grid
 - [ ] Phase 35: Hidden Objective
 - [ ] Phase 42: Thicc Editor Upgrade Part Quattro: Resolutions
 - [ ] Phase 20.N: Play Packaged Exe //Instruction Set 3
-- [ ] Phase : Base Demo Gameplay Package to Download on site without installer
+- [ ] Phase 43: Base Demo Gameplay Package to Download on site without installer
 - **Active Replicant Core**
 - [ ] Phase : Base Engine For Use Without Package Installer for Download
 - [ ] Phase : Install Shield Wizard/ Packaged Install for Download
