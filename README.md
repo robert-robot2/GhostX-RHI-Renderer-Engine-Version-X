@@ -26,11 +26,8 @@
 ![Visual Studio](https://img.shields.io/badge/IDE-Visual%20Studio-5C2D91?style=flat-square&logo=visualstudio&logoColor=white)
 ![Blender](https://img.shields.io/badge/3D-Blender-F5792A?style=flat-square&logo=blender&logoColor=white)
 ![GIMP](https://img.shields.io/badge/Graphics-GIMP-5C5543?style=flat-square&logo=gimp&logoColor=white)
-<img width="1920" height="1080" alt="Screenshot 2026-11-03 170938" src="https://github.com/user-attachments/assets/cc521253-99ab-4b27-9150-2adc91b3cdfd" />
+<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/1f6ca14e-064c-4f6f-83f6-f5975dc6ed67" />
 <img width="1920" height="1080" alt="Screenshot 2026-11-03 170950" src="https://github.com/user-attachments/assets/23762b8a-a681-4798-9bc9-08eda7bce034" />
-
-
-
 
 </div>
 
@@ -143,12 +140,12 @@ F / G	F toggles face-pick mode, G toggles the grid
 - [x] Phase 36: Patch Fix, Fireball, Black Olive Turtle Shell Drop Enemies Animation
 - [x] Phase 20.P: Doppelgangers Mesh Texture Swapping
 - [x] Phase 41: FIREBALL FINAL FORM
+- [x] Phase 38: UI Editor: More resolutions, Restore Center Main Title In main Menu
 - **Active Core**
 - [ ] Phase 20.G: Collision, Polish for Levels
 - [ ] Phase 28: Animations: Mario/Luigi Flag Slide Down, Death, Transform
 - [ ] Phase 35: Hidden Objective
 - [ ] Phase 37: Gamepad Zoom (R2 L2), Gamepad/Keyboard Recenter Orbit Camera (R1 Z)
-- [ ] Phase 38: UI Editor: More resolutions 
 - [ ] Phase 39: UI FINAL FORM, Sound Options, Key Binds, Gamepad Binds, Video Options, Cleanup
 - [ ] Phase 40: Transition Audio Effects
 - [ ] Phase 41: Timed Elevators
