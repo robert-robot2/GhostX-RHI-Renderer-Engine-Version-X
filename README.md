@@ -150,7 +150,7 @@ F / G	F toggles face-pick mode, G toggles the grid
 - [ ] Phase 20.G: Collision Check, Polish for Levels
 - [ ] Phase 28: Animations: Mario/Luigi Flag Slide Down, Death, Transform
 - [ ] Phase 35: Hidden Objective
-- [ ] Phase 42: Editor Upgrade: Resolutions
+- [ ] Phase 42: Thicc Editor Upgrade Part Quattro: Resolutions
 - [ ] Phase 20.N: Play Packaged Exe //Instruction Set 3
 - **Active Replicant Core**
 - [ ] Phase : Base Demo Gameplay Package to Download on site without installer
