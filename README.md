@@ -149,15 +149,16 @@ F / G	F toggles face-pick mode, G toggles the grid
 - **Active Core**
 - [ ] Phase 35: Hidden Objective
 - [ ] Phase 20.G: Collision Check, Polish for Levels
+- [ ] Phase 20.N: Play Packaged Exe //Instruction Set 3
+- [ ] Phase 43: Base Demo Gameplay Package to Download on site without installer
+- [ ] Phase 44: Ghost Engine Docs on Roboutes Git Pages
+- **Active Replicant Core**
 - [ ] Phase 39: UI FINAL FORM, Sound Options, Key Binds, Gamepad Binds, Video Options, Cleanup
 - [ ] Phase 40: Transition Audio Effects
 - [ ] Phase 41: Timed Elevators
 - [ ] Phase 28: Animations: Mario/Luigi Flag Slide Down, Death, Transform
 - [ ] Phase 42: Thicc Editor Upgrade Part Quattro: Resolutions
-- [ ] Phase 20.N: Play Packaged Exe //Instruction Set 3
-- [ ] Phase 43: Base Demo Gameplay Package to Download on site without installer
-- [ ] Phase 44: Ghost Engine Docs on Roboutes Git Pages
-- **Active Replicant Core**
+- **Active SubCore**
 - [ ] Phase : Base Engine For Use Without Package Installer for Download
 - [ ] Phase : Install Shield Wizard/ Packaged Install for Download
 - [ ] Phase : Install Wizard Setup for Standalone Game
@@ -170,7 +171,6 @@ F / G	F toggles face-pick mode, G toggles the grid
 - [ ] Phase : Particle Editor Manager
 - [ ] Phase 30: Upgrade Roles to Show only their Behaviours not all Behaviours.
 - [ ] Phase : Render Polish
-- **Active SubCore**
 - [ ] Phase : Antialiasing SMAA/FXAA/TAA
 - [ ] Phase : Co-op Multiplayer
 - [ ] Phase : Online Multiplayer
