@@ -141,9 +141,9 @@ F / G	F toggles face-pick mode, G toggles the grid
 - [x] Phase 33.A: Construct Game Sounds
 - [x] Phase 20.O: FINAL FORM YET IS MY POWER LEVEL OVER 9000??? Flying Shell Drops, Doppelgangers, Bopper Spinners
 - [x] Phase 36: Patch Fix, Fireball, Black Olive Turtle Shell Drop Enemies Animation
+- [x] Phase 20.P: Doppelgangers Mesh Texture Swapping
 - **Active Core**
 - [ ] Phase 20.G: Collision, Polish for Levels
-- [ ] Phase 20.P: Doppelgangers Need Texture Swap
 - [ ] Phase 28: Animations: Mario/Luigi Flag Slide Down, Death, Transform, Swimming
 - [ ] Phase 35: Hidden Objective
 - [ ] Phase 37: Gamepad add Zoom, R2, Z for Recenter
