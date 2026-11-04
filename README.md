@@ -335,6 +335,8 @@ The layout is saved when you close the editor.
 ## Sound Resources:
 - https://www.zophar.net/music/nintendo-nes-nsf/super-mario-bros
 - https://sounds.spriters-resource.com/nes/supermariobros/
+## Texture resources:
+- https://www.spriters-resource.com/
 ---
 
 # 🎮 Level Build, Playtest & Packaging Guide
