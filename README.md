@@ -147,7 +147,7 @@ F / G	F toggles face-pick mode, G toggles the grid
 - [ ] Phase 20.G: Collision, Polish for Levels
 - [ ] Phase 28: Animations: Mario/Luigi Flag Slide Down, Death, Transform, Swimming
 - [ ] Phase 35: Hidden Objective
-- [ ] Phase 37: Gamepad add Zoom, R2, Z for Recenter
+- [ ] Phase 37: Gamepad Zoom (R2 L2), Gamepad/Keyboard Recenter Orbit Camera (R1 Z)
 - [ ] Phase 38: More resolutions to UI Editor, Resolution Select
 - [ ] Phase 39: UI FINAL FORM, Sound Options, KeyBinds, Cleanup
 - [ ] Phase 40: Transition Audio Effects
