@@ -7,7 +7,10 @@
 
 # 👻🎃🎃🎃🎃🎃🎃🎃🎃🎃🎃🎃👻 GhostX Version X 👻🎃🎃🎃🎃🎃🎃🎃🎃🎃🎃🎃👻
 
-**DirectX12 RHI Renderer Engine Winforms Blazor WASM UI with a Visual Studio Docking Suite Editor**
+
+**GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (RHI-style)** with a **C# WinForms editor shell** and a Blazor WASM UIwith a Visual Studio Docking Suite Editor*.**
+
+**https://robert-robot2.github.io/GitPages-RoboutesTentacleBurgers/GhostDocsPage**
 
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-blue)
 ![.NET 10](https://img.shields.io/badge/.NET%2010-512BD4?logo=dotnet&logoColor=white)
@@ -34,8 +37,6 @@
 
 </div>
 
-GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (RHI-style)** with a **C# WinForms editor shell** and a Blazor WASM UI.
-https://robert-robot2.github.io/GitPages-RoboutesTentacleBurgers/Archives
 ```
 MIT License
 
