@@ -23,7 +23,9 @@
 ---
 # **https://robert-robot2.github.io/GitPages-RoboutesTentacleBurgers/GhostDocsPage**
 <img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/2f5a7c70-59fe-4753-8adf-2b9798ea8dfd" />
+---
 ## In Honour Of King Cube The True Master Of the Time and Universe.
+---
 <img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/1083013d-f685-43ec-a5d3-ed778d899e18" />
 <img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/5b1df8f1-54bb-4747-a2af-542441253dc8" />
 <img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/1f6ca14e-064c-4f6f-83f6-f5975dc6ed67" />
