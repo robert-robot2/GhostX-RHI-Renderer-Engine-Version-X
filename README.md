@@ -1,15 +1,6 @@
 <div align="center">
-  
-## Game on Wayne!
-## CAN YOU FEEL ITS POWER SOON IT WILL RELEASE!!!
-## BY THE POWER OF GREYSKULL Super Mario Infinitus Playable Demo WILL BE RELEASE TOMMORROW, I SWEAR BY EXCALIBUR FOR THE ALLIANCE ARE YOU MAD???!
-## Downloadable Engine Release Coming Soon!
-
-# 👻🎃🎃🎃🎃🎃🎃🎃🎃🎃🎃🎃👻 GhostX Version X 👻🎃🎃🎃🎃🎃🎃🎃🎃🎃🎃🎃👻
-
-
+# 👻🎃🎃🎃👻 GhostX Version X 👻🎃🎃🎃👻
 **GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (RHI-style)** with a **C# WinForms editor shell** and a Blazor WASM UIwith a Visual Studio Docking Suite Editor*.**
-
 **https://robert-robot2.github.io/GitPages-RoboutesTentacleBurgers/GhostDocsPage**
 
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-blue)
