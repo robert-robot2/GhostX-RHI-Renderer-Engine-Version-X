@@ -64,7 +64,8 @@ struct GhostGameplayInfo
     int   enemyPathMode;
     int   flying;
     int enemyDeathEffect;
-    float crx, cry, crz;        // collider rotation (degrees)
+    float crx, cry, crz;
+    float timeOffset;           // NEW: last field, Timed Elevator offset in seconds
 };
 struct GhostModParamInfo
 {

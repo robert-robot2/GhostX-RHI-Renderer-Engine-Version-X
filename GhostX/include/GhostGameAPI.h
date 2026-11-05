@@ -68,6 +68,7 @@ extern "C" {
         int   enemyPathMode;   // enemies: 0 ping-pong, 1 ping-pong + turn at ledges, 2 once, 3 stand still
         int flying;   // 1 = not affected by gravity
         int enemyDeathEffect;
+        float timeOffset;   // Timed Elevator (pathMode 3)
     } GhostObjectProps;
 
     typedef struct GhostGameAPI

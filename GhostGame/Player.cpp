@@ -28,6 +28,9 @@ static const char* kLuigiAnim[3] = { "Content/Animations/LuigiSmall.ghostanim",
                                      "Content/Animations/MarioFire.ghostanim" };
 static const char* PowerAnim(int level) { return (S.character == 1 ? kLuigiAnim : kPowerAnim)[level]; }
 
+static const char* kFlagAnim[2] = { "Content/Animations/FlagSlideMario.ghostanim",
+                                    "Content/Animations/FlagSlideLuigi.ghostanim" };
+static bool g_poleAnim = false;       // the flag sheet is currently assigned
 
 void Player_Reset()
 {
@@ -39,6 +42,8 @@ void Player_Reset()
     S.shellSliding = false;
     G->SpriteSetAnim(S.player, PowerAnim(0));
     g_haveMoveYaw = false;
+    g_poleAnim = false;
+    S.transformTimer = 0.0f;
 }
 
 static void SetPower(Body& b, int level)
@@ -57,8 +62,20 @@ static void SetPower(Body& b, int level)
     b.off[0] *= kx;  b.off[2] *= kx;  b.off[1] *= ky;
 }
 
+static const char* kTransformAnim[2] = { "Content/Animations/MarioTransform.ghostanim",
+                                         "Content/Animations/LuigiTransform.ghostanim" };
+
+static void Transform_Begin()
+{
+    if (!G->SpriteSetAnim(S.player, kTransformAnim[S.character == 1 ? 1 : 0])) return;   // no file: skip the freeze
+    S.transformTimer = Cfg::TransformTime;
+    memset(g_vel, 0, sizeof g_vel);
+    Sprite_Play(S.player, "Transform", "Idle");
+}
+
 static void Collect(Body& b, int type)
 {
+    const int before = PowerLevel();
     G->PadRumble(0.3f, 0.3f, 0.15f);
     if (type != PU_ONEUP) { Sfx("powerup_collect"); Score_Add(1000); }     // the 1-up sound plays inside Life_Add
     switch (type)
@@ -68,6 +85,7 @@ static void Collect(Body& b, int type)
     case PU_STAR:     S.starTime = Cfg::StarTime; S.starChain = 0; break;
     case PU_ONEUP:    Life_Add(); break;
     }
+    if (before == 0 && PowerLevel() == 1) Transform_Begin();
 }
 
 // true = Mario died (caller returns)
@@ -76,10 +94,77 @@ static bool Hurt(Body& b)
     if (S.starTime > 0.0f || S.invuln > 0.0f) return false;
     G->PadRumble(S.big ? 0.6f : 1.0f, 0.8f, S.big ? 0.25f : 0.5f);
     if (S.big) { Sfx("hurt"); SetPower(b, 0); S.invuln = Cfg::Invulnerable; S.hurt = 0.45f; g_vel[1] = 6.0f; return false; }
-    Game_Restart(true);
+    Player_Die();
     return true;
 }
+// ---------------------------------------------------------------------------
+// Death: a spawned sprite plays the "Death" clip. Below the screen (pit fall) it pops up from the bottom edge,
+// otherwise it hops where Mario stood. The real Mario stays hidden (so the camera holds still).
+// ---------------------------------------------------------------------------
+static void DeathStart(float feet, const float* pos, float& outFeet, float& outVy)
+{
+    outFeet = feet;
+    outVy = Cfg::DeathHop;
+    if (!S.camId) return;
 
+    float cp[3], yp[2], fov = 45.0f;
+    if (!G->GetCamera(S.camId, cp, yp, &fov)) return;
+
+    const float d2r = 0.0174532925f, yaw = yp[0] * d2r;
+    const float dh = (pos[0] - cp[0]) * sinf(yaw) + (pos[2] - cp[2]) * cosf(yaw);   // how far ahead of the camera
+    if (dh < 1.0f) return;
+
+    auto edge = [&](float deg) { return cp[1] + dh * tanf(fminf(fmaxf(deg, -85.0f), 85.0f) * d2r); };
+    const float bottom = edge(yp[1] - fov * 0.5f), top = edge(yp[1] + fov * 0.5f);
+    if (feet >= bottom) return;                                  // still on screen: hop in place
+
+    outFeet = bottom - 0.6f;                                     // just under the bottom edge
+    outVy = sqrtf(2.0f * Cfg::Gravity * (Cfg::DeathPop * (top - bottom) + 0.6f));
+}
+
+void Player_Die()
+{
+    if (S.deathTimer > 0.0f || S.complete) return;
+
+    float pos[3] = { 0, 0, 0 };
+    G->GetPosition(S.player, pos);
+    Body b;
+    const float feet = LoadBody(S.player, b) ? b.pos[1] - b.half[1] : pos[1] - g_baseScale[1] * 0.5f;
+
+    float startFeet, vy;
+    DeathStart(feet, pos, startFeet, vy);
+
+    S.deathTimer = Cfg::DeathTime;
+    S.deathVy = vy;
+    memset(g_vel, 0, sizeof g_vel);
+    Sfx("death");
+
+    const float at[3] = { pos[0], startFeet + g_baseScale[1] * 0.5f, pos[2] };
+    S.deathActor = G->Spawn(GHOST_API_MESH_QUAD, at);
+    if (S.deathActor)
+    {
+        G->SetScale(S.deathActor, g_baseScale);                  // always the small size
+        G->SetTag(S.deathActor, "Broken");                       // not solid, nothing reacts to it
+        G->SpriteSetAnim(S.deathActor, PowerAnim(0));            // MarioSmall / LuigiSmall
+        G->SpriteSetFlip(S.deathActor, g_faceDir < 0.0f ? 1 : 0);
+        Sprite_Play(S.deathActor, "Death", "Hurt");
+        G->SetVisible(S.player, 0);
+    }
+    else Sprite_Play(S.player, "Death", "Hurt");                 // object limit reached: play it on Mario himself
+}
+
+static void Death_Update(float dt)
+{
+    S.deathTimer -= dt;
+    float p[3];
+    if (S.deathActor && G->GetPosition(S.deathActor, p))
+    {
+        S.deathVy -= Cfg::Gravity * dt;
+        p[1] += S.deathVy * dt;
+        G->SetPosition(S.deathActor, p);
+    }
+    if (S.deathTimer <= 0.0f) Game_Restart(true);                // removes the actor, takes the life, restarts or Game Over
+}
 static bool TryPortal(Body& b, int entry)
 {
     GhostObjectProps pr = {};
@@ -210,6 +295,7 @@ static void Shells_Update(const Body& b)
 
 void Player_Update(float dt)
 {
+    if (S.deathTimer > 0.0f) { Death_Update(dt); return; }
     Body b;
     if (!LoadBody(S.player, b)) { S.error = "The Player needs a collider (Details > Gameplay > Collider)"; return; }
     S.error = nullptr;
@@ -284,6 +370,20 @@ void Player_Update(float dt)
             if (stomp) { Enemy_Kill(ids[i],true); g_vel[1] = G->KeyDown(VK_SPACE) ? Cfg::StompBounceHeld : Cfg::StompBounce; G->PadRumble(0.0f, 0.4f, 0.08f); }
             else if (Hurt(b)) return;
         }
+        else if (strcmp(tag, "SlidingShell") == 0)
+        {
+            float smn[3], smx[3];
+            if (!G->GetBounds(ids[i], smn, smx)) continue;
+            const bool stomp = preVy < 0.0f && feetBefore >= smx[1] - 0.25f;
+            if (stomp)                                    // land on a moving shell: it stops
+            {
+                Shell_Stop(ids[i]);
+                Score_Add(400);
+                Sfx("stomp");
+                g_vel[1] = G->KeyDown(VK_SPACE) ? Cfg::StompBounceHeld : Cfg::StompBounce;
+            }
+            else if (Shell_Dangerous(ids[i]) && Hurt(b)) return;   // side contact hurts (big shrinks, small dies)
+        }
     }
 
     if (S.portalCool > 0.0f) S.portalCool -= dt;
@@ -301,7 +401,7 @@ void Player_Update(float dt)
     }
 
     // ---- Falling off the world ----
-    if (b.pos[1] < Cfg::FallLimit) { Game_Restart(true); return; }
+    if (b.pos[1] < Cfg::FallLimit) { Player_Die(); return; }
 
     if (S.attackCool > 0.0f) S.attackCool -= dt;
 
@@ -323,6 +423,12 @@ void Player_Update(float dt)
 
     if (S.onPole)
     {
+        if (!g_poleAnim)                                          // swap to the Flag Slide sheet once
+        {
+            G->SpriteSetAnim(S.player, kFlagAnim[S.character == 1 ? 1 : 0]);
+            g_poleAnim = true;
+        }
+
         float mn[3], mx[3];
         if (G->GetBounds(S.poleId, mn, mx)) { b.pos[0] = (mn[0] + mx[0]) * 0.5f; b.pos[2] = (mn[2] + mx[2]) * 0.5f; }
         memset(g_vel, 0, sizeof g_vel);
@@ -332,11 +438,11 @@ void Player_Update(float dt)
         {
             b.pos[1] -= Cfg::PoleSlide * dt;
             if (b.pos[1] < floorY) b.pos[1] = floorY;
-            Sprite_Play(S.player, "Climb", "Idle");
+            Sprite_Play(S.player, "FlagSlide", "Climb");
         }
         else
         {
-            Sprite_Play(S.player, "Idle", nullptr);
+            Sprite_Play(S.player, "FlagIdle", "FlagSlide");       // hold at the bottom
             S.poleSlide += dt;
             if (S.poleSlide >= 0.6f)              // short beat at the bottom, then the level completes
             {
@@ -344,6 +450,8 @@ void Player_Update(float dt)
                 S.complete = true;
                 S.timeBonus = (int)S.timeLeft * 50;
                 Score_Add(S.timeBonus);
+                G->SpriteSetAnim(S.player, PowerAnim(PowerLevel()));   // back to the normal sheet (delete to keep the last pole frame)
+                g_poleAnim = false;
             }
         }
 
@@ -364,12 +472,24 @@ void Player_Update(float dt)
         Sprite_Play(S.player, "Idle", nullptr);
         return;
     }
+
+    if (S.transformTimer > 0.0f)                                  // frozen while the Transform clip plays
+    {
+        S.transformTimer -= dt;
+        if (S.transformTimer <= 0.0f)
+        {
+            S.transformTimer = 0.0f;
+            G->SpriteSetAnim(S.player, PowerAnim(PowerLevel()));  // back to the normal Big sheet
+        }
+        return;
+    }
     StoreBody(b);
 
     // Shells run AFTER StoreBody so the held shell uses Mario's current position (no 1-frame lag)
     Shells_Update(b);
 
     // ---- Sprite animation ----
+    if (S.transformTimer <= 0.0f)        // was a bare { ... } block
     {
         const float yaw2 = S.camYaw * 0.0174532925f;
         {

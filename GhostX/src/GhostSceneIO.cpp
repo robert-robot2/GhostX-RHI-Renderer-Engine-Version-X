@@ -181,7 +181,7 @@ bool GhostScene_Save(const GhostScene& s, const std::string& root, const std::st
             jo["visible"] = o.visible;
             jo["locked"] = o.locked;
             jo["link"] = o.link;
-            jo["move"] = json{ { "offset", V3(o.pathOffset) },{ "speed", o.moveSpeed },{ "pause", o.movePause },{ "mode", o.pathMode },{ "enemyMode", o.enemyPathMode } };
+            jo["move"] = json{ { "offset", V3(o.pathOffset) },{ "speed", o.moveSpeed },{ "pause", o.movePause },{ "mode", o.pathMode },{ "enemyMode", o.enemyPathMode },{ "timeOffset", o.timeOffset } };
             jo["flying"] = o.flying;
             jo["enemyDeathEffect"] = o.enemyDeathEffect;
             jo["breakEffect"] = o.breakEffect;
@@ -466,7 +466,9 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
                     ReadV3(mv, "offset", o.pathOffset);
                     o.moveSpeed = mv.value("speed", 2.0f);
                     o.movePause = mv.value("pause", 0.0f);
-                    o.pathMode = Clampi(mv.value("mode", 0), 0, 2);
+                    o.pathMode = Clampi(mv.value("mode", 0), 0, 3);
+                    o.timeOffset = mv.value("timeOffset", 0.0f);
+                    o.timeOffset = o.timeOffset < 0.0f ? 0.0f : (o.timeOffset > 3600.0f ? 3600.0f : o.timeOffset);
                     o.enemyPathMode = Clampi(mv.value("enemyMode", 0), 0, 3);
                     o.flying = Clampi(jo.value("flying", 0), 0, 2);
                     o.enemyDeathEffect = Clampi(jo.value("enemyDeathEffect", 0), 0, 3);
@@ -686,6 +688,7 @@ unsigned int GhostScene_Hash(const GhostScene& s)
         I(o.role); S(o.customTag); I(o.collider ? 1 : 0); V(o.colliderSize); V(o.colliderOffset); V(o.colliderRotation); I(o.visible ? 1 : 0);
         I(o.shadowMode); I(o.shadowLightId); I(o.receiveShadows ? 1 : 0);
         I(o.locked ? 1 : 0); S(o.link); V(o.pathOffset); F(o.moveSpeed); F(o.movePause);
+        F(o.timeOffset);
         I(o.pathMode); I(o.enemyPathMode); I(o.flying ? 1 : 0); I(o.enemyDeathEffect); I(o.breakEffect); I(o.contents); I(o.portalTrigger);
         I(o.powerType); I(o.itemMoves); I(o.coinCount);
         const int n = GhostMesh_FaceCount(o.meshId);

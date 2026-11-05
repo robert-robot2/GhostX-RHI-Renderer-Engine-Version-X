@@ -24,27 +24,40 @@ namespace GhostShell
                 using var fmt = (StringFormat)StringFormat.GenericTypographic.Clone();
                 fmt.FormatFlags |= StringFormatFlags.MeasureTrailingSpaces | StringFormatFlags.NoWrap;
 
+                
                 // ---- measure ----
                 var adv = new float[CharCount];
                 float maxAdv = 0.0f, lineH;
+
                 using (var probe = new Bitmap(8, 8))
                 using (var g = Graphics.FromImage(probe))
                 {
                     g.PageUnit = GraphicsUnit.Pixel;
                     g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
+
                     lineH = font.GetHeight(g);
+
                     for (int i = 0; i < CharCount; i++)
                     {
-                        adv[i] = g.MeasureString(((char)(FirstChar + i)).ToString(), font, PointF.Empty, fmt).Width;
+                        string s = ((char)(FirstChar + i)).ToString();
+
+                        adv[i] = g.MeasureString(s, font, PointF.Empty, fmt).Width;
                         maxAdv = Math.Max(maxAdv, adv[i]);
                     }
                 }
 
-                int cellW = (int)Math.Ceiling(maxAdv) + pad * 2;
-                int cellH = (int)Math.Ceiling(lineH) + pad * 2;
+                // ---- cell sizing with overhang allowance ----
+                int overhang = Math.Max(4, (int)Math.Ceiling(sizePx * 0.15f));
+
+                int cellW = (int)Math.Ceiling(maxAdv) + pad * 2 + overhang;
+                int cellH = (int)Math.Ceiling(lineH) + pad * 2 + overhang;
+
                 int rows = (CharCount + Columns - 1) / Columns;
-                int W = cellW * Columns, H = cellH * rows;
-                if (W > 4096 || H > 4096) return false;
+                int W = cellW * Columns;
+                int H = cellH * rows;
+
+                if (W > 4096 || H > 4096)
+                    return false;
 
                 // ---- draw ----
                 using var bmp = new Bitmap(W, H, PixelFormat.Format32bppArgb);

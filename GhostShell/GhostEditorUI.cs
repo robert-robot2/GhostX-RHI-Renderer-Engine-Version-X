@@ -534,7 +534,7 @@ namespace GhostShell
     }
 
     internal sealed class PathModeConverter : FixedListConverter
-    { public static readonly string[] Names = { "Ping-Pong (A to B and back)", "Restart (jump back to A)", "Once (stop at B)" }; protected override string[] Items => Names; }
+    { public static readonly string[] Names = { "Ping-Pong (A to B and back)", "Restart (jump back to A)", "Once (stop at B)", "Timed Elevator (synced loop, uses Timing Offset)" }; protected override string[] Items => Names; }
     internal sealed class BreakEffectConverter : FixedListConverter
     { public static readonly string[] Names = { "Vanish", "Play Break clip, then vanish", "Play Break clip, leave rubble" }; protected override string[] Items => Names; }
     internal sealed class ContentsConverter : FixedListConverter
@@ -602,9 +602,12 @@ namespace GhostShell
         [DisplayName("Path Mode"), TypeConverter(typeof(PathModeConverter))]
         public string PathMode
         {
-            get => PathModeConverter.Names[Math.Clamp(Get().pathMode, 0, 2)];
+            get => PathModeConverter.Names[Math.Clamp(Get().pathMode, 0, PathModeConverter.Names.Length - 1)];
             set { int i = Array.IndexOf(PathModeConverter.Names, value); if (i >= 0) { var g = Get(); g.pathMode = i; Set(g); } }
         }
+        [DisplayName("Timing Offset (s) (Timed Elevator)")]
+        public float TimingOffset { get => Get().timeOffset; set { var g = Get(); g.timeOffset = value; Set(g); } }
+
         [DisplayName("Enemy Path Mode (Role = Enemy)"), TypeConverter(typeof(EnemyPathConverter))]
         public string EnemyPathMode
         {

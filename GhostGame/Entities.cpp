@@ -21,7 +21,8 @@ static const float kPickupColor[5][3] = { { 1,1,1 },{ 1,0.3f,0.3f },{ 1,0.6f,0.1
 static const char* kQuestionTex = "Content/Textures/QuestionBlock.png";   // used when the Doppelganger has no Link ID
 
 static float g_spin = 0.0f;
-struct Mover { int id; bool platform; float a[3], b[3]; float speed, pause; int mode; int dir; float wait; bool done; float delta[3]; };
+struct Mover { int id; bool platform; float a[3], b[3]; float speed, pause; int mode; int dir; float wait; bool done; float delta[3]; float timeOffset; };
+static float g_elevTime = 0.0f;       // shared clock for Timed Elevators
 struct Breaking { int id; float timer; };
 static std::vector<Mover>    g_movers;
 static std::vector<Breaking> g_breaking;
@@ -38,7 +39,7 @@ static std::vector<CoinPop> g_coinPops;
 static float g_skyBase = 12.0f, g_skyCur = 12.0f;   // the level's own hour, and the hour we are showing
 extern float g_faceDir;
 
-struct ShellState { int id; float dx, dz, vy, cool; };
+struct ShellState { int id; float dx, dz, vy, cool, safe; };
 static std::vector<ShellState> g_shells;
 
 static const float kShellSpeed = 10.0f;
@@ -92,12 +93,27 @@ void Shell_Kick(int id, float dx, float dz)
     else { dx /= l; dz /= l; }
     ShellState& s = ShellOf(id);
     Sfx("kick");
-    s.dx = dx; s.dz = dz; s.vy = 0.0f; s.cool = 0.0f;
+    s.dx = dx; s.dz = dz; s.vy = 0.0f; s.cool = 0.0f; s.safe = Cfg::ShellKickSafe;
     G->SetTag(id, "SlidingShell");
     G->SpriteSetClip(id, "");
     Sprite_Play(id, "Slide", "Shell");
 }
 
+bool Shell_Dangerous(int id)
+{
+    char tag[32];
+    if (!G->GetTag(id, tag, sizeof tag) || strcmp(tag, "SlidingShell") != 0) return false;
+    return ShellOf(id).safe <= 0.0f;
+}
+
+void Shell_Stop(int id)
+{
+    ShellState& s = ShellOf(id);
+    s.dx = s.dz = 0.0f;
+    s.cool = 0.4f;                                   // grace so the stomp doesn't instantly kick it again
+    G->SetTag(id, "Shell");
+    Sprite_Play(id, "Shell", "Shell");
+}
 
 static void Snapshot(const char* tag, std::vector<int>* idsOut)
 {
@@ -148,6 +164,7 @@ static void RebuildEnemies()
 static void RebuildMovers()
 {
     g_movers.clear();
+    g_elevTime = 0.0f;
     for (int pass = 0; pass < 2; pass++)
         for (int id : (pass == 0 ? g_moverIds : g_projIds))
         {
@@ -160,6 +177,7 @@ static void RebuildMovers()
             m.speed = pr.moveSpeed > 0.01f ? pr.moveSpeed : 0.01f;
             m.pause = pr.movePause;
             m.mode = pr.pathMode;
+            m.timeOffset = pr.timeOffset;
             g_movers.push_back(m);
         }
 }
@@ -560,6 +578,24 @@ bool Hidden_Try(Body& b, float vy, float dt)
 }
 
 
+// Position on the A <-> B cycle: wait at A, travel to B, wait at B, travel back
+static void ElevatorPos(const Mover& m, float t, float* out)
+{
+    const float d[3] = { m.b[0] - m.a[0], m.b[1] - m.a[1], m.b[2] - m.a[2] };
+    const float travel = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]) / m.speed;
+    const float cycle = 2.0f * (travel + m.pause);
+    float f = 0.0f;                                   // 0 = at A, 1 = at B
+    if (cycle > 0.001f)
+    {
+        t = fmodf(t + m.timeOffset, cycle);
+        if (t < m.pause) f = 0.0f;
+        else if (t < m.pause + travel) f = (t - m.pause) / travel;
+        else if (t < 2.0f * m.pause + travel) f = 1.0f;
+        else f = 1.0f - (t - 2.0f * m.pause - travel) / travel;
+    }
+    for (int k = 0; k < 3; k++) out[k] = m.a[k] + d[k] * f;
+}
+
 void Movers_Update(float dt)
 {
     for (size_t i = 0; i < g_breaking.size(); )            // bricks hide after their Break clip has played
@@ -569,34 +605,42 @@ void Movers_Update(float dt)
         else i++;
     }
 
+    g_elevTime += dt;
+
     Body pb;
     float pp[3] = { 0, 0, 0 };
     const bool havePlayer = S.player && !S.complete && LoadBody(S.player, pb) && G->GetPosition(S.player, pp);
 
     for (Mover& m : g_movers)
     {
-        if (m.done) continue;
-        if (m.wait > 0.0f) { m.wait -= dt; continue; }
-
-        float cur[3];
-        if (!G->GetPosition(m.id, cur)) continue;
-        const float* to = (m.dir > 0) ? m.b : m.a;
-        const float d[3] = { to[0] - cur[0], to[1] - cur[1], to[2] - cur[2] };
-        const float dist = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
-        const float step = m.speed * dt;
-
-        float next[3];
-        const bool arrived = step >= dist;
+        float cur[3], next[3];
         bool jumped = false;
-        if (arrived) memcpy(next, to, sizeof next);
-        else for (int k = 0; k < 3; k++) next[k] = cur[k] + d[k] / dist * step;
 
-        if (arrived)
+        if (m.mode == 3)                                    // Timed Elevator: straight from the clock
         {
-            m.wait = m.pause;
-            if (m.mode == 0) m.dir = -m.dir;                                    // ping-pong
-            else if (m.mode == 1) { memcpy(next, m.a, sizeof next); jumped = true; }   // restart at A
-            else m.done = true;                                                 // once
+            if (!G->GetPosition(m.id, cur)) continue;
+            ElevatorPos(m, g_elevTime, next);
+        }
+        else
+        {
+            if (m.done) continue;
+            if (m.wait > 0.0f) { m.wait -= dt; continue; }
+            if (!G->GetPosition(m.id, cur)) continue;
+            const float* to = (m.dir > 0) ? m.b : m.a;
+            const float d[3] = { to[0] - cur[0], to[1] - cur[1], to[2] - cur[2] };
+            const float dist = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+            const float step = m.speed * dt;
+            const bool arrived = step >= dist;
+            if (arrived) memcpy(next, to, sizeof next);
+            else for (int k = 0; k < 3; k++) next[k] = cur[k] + d[k] / dist * step;
+
+            if (arrived)
+            {
+                m.wait = m.pause;
+                if (m.mode == 0) m.dir = -m.dir;                                    // ping-pong
+                else if (m.mode == 1) { memcpy(next, m.a, sizeof next); jumped = true; }   // restart at A
+                else m.done = true;                                                 // once
+            }
         }
 
         if (m.platform && havePlayer && !jumped)                                // carry whoever is standing on top
@@ -1056,7 +1100,7 @@ void Entities_Update(float dt)
 
         ShellState& s = g_shells[i];
         if (s.cool > 0.0f) s.cool -= dt;
-
+        if (s.safe > 0.0f) s.safe -= dt;
         Body b;
         if (!LoadBody(sid, b)) { i++; continue; }
 

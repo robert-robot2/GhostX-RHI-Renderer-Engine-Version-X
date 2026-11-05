@@ -408,9 +408,8 @@ struct UIPSInput
 
 float4 UIPS(UIPSInput input) : SV_TARGET
 {
-    // Texture views are sRGB (linear on sample); the target holds display colors, so encode again.
-    // Vertex colors are already display colors. Text atlases are white, so only their alpha matters.
-    float4 t = gTexture.Sample(sLinClamp, input.uv);
+    // Always mip 0: UI text and icons never need the smaller mips, and those bleed neighbouring glyph cells together
+    float4 t = gTexture.SampleLevel(sLinClamp, input.uv, 0);
     return float4(pow(saturate(t.rgb), 1.0f / 2.2f) * input.color.rgb, t.a * input.color.a);
 }
 

@@ -33,7 +33,7 @@ static int g_musicState = -1;       // what Music_Update last asked for: 0 scene
 static void Music_Update()
 {
     int want = 0;
-    if (S.mode == MODE_OVER || S.complete || S.onPole || S.bossCut) want = 3;
+    if (S.mode == MODE_OVER || S.complete || S.onPole || S.bossCut || S.deathTimer > 0.0f) want = 3;
     else if (S.starTime > 0.0f) want = 1;
     else
     {
@@ -172,17 +172,19 @@ static bool Clicked(int ui, const char* widget)
 
 void Game_Restart(bool died)
 {
-    if (died) { S.deaths++; if (--S.lives <= 0) { S.lives = 0; Sfx("game_over"); S.mode = MODE_OVER; return; } Sfx("death"); }
+    S.deathTimer = 0.0f;                                   // any restart ends a Death animation
+    if (S.deathActor) { G->Destroy(S.deathActor); S.deathActor = 0; }
+
+    if (died) { S.deaths++; if (--S.lives <= 0) { S.lives = 0; Sfx("game_over"); S.mode = MODE_OVER; return; } }
     S.coins = 0; S.enemiesDown = 0;
-    S.big = false; S.fire = false; S.starTime = 0.0f; S.attackCool = 0.0f; S.heldShell = 0; S.shellSliding = false; S.advance = 0.0f; S.invuln = 0.0f; S.hurt = 0.0f; S.complete = false;
-    S.big = false; S.advance = 0.0f; S.invuln = 0.0f; S.hurt = 0.0f; S.complete = false;
+    S.big = false; S.fire = false; S.starTime = 0.0f; S.attackCool = 0.0f; S.heldShell = 0; S.shellSliding = false;
+    S.advance = 0.0f; S.invuln = 0.0f; S.hurt = 0.0f; S.complete = false;
     S.onPole = false; S.bossCut = false; S.poleSlide = 0.0f; S.poleId = 0;
     S.portalCool = 0.0f;
     S.timeLeft = Cfg::TimeStart; S.stompChain = S.starChain = 0; S.timeBonus = 0;
     Level_Reset();
     Player_Reset();
     S.camSnap = true;
-
 }
 
 static bool  g_camFocus = false;
@@ -369,9 +371,9 @@ GHOST_GAME_EXPORT int GhostGame_Init(const GhostGameAPI* api)
 
 static void Timer_Update(float dt)
 {
-    if (S.complete || S.onPole || S.bossCut || !S.player || S.error) return;
+    if (S.complete || S.onPole || S.bossCut || S.deathTimer > 0.0f || !S.player || S.error) return;
     S.timeLeft -= dt / Cfg::TimeTick;
-    if (S.timeLeft <= 0.0f) { S.timeLeft = 0.0f; Game_Restart(true); }   // time up = lose a life
+    if (S.timeLeft <= 0.0f) { S.timeLeft = 0.0f; Player_Die(); }   // time up = lose a life
 }
 
 // Returns true while a menu screen owns the frame (the game is frozen)
@@ -511,6 +513,13 @@ GHOST_GAME_EXPORT void GhostGame_Update(float dt)
             if (S.level <= 0 || !G->LoadScene(p)) Game_Restart(false);       // the last level starts over from Level 1
         }
         if (Clicked(g_ui, "QuitButton")) G->Quit();
+    }
+    if (S.transformTimer > 0.0f)                         // power-up freeze: only the timer and camera run
+    {
+        Player_Update(dt);
+        Camera_Update(dt);
+        Hud();
+        return;
     }
     Movers_Update(dt);
     Timer_Update(dt);

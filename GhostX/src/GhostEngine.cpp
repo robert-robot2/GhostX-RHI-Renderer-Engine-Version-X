@@ -3509,7 +3509,7 @@ static int Api_GetObjectProps(int id, GhostObjectProps* out)
     strncpy_s(out->link, sizeof out->link, o->link.c_str(), _TRUNCATE);
     out->pathOffset[0] = o->pathOffset.x; out->pathOffset[1] = o->pathOffset.y; out->pathOffset[2] = o->pathOffset.z;
     out->moveSpeed = o->moveSpeed;  out->movePause = o->movePause;
-    out->pathMode = o->pathMode;    out->breakEffect = o->breakEffect;
+    out->pathMode = o->pathMode; out->timeOffset = o->timeOffset,   out->breakEffect = o->breakEffect;
     out->contents = o->contents;    out->portalTrigger = o->portalTrigger;
     out->locked = o->locked ? 1 : 0;
     out->powerType = o->powerType; out->enemyPathMode = o->enemyPathMode; out->flying = o->flying; out->enemyDeathEffect = o->enemyDeathEffect; out->itemMoves = o->itemMoves; out->coinCount = o->coinCount;
@@ -3746,7 +3746,7 @@ int GhostEngine_GetGameplay(int objectId, GhostGameplayInfo* out)
              o->visible ? 1 : 0,
              o->locked ? 1 : 0, o->pathMode, o->breakEffect, o->contents, o->portalTrigger,
                          o->pathOffset.x, o->pathOffset.y, o->pathOffset.z, o->moveSpeed, o->movePause, o->powerType, o->itemMoves, o->coinCount,
-             o->enemyPathMode,o->flying , o->enemyDeathEffect, o->colliderRotation.x, o->colliderRotation.y, o->colliderRotation.z };
+             o->enemyPathMode,o->flying , o->enemyDeathEffect, o->colliderRotation.x, o->colliderRotation.y, o->colliderRotation.z, o->timeOffset };
         
     return 1;
 }
@@ -3765,7 +3765,8 @@ void GhostEngine_SetGameplay(const GhostGameplayInfo* in)
     auto ci = [](int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); };
     auto cf = [](float v, float lo, float hi) { return v != v ? lo : (v < lo ? lo : (v > hi ? hi : v)); };
     o->locked = (in->locked != 0);
-    o->pathMode = ci(in->pathMode, 0, 2);
+    o->pathMode = ci(in->pathMode, 0, 3);
+    o->timeOffset = cf(in->timeOffset, 0.0f, 3600.0f);
     o->breakEffect = ci(in->breakEffect, 0, 2);
     o->contents = ci(in->contents, 0, 3);
     o->portalTrigger = ci(in->portalTrigger, 0, 2);

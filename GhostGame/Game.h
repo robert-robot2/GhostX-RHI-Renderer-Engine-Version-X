@@ -45,6 +45,11 @@ namespace Cfg
     constexpr float BridgeTileDelay = 0.15f;   // seconds between bridge tiles falling
     constexpr float BossHopInterval = 1.4f;    // seconds between boss hops
     constexpr float FireYawOffset = 0.0f;   // was 90.0f; rotation now lives in Player.cpp
+    constexpr float DeathTime = 2.5f;        // seconds the Death animation plays before the restart / Game Over
+    constexpr float DeathHop = 12.0f;        // hop speed when he dies on screen
+    constexpr float DeathPop = 0.65f;        // pit death: how high the pop reaches (fraction of the screen height)
+    constexpr float TransformTime = 0.9f;    // seconds the game freezes while the Transform animation plays
+    constexpr float ShellKickSafe = 0.3f;    // a freshly kicked or thrown shell can't hurt Mario for this long
 }
 
 enum { MODE_MENU = 0, MODE_PLAY, MODE_OVER, MODE_SELECT, MODE_OPTIONS };
@@ -82,6 +87,10 @@ struct GameState
     float poleSlide = 0.0f;   // how far Mario has slid down
     int   poleId = 0;
     float poleTop = 0.0f, poleBot = 0.0f;
+    float deathTimer = 0.0f;                 // > 0 while the Death animation plays
+    int   deathActor = 0;                    // the spawned sprite that plays it
+    float deathVy = 0.0f;
+    float transformTimer = 0.0f;             // > 0 while the power-up freeze plays
 };
 extern GameState S;
 enum { PU_NONE = 0, PU_MUSHROOM, PU_FLOWER, PU_STAR, PU_ONEUP };
@@ -129,6 +138,11 @@ void Score_Add(int pts);
 void Score_Enemy(bool star);
 void Goal_Reached(int poleId, float hitY, float poleTop, float poleBot);
 void Boss_AxeHit(int axeId);
+// ---- Player.cpp ----
+void Player_Die();                           // starts the Death animation; the restart happens when it ends
+// ---- Entities.cpp ----
+bool Shell_Dangerous(int id);                // a sliding shell that can hurt Mario
+void Shell_Stop(int id);                     // stomped: stops sliding and becomes a loose shell
 // ---- Game.cpp ----
 void Game_Restart(bool died);
 // Sprite helpers: they do nothing (and return 0) if the object is a plain cube

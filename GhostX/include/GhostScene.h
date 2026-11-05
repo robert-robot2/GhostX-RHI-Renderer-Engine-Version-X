@@ -246,7 +246,8 @@ struct GhostObject
     std::string link;   // portals: ... (max 63 chars)
     GhostVec3   pathOffset = { 0, 0, 0 };     // movers and projectiles: where B is, relative to A (the placed position)
     float       moveSpeed = 2.0f, movePause = 0.0f;
-    int         pathMode = 0;                 // 0 ping-pong, 1 restart at A, 2 once
+    float       timeOffset = 0.0f;            // Timed Elevator (pathMode 3): seconds added to the shared clock
+    int         pathMode = 0;                 // 0 ping-pong, 1 restart at A, 2 once, 3 timed elevator
     int         enemyPathMode = 0;            // enemies: 0 ping-pong, 1 ping-pong + turn at ledges, 2 once, 3 stand still
     int flying = 0;   // 0 = normal, 1 = no gravity
     int enemyDeathEffect = 0;   // 0 vanish, 1 bounce off screen, 2 flatten

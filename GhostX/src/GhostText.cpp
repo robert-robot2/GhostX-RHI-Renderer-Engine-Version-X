@@ -29,14 +29,15 @@ void GhostText_Draw(std::vector<GhostUIQuad>& out, const GhostFont& f, float x, 
 
         const int col = idx % f.cols, row = idx / f.cols;
         GhostUIQuad q;
-        q.x = pen - f.pad * s;
-        q.y = line - f.pad * s;
-        q.w = f.cellW * s;
-        q.h = f.cellH * s;
-        q.u0 = (col * f.cellW) / f.atlasW;
-        q.v0 = (row * f.cellH) / f.atlasH;
-        q.u1 = ((col + 1) * f.cellW) / f.atlasW;
-        q.v1 = ((row + 1) * f.cellH) / f.atlasH;
+        const float h = 0.5f;                                   // half a texel: sample the cell's edge texels, never the neighbour's
+        q.x = pen - f.pad * s + h * s;
+        q.y = line - f.pad * s + h * s;
+        q.w = (f.cellW - 2.0f * h) * s;
+        q.h = (f.cellH - 2.0f * h) * s;
+        q.u0 = (col * f.cellW + h) / f.atlasW;
+        q.v0 = (row * f.cellH + h) / f.atlasH;
+        q.u1 = ((col + 1) * f.cellW - h) / f.atlasW;
+        q.v1 = ((row + 1) * f.cellH - h) / f.atlasH;
         q.color[0] = rgba[0]; q.color[1] = rgba[1]; q.color[2] = rgba[2]; q.color[3] = rgba[3];
         q.textureId = f.textureId;
         out.push_back(q);

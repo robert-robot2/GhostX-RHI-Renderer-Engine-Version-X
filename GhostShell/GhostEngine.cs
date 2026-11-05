@@ -67,6 +67,7 @@ namespace GhostShell
         public int flying;
         public int enemyDeathEffect;
         public float crx, cry, crz;
+        public float timeOffset;     // NEW: last
     }
 
     [StructLayout(LayoutKind.Sequential)]
