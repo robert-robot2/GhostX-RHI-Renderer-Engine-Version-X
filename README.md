@@ -1,12 +1,6 @@
 <div align="center">
   
 # 👻🎃🎃🎃👻 GhostX Version X 👻🎃🎃🎃👻
-
-**GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (RHI-style)** with a **C# WinForms editor shell** and a Blazor WASM UIwith a Visual Studio Docking Suite Editor*.**
----
-# **https://robert-robot2.github.io/GitPages-RoboutesTentacleBurgers/GhostDocsPage**
-<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/2f5a7c70-59fe-4753-8adf-2b9798ea8dfd" />
-
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-blue)
 ![.NET 10](https://img.shields.io/badge/.NET%2010-512BD4?logo=dotnet&logoColor=white)
 ![Graphics](https://img.shields.io/badge/graphics-DirectX%2012-green)
@@ -24,6 +18,10 @@
 ![Visual Studio](https://img.shields.io/badge/IDE-Visual%20Studio-5C2D91?style=flat-square&logo=visualstudio&logoColor=white)
 ![Blender](https://img.shields.io/badge/3D-Blender-F5792A?style=flat-square&logo=blender&logoColor=white)
 ![GIMP](https://img.shields.io/badge/Graphics-GIMP-5C5543?style=flat-square&logo=gimp&logoColor=white)
+**GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (RHI-style)** with a **C# WinForms editor shell** and a Blazor WASM UIwith a Visual Studio Docking Suite Editor*.**
+---
+# **https://robert-robot2.github.io/GitPages-RoboutesTentacleBurgers/GhostDocsPage**
+<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/2f5a7c70-59fe-4753-8adf-2b9798ea8dfd" />
 ## In Honour Of King Cube The True Master Of the Time and Universe.
 <img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/1083013d-f685-43ec-a5d3-ed778d899e18" />
 <img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/5b1df8f1-54bb-4747-a2af-542441253dc8" />
