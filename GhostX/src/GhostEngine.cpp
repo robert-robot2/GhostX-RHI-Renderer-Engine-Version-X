@@ -3742,11 +3742,11 @@ int GhostEngine_GetGameplay(int objectId, GhostGameplayInfo* out)
     if (!o || !out) return 0;
     *out = { o->id, o->role, o->collider ? 1 : 0,
              o->colliderSize.x, o->colliderSize.y, o->colliderSize.z,
-             o->colliderOffset.x, o->colliderOffset.y, o->colliderOffset.z, o->colliderRotation.x, o->colliderRotation.y, o->colliderRotation.z,
+             o->colliderOffset.x, o->colliderOffset.y, o->colliderOffset.z,
              o->visible ? 1 : 0,
              o->locked ? 1 : 0, o->pathMode, o->breakEffect, o->contents, o->portalTrigger,
                          o->pathOffset.x, o->pathOffset.y, o->pathOffset.z, o->moveSpeed, o->movePause, o->powerType, o->itemMoves, o->coinCount,
-             o->enemyPathMode,o->flying , o->enemyDeathEffect,};
+             o->enemyPathMode,o->flying , o->enemyDeathEffect, o->colliderRotation.x, o->colliderRotation.y, o->colliderRotation.z };
         
     return 1;
 }

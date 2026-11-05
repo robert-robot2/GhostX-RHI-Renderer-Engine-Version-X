@@ -57,7 +57,6 @@ struct GhostGameplayInfo
     int   collider;
     float csx, csy, csz;        // collider size (multiplied by the object's scale)
     float cox, coy, coz;        // collider center offset (multiplied by the object's scale)
-    float crx, cry, crz;        // collider rotation (degrees)
     int   visible;
     int   locked, pathMode, breakEffect, contents, portalTrigger;
     float moveX, moveY, moveZ, moveSpeed, movePause;
@@ -65,6 +64,7 @@ struct GhostGameplayInfo
     int   enemyPathMode;
     int   flying;
     int enemyDeathEffect;
+    float crx, cry, crz;        // collider rotation (degrees)
 };
 struct GhostModParamInfo
 {
