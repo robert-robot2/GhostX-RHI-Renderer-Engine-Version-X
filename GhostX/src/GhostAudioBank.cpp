@@ -42,6 +42,7 @@ static const Def kDefaults[] =
     { "amb_cave_drip",    2, 3, 0.7f, 0.0f,  "Content/Audio/amb_cave_drip.mp3" },
     { "amb_birds",        2, 3, 0.7f, 0.0f,  "Content/Audio/amb_birds.mp3" },
     { "amb_crickets",     2, 3, 0.7f, 0.0f,  "Content/Audio/amb_crickets.mp3" },
+        { "hurry_up",         0, 2, 0.9f, 0.00f, "Content/Audio/hurryup.wav" },
 };
 
 static const char* BusName(int b) { return b == 1 ? "music" : (b == 3 ? "ambience" : "sfx"); }

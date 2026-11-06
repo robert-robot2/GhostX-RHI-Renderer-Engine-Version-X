@@ -2252,6 +2252,7 @@ static void UpdateOrbitCameras(float dt, bool smooth)
         GhostVec3 t;
         if (!ResolveOrbitTarget(c, t)) continue;       // no target: it behaves like a free camera
 
+        const float targetY = t.y;
         t.y += c.heightOffset;
         GhostVec3 want = t - AnglesToDir(c.yawDeg, c.pitchDeg) * c.distance;
 
@@ -2262,7 +2263,11 @@ static void UpdateOrbitCameras(float dt, bool smooth)
             c.orbitPos = c.orbitPos + (want - c.orbitPos) * k;
         }
         c.position = c.orbitPos;
-        if (smooth && c.position.y < 0.3f) c.position.y = 0.3f;     // never below the ground while playing
+        if (smooth)                                                  // ground floor, but it follows Mario underground
+        {
+            const float floorY = fminf(0.3f, targetY - 0.5f);
+            if (c.position.y < floorY) c.position.y = floorY;
+        }
     }
 }
 

@@ -50,6 +50,7 @@ namespace Cfg
     constexpr float DeathPop = 0.65f;        // pit death: how high the pop reaches (fraction of the screen height)
     constexpr float TransformTime = 0.9f;    // seconds the game freezes while the Transform animation plays
     constexpr float ShellKickSafe = 0.3f;    // a freshly kicked or thrown shell can't hurt Mario for this long
+    constexpr float HurryTime = 100.0f;      // the hurry-up jingle plays when the timer drops to this
 }
 
 enum { MODE_MENU = 0, MODE_PLAY, MODE_OVER, MODE_SELECT, MODE_OPTIONS };
@@ -82,6 +83,7 @@ struct GameState
     int mode = MODE_MENU;
     int  character = 0;                // 0 Mario, 1 Luigi
     bool twoPlayer = false;            // alternates Mario / Luigi per level
+    bool tutorial = false;             // running Tutorial.ghostscene: no timer, no time bonus
     bool  onPole = false;  
     bool  bossCut = false;             // axe hit: Mario frozen, timer stopped
     float poleSlide = 0.0f;   // how far Mario has slid down
@@ -91,6 +93,7 @@ struct GameState
     int   deathActor = 0;                    // the spawned sprite that plays it
     float deathVy = 0.0f;
     float transformTimer = 0.0f;             // > 0 while the power-up freeze plays
+    bool  hurryPlayed = false;               // the jingle plays once per life
 };
 extern GameState S;
 enum { PU_NONE = 0, PU_MUSHROOM, PU_FLOWER, PU_STAR, PU_ONEUP };

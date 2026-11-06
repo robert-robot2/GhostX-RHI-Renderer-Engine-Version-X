@@ -7,6 +7,13 @@ GameState S;
 
 static const char* kLevels[] = { "Level1.ghostscene", "Level2.ghostscene" };   // add more file names here for more levels
 static const int   kLevelCount = (int)(sizeof(kLevels) / sizeof(kLevels[0]));
+static const char* kTutorialScene = "Tutorial.ghostscene";
+
+static bool IsTutorialScene()
+{
+    char name[160];
+    return G->GetSceneName(name, sizeof name) && _stricmp(name, kTutorialScene) == 0;
+}
 
 static int FindLevelIndex()
 {
@@ -91,7 +98,19 @@ static void Carry_Load()
     S.lives = lives; S.score = score; S.coins = coins;
     S.character = ch; S.twoPlayer = (tp != 0);
 }
-
+// Character Select > Tutorial: loads the tutorial scene and carries the character choice into it
+static void Game_StartTutorial()
+{
+    char p[200];
+    snprintf(p, sizeof p, "Scenes/%s", kTutorialScene);
+    S.twoPlayer = false;
+    Carry_Save(true, 3, 0, 0);                 // started, 3 lives, 0 score, 0 coins (+ character)
+    if (!G->LoadScene(p))
+    {
+        Carry_Clear();
+        G->Log("Tutorial scene not found: Scenes/Tutorial.ghostscene");
+    }
+}
 // Restart the whole game from World 1-1 (keeps the character choice)
 static void Game_FullRestart()
 {
@@ -114,7 +133,7 @@ static void Game_ToMenu()
     snprintf(p, sizeof p, "Scenes/%s", kLevels[0]);
     g_started = false;
     Carry_Clear();
-    if (S.level <= 0 || !G->LoadScene(p))
+    if ((S.level <= 0 && !S.tutorial) || !G->LoadScene(p))
     {
         S.twoPlayer = false; S.character = 0;
         S.lives = 3; S.score = 0; S.deaths = 0;
@@ -127,7 +146,7 @@ static void Game_ToMenu()
 struct NavItem { const char* widget; const char* label; };
 static const NavItem kNavMain[] = { { "StartButton", "Start" },{ "TwoPlayerButton", "2 Player" },{ "OptionsButton", "Options" },{ "QuitButton", "Quit" } };
 static const NavItem kNavOptBack[] = { { "OptionsBackButton", "Back" } };
-static const NavItem kNavSel[] = { { "MarioButton", "Mario" },{ "LuigiButton", "Luigi" },{ "StartButton", "Start" },{ "BackButton", "Back to Main Menu" } };
+static const NavItem kNavSel[] = { { "MarioButton", "Mario" },{ "LuigiButton", "Luigi" },{ "StartButton", "Start" },{ "TutorialButton", "Tutorial" },{ "BackButton", "Back to Main Menu" } };
 static const NavItem kNavPause[] = { { "ResumeButton", "Resume" },{ "RestartButton", "Restart Game" },{ "MenuButton", "Main Menu" } };
 static const NavItem kNavOver[] = { { "RestartButton", "Restart" },{ "MenuButton", "Main Menu" } };
 static const NavItem kNavDone[] = { { "AgainButton", "Play Again" },{ "QuitButton", "Quit" } };
@@ -181,7 +200,7 @@ void Game_Restart(bool died)
     S.advance = 0.0f; S.invuln = 0.0f; S.hurt = 0.0f; S.complete = false;
     S.onPole = false; S.bossCut = false; S.poleSlide = 0.0f; S.poleId = 0;
     S.portalCool = 0.0f;
-    S.timeLeft = Cfg::TimeStart; S.stompChain = S.starChain = 0; S.timeBonus = 0;
+    S.timeLeft = S.tutorial ? 0.0f : Cfg::TimeStart; S.stompChain = S.starChain = 0; S.timeBonus = 0; S.hurryPlayed = false;
     Level_Reset();
     Player_Reset();
     S.camSnap = true;
@@ -199,7 +218,17 @@ static void Camera_Focus(float dt, float& yaw)            // eases the yaw towar
     if (fabsf(d) <= step) { yaw = g_camFocusYaw; g_camFocus = false; }
     else yaw += d > 0.0f ? step : -step;
 }
-
+// Any camera input (right-drag, right stick, Q/E on the non-orbit camera) ends a Z reface at once
+static bool CameraUserInput()
+{
+    float md[2] = { 0.0f, 0.0f };
+    G->GetMouseDelta(md);
+    if (fabsf(md[0]) > 0.5f || fabsf(md[1]) > 0.5f) return true;
+    if (G->KeyDown(VK_RBUTTON)) return true;
+    if (G->PadConnected() && (fabsf(G->PadAxis(GHOST_PAD_AXIS_RX)) > 0.1f || fabsf(G->PadAxis(GHOST_PAD_AXIS_RY)) > 0.1f)) return true;
+    if (!S.orbit && (G->KeyDown('Q') || G->KeyDown('E'))) return true;
+    return false;
+}
 static void Camera_Update(float dt)
 {
     if (!S.camId || !S.player) return;
@@ -208,7 +237,7 @@ static void Camera_Update(float dt)
 
 
     S.orbit = (G->GetCameraMode(S.camId) == 1);
-
+    if (g_camFocus && CameraUserInput()) g_camFocus = false;   // free the instant the player moves the camera
     if (S.orbit)
     {
         float yp[2];
@@ -254,7 +283,8 @@ static void Camera_Update(float dt)
         for (int i = 0; i < 3; i++) S.camPos[i] += (want[i] - S.camPos[i]) * k;
     }
 
-    float pos[3] = { S.camPos[0], S.camPos[1] < 0.4f ? 0.4f : S.camPos[1], S.camPos[2] };   // never below the ground
+    const float camFloor = fminf(0.4f, p[1] - 0.5f);                                          // follows Mario underground
+    float pos[3] = { S.camPos[0], S.camPos[1] < camFloor ? camFloor : S.camPos[1], S.camPos[2] };
     float yp[2] = { S.camYaw, Cfg::CamPitch };
     G->SetCamera(S.camId, pos, yp, nullptr);
 }
@@ -301,9 +331,19 @@ static void Hud()
     snprintf(t, sizeof t, "Points %06d", S.score);          G->UISetText(g_ui, "Points", t);
     snprintf(t, sizeof t, "Lives: %d", S.lives);            G->UISetText(g_ui, "Lives", t);
     const int lv = S.level < 0 ? 0 : S.level;               // 4 stages per world, like SMB
-    snprintf(t, sizeof t, "World %d-%d", lv / 4 + 1, lv % 4 + 1);   G->UISetText(g_ui, "World", t);
-    snprintf(t, sizeof t, "Timer %d", (int)ceilf(S.timeLeft));      G->UISetText(g_ui, "Timer", t);
-    G->UISetColor(g_ui, "Timer", S.timeLeft < 100.0f ? red : white);   // turns red under 100
+    if (S.tutorial) snprintf(t, sizeof t, "Tutorial");
+    else            snprintf(t, sizeof t, "World %d-%d", lv / 4 + 1, lv % 4 + 1);
+    G->UISetText(g_ui, "World", t);
+    if (S.tutorial)
+    {
+        G->UISetText(g_ui, "Timer", "Timer --");
+        G->UISetColor(g_ui, "Timer", white);
+    }
+    else
+    {
+        snprintf(t, sizeof t, "Timer %d", (int)ceilf(S.timeLeft));  G->UISetText(g_ui, "Timer", t);
+        G->UISetColor(g_ui, "Timer", S.timeLeft < Cfg::HurryTime ? red : white);   // turns red under 100
+    }
 
     G->UISetProgress(g_ui, "CoinBar", (float)S.coins / (float)S.playerMaxCoins);
 
@@ -326,7 +366,7 @@ static void Hud()
             S.score, S.timeBonus, S.coins, S.deaths);
         G->UISetText(g_ui, "CompleteStats", t);
         // Order of this could be off
-        G->UISetText(g_ui, "CompleteTitle", S.lastLevel ? "YOU WIN!" : "LEVEL COMPLETE!");
+        G->UISetText(g_ui, "CompleteTitle", S.tutorial ? "TUTORIAL COMPLETE!" : (S.lastLevel ? "YOU WIN!" : "LEVEL COMPLETE!"));
         G->UISetVisible(g_ui, "AgainButton", S.lastLevel ? 1 : 0);
         G->UISetVisible(g_ui, "QuitButton", S.lastLevel ? 1 : 0);
     }
@@ -340,7 +380,9 @@ GHOST_GAME_EXPORT int GhostGame_Init(const GhostGameAPI* api)
     g_musicState = -1;
     Carry_Load();
     S.level = FindLevelIndex();
-    S.lastLevel = (S.level < 0 || S.level >= kLevelCount - 1);
+    S.tutorial = IsTutorialScene();
+    S.lastLevel = !S.tutorial && (S.level < 0 || S.level >= kLevelCount - 1);   // tutorial is NOT the last level: it leads to 1-1
+    if (S.tutorial) S.timeLeft = 0.0f;                                          // no timer, so no time bonus either
     if (S.twoPlayer) S.character = S.level < 0 ? 0 : (S.level & 1);   // Mario on even levels, Luigi on odd
     g_ui = G->UILoad("Content/UI/HUD.ghostui");
     g_menuUi = G->UILoad("Content/UI/MainMenu.ghostui");
@@ -371,8 +413,9 @@ GHOST_GAME_EXPORT int GhostGame_Init(const GhostGameAPI* api)
 
 static void Timer_Update(float dt)
 {
-    if (S.complete || S.onPole || S.bossCut || S.deathTimer > 0.0f || !S.player || S.error) return;
+    if (S.tutorial || S.complete || S.onPole || S.bossCut || S.deathTimer > 0.0f || !S.player || S.error) return;
     S.timeLeft -= dt / Cfg::TimeTick;
+    if (!S.hurryPlayed && S.timeLeft <= Cfg::HurryTime) { S.hurryPlayed = true; Sfx("hurry_up"); }
     if (S.timeLeft <= 0.0f) { S.timeLeft = 0.0f; Player_Die(); }   // time up = lose a life
 }
 
@@ -418,7 +461,7 @@ static bool Screens_Update()
         if (g_ui) G->UIShow(g_ui, 0);
         if (g_selUi)
         {
-            Nav_Update(g_selUi, kNavSel, 4);
+            Nav_Update(g_selUi, kNavSel, 5);
             if (Clicked(g_selUi, "MarioButton")) S.character = 0;
             if (Clicked(g_selUi, "LuigiButton")) S.character = 1;
             const float lit[4] = { 1, 1, 1, 1 }, dim[4] = { 0.45f, 0.45f, 0.45f, 1 };
@@ -431,6 +474,7 @@ static bool Screens_Update()
                 S.mode = MODE_PLAY;
                 Game_Restart(false);
             }
+            else if (Clicked(g_selUi, "TutorialButton")) Game_StartTutorial();
             else if (Clicked(g_selUi, "BackButton") || g_navBack) S.mode = MODE_MENU;
         }
         return true;
@@ -474,7 +518,7 @@ static bool Screens_Update()
             else if (Clicked(g_overUi, "MenuButton"))
             {
                 g_started = false;                         // Init will show the menu after the scene reloads
-                if (S.level <= 0 || !G->LoadScene(p))
+                if ((S.level <= 0 && !S.tutorial) || !G->LoadScene(p))
                 {
                     S.lives = 3; S.score = 0; S.deaths = 0;
                     Game_Restart(false);
@@ -499,8 +543,11 @@ GHOST_GAME_EXPORT void GhostGame_Update(float dt)
     if (Screens_Update()) { Camera_Update(dt); return; }
     if (S.mode == MODE_PLAY && !S.complete && !S.onPole && !S.bossCut && G->KeyPressed('Z'))
     {
+        float cur = fmodf(S.camYaw, 360.0f);                       // where the camera is now, wrapped to -180..180
+        if (cur > 180.0f) cur -= 360.0f;
+        if (cur < -180.0f) cur += 360.0f;
         g_camFocus = true;
-        g_camFocusYaw = g_haveMoveYaw ? g_moveYawDeg : S.camYaw;   // no movement yet: nothing to turn to
+        g_camFocusYaw = (fabsf(cur) < 45.0f) ? -90.0f : 0.0f;      // near Z+ front: go to X- side view. Anywhere else: back to Z+ front
     }
     if (g_ui && S.complete && S.lastLevel) Nav_Update(g_ui, kNavDone, 2);
     else Nav_Idle();
@@ -532,8 +579,9 @@ GHOST_GAME_EXPORT void GhostGame_Update(float dt)
         {
             char p[200];
             snprintf(p, sizeof p, "Scenes/%s", kLevels[S.level + 1]);
-            G->LoadScene(p);
-            Carry_Save(true, S.lives, S.score, S.coins);
+            G->LoadScene(p);                                              // tutorial: S.level is -1, so this is kLevels[0] = World 1-1
+            if (S.tutorial) Carry_Save(true, 3, 0, 0);                    // fresh start after the tutorial
+            else            Carry_Save(true, S.lives, S.score, S.coins);
             S.advance = -1000.0f;
         }
     }
