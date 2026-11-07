@@ -323,7 +323,14 @@ void Player_Update(float dt)
     // ---- Jump ----
     g_jumpBuf = G->KeyPressed(VK_SPACE) ? Cfg::JumpBuffer : g_jumpBuf - dt;
     g_coyote = g_grounded ? Cfg::CoyoteTime : g_coyote - dt;
-    if (g_jumpBuf > 0.0f && g_coyote > 0.0f) { g_vel[1] = Cfg::Jump; g_jumpBuf = 0.0f; g_coyote = 0.0f; Sfx(S.big ? "big_jump" : "jump"); }
+    if (g_jumpBuf > 0.0f && g_coyote > 0.0f)
+    {
+        const float planarNow = sqrtf(g_vel[0] * g_vel[0] + g_vel[2] * g_vel[2]);
+        const bool sprintJump = G->KeyDown(VK_SHIFT) && planarNow > Cfg::Walk + 0.5f;   // Shift AND actually moving faster than a walk
+        g_vel[1] = sprintJump ? Cfg::RunJump : Cfg::Jump;
+        g_jumpBuf = 0.0f; g_coyote = 0.0f;
+        Sfx(S.big ? "big_jump" : "jump");
+    }
     if (G->KeyReleased(VK_SPACE) && g_vel[1] > 0.0f) g_vel[1] *= 0.5f;
 
     g_vel[1] -= Cfg::Gravity * dt;

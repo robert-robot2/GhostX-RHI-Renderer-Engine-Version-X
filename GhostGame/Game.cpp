@@ -116,10 +116,12 @@ static void Game_FullRestart()
 {
     char p[200];
     snprintf(p, sizeof p, "Scenes/%s", kLevels[0]);
+    if (S.twoPlayer) S.character = 0;
     Carry_Save(true, 3, 0, 0);
     if (S.level <= 0 || !G->LoadScene(p))
     {
         Carry_Clear();
+        S.lives = 3; S.score = 0; S.deaths = 0;
         if (S.twoPlayer) S.character = 0;
         S.lives = 3; S.score = 0; S.deaths = 0;
         S.mode = MODE_PLAY;
@@ -195,6 +197,8 @@ void Game_Restart(bool died)
     if (S.deathActor) { G->Destroy(S.deathActor); S.deathActor = 0; }
 
     if (died) { S.deaths++; if (--S.lives <= 0) { S.lives = 0; Sfx("game_over"); S.mode = MODE_OVER; return; } }
+    if (died && S.twoPlayer) S.character ^= 1;     // Mario <-> Luigi on death
+
     S.coins = 0; S.enemiesDown = 0;
     S.big = false; S.fire = false; S.starTime = 0.0f; S.attackCool = 0.0f; S.heldShell = 0; S.shellSliding = false;
     S.advance = 0.0f; S.invuln = 0.0f; S.hurt = 0.0f; S.complete = false;
@@ -383,7 +387,10 @@ GHOST_GAME_EXPORT int GhostGame_Init(const GhostGameAPI* api)
     S.tutorial = IsTutorialScene();
     S.lastLevel = !S.tutorial && (S.level < 0 || S.level >= kLevelCount - 1);   // tutorial is NOT the last level: it leads to 1-1
     if (S.tutorial) S.timeLeft = 0.0f;                                          // no timer, so no time bonus either
-    if (S.twoPlayer) S.character = S.level < 0 ? 0 : (S.level & 1);   // Mario on even levels, Luigi on odd
+    //Should this be deleted with new system?
+  //  if (S.twoPlayer) S.character = S.level < 0 ? 0 : (S.level & 1);   // Mario on even levels, Luigi on odd
+
+
     g_ui = G->UILoad("Content/UI/HUD.ghostui");
     g_menuUi = G->UILoad("Content/UI/MainMenu.ghostui");
     g_overUi = G->UILoad("Content/UI/GameOver.ghostui");
@@ -579,9 +586,15 @@ GHOST_GAME_EXPORT void GhostGame_Update(float dt)
         {
             char p[200];
             snprintf(p, sizeof p, "Scenes/%s", kLevels[S.level + 1]);
-            G->LoadScene(p);                                              // tutorial: S.level is -1, so this is kLevels[0] = World 1-1
-            if (S.tutorial) Carry_Save(true, 3, 0, 0);                    // fresh start after the tutorial
-            else            Carry_Save(true, S.lives, S.score, S.coins);
+            G->LoadScene(p);
+            if (S.tutorial) Carry_Save(true, 3, 0, 0);
+            else
+            {
+                const int keep = S.character;
+                if (S.twoPlayer) S.character ^= 1;                 // next level: the other brother
+                Carry_Save(true, S.lives, S.score, S.coins);
+                S.character = keep;                                // so the HUD doesn't flip during the 2.5 s wait
+            }
             S.advance = -1000.0f;
         }
     }

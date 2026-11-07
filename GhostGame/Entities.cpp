@@ -44,21 +44,27 @@ static std::vector<ShellState> g_shells;
 
 static const float kShellSpeed = 10.0f;
 
-// replace the old g_shellSwapped / kEnemyAnimDefault declarations
-struct Swapped { int id; char shell[128]; };
+
+struct Swapped { int id; char shell[128]; int flying; };
 static std::vector<Swapped> g_shellSwapped;
 
 static const char* kEnemyAnimDefault = "Content/Animations/Turtle.ghostanim";
+static const char* kDuckWalkAnim = "Content/Animations/FlyingTurtleDuck.ghostanim";   // your real file name
 static const struct { const char* shell; const char* walk; } kWalkAnim[] =
 {
-    { "Content/Animations/Shell.ghostanim",         "Content/Animations/Turtle.ghostanim" },
-    { "Content/Animations/BlackOliveShell.ghostanim","Content/Animations/BlackOlive.ghostanim" },  // use your real file names
+    { "Content/Animations/Shell.ghostanim",          "Content/Animations/Turtle.ghostanim" },
+    { "Content/Animations/BlackOliveShell.ghostanim", "Content/Animations/BlackOlive.ghostanim" },
 };
-static const char* WalkAnimFor(const char* shell)
+static const char* WalkAnimFor(const char* shell, int flying)
 {
+    if (flying == 2) return kDuckWalkAnim;               // winged enemies: the duck art, whatever shell they use
     for (const auto& k : kWalkAnim) if (_stricmp(k.shell, shell) == 0) return k.walk;
     return kEnemyAnimDefault;
 }
+
+
+
+
 
 struct CastleFlag { int id; float y0; bool shown; };
 static std::vector<CastleFlag> g_castleFlags;
@@ -230,7 +236,7 @@ void Level_Reset()
     g_shells.clear();
     for (const Swapped& sw : g_shellSwapped)
     {
-        G->SpriteSetAnim(sw.id, WalkAnimFor(sw.shell));
+        G->SpriteSetAnim(sw.id, WalkAnimFor(sw.shell, sw.flying));
         G->SpriteSetFlip(sw.id, 0);
     }
     g_shellSwapped.clear();
@@ -308,7 +314,6 @@ void Enemy_Kill(int id, bool stomp)
                 pos[1] += 0.1f; G->SetPosition(id, pos);
 
                 G->SpriteSetClip(id, "");                  // clear the walk/die clip
-                if (dpr.link[0] != '\0') G->SpriteSetAnim(id, dpr.link);
                 const char* shellAnim = dpr.link[0] ? dpr.link : "Content/Animations/Shell.ghostanim";
                 G->SpriteSetAnim(id, shellAnim);
 
@@ -318,6 +323,7 @@ void Enemy_Kill(int id, bool stomp)
                 {
                     Swapped sw = {}; sw.id = id;
                     strncpy_s(sw.shell, shellAnim, _TRUNCATE);
+                    sw.flying = dpr.flying;                                  // new
                     g_shellSwapped.push_back(sw);
                 }
 

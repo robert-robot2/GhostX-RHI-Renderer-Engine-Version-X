@@ -51,6 +51,7 @@ namespace Cfg
     constexpr float TransformTime = 0.9f;    // seconds the game freezes while the Transform animation plays
     constexpr float ShellKickSafe = 0.3f;    // a freshly kicked or thrown shell can't hurt Mario for this long
     constexpr float HurryTime = 100.0f;      // the hurry-up jingle plays when the timer drops to this
+    constexpr float RunJump = 20.0f;   // jump speed while sprinting (Jump = 15 otherwise)
 }
 
 enum { MODE_MENU = 0, MODE_PLAY, MODE_OVER, MODE_SELECT, MODE_OPTIONS };
