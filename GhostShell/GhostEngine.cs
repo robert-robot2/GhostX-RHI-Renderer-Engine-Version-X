@@ -13,7 +13,6 @@ namespace GhostShell
         public float sx, sy, sz;
         public float r, g, b;
     }
-
     [StructLayout(LayoutKind.Sequential)]
     internal struct GhostLightInfo
     {
@@ -24,7 +23,6 @@ namespace GhostShell
         public float intensity, range;
         public float width, height;
     }
-
     [StructLayout(LayoutKind.Sequential)]
     internal struct GhostEntityInfo { public int id, kind, subtype; }
     [StructLayout(LayoutKind.Sequential)]
@@ -37,7 +35,6 @@ namespace GhostShell
         public float metallic, roughness, specular;
         public float emR, emG, emB, emissiveStrength;
     }
-
     [StructLayout(LayoutKind.Sequential)]
     internal struct GhostCameraInfo
     {
@@ -52,7 +49,6 @@ namespace GhostShell
         public float minPitchDeg, maxPitchDeg, smoothing;
         public float moveSpeed;
     }
-
     [StructLayout(LayoutKind.Sequential)]
     internal struct GhostGameplayInfo
     {
@@ -69,7 +65,6 @@ namespace GhostShell
         public float crx, cry, crz;
         public float timeOffset;     // NEW: last
     }
-
     [StructLayout(LayoutKind.Sequential)]
     internal struct GhostModParamInfo
     {
@@ -81,7 +76,6 @@ namespace GhostShell
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = 32)] public byte[] category;
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = 192)] public byte[] enums;
     }
-
     [StructLayout(LayoutKind.Sequential)]
     internal struct GhostSpriteInfo
     {
@@ -101,7 +95,6 @@ namespace GhostShell
         public float importScale, importFit;
         public int importUp, importFlags;
     }
-
     [StructLayout(LayoutKind.Sequential)]
     internal struct GhostViewSettings
     {
@@ -112,20 +105,26 @@ namespace GhostShell
         public int gridExtent;
         public int tool, space, unit, decimals;
     }
-
     [StructLayout(LayoutKind.Sequential)]
     internal struct GhostGizmoSettings
     {
         public int snap;
         public float moveStep, rotStep, scaleStep;
     }
-
     [StructLayout(LayoutKind.Sequential)]
     internal struct GhostPadInfo
     {
         public int connected, slot, buttons;
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = 6)] public float[] axes;
         public int raw;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GhostVideoSettings
+    {
+        public int resW, resH;        // 0, 0 = Match Window
+        public int displayMode;       // 0 windowed, 1 borderless window, 2 fullscreen
+        public int scaleFilter;       // 0 linear, 1 point
+        public int fit;               // 0 letterbox, 1 integer, 2 stretch
     }
 
     internal static class GhostEngine
@@ -444,12 +443,23 @@ namespace GhostShell
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern float GhostEngine_GetBusVolume(int bus);
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern void GhostEngine_SetBusMute(int bus, int mute);
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern int GhostEngine_GetBusMute(int bus);
+
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern int GhostEngine_PreviewFile([MarshalAs(UnmanagedType.LPUTF8Str)] string path);
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern int GhostEngine_GetSceneAudio(int which, [Out] byte[] buf, int bufSize);
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern void GhostEngine_SetSceneAudio(int which, [MarshalAs(UnmanagedType.LPUTF8Str)] string name);
+
+        // ---- Video ----
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_GetVideoSettings(out GhostVideoSettings s);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetVideoSettings(ref GhostVideoSettings s);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_GetResolution(out int w, out int h);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetResolutionList([Out] int[] outWH, int maxPairs);
 
     }
 }

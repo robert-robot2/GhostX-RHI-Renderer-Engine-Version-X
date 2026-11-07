@@ -11,6 +11,7 @@ namespace GhostShell
 {
     internal static class GhostPlay
     {
+
         public static int State => GhostEngine.GhostEngine_GetPlayState();     // 0 editing, 1 playing, 2 paused
 
         public static bool HasModule { get; set; }
@@ -87,8 +88,14 @@ namespace GhostShell
                 var psi = new ProcessStartInfo(exe) { UseShellExecute = false };
                 psi.ArgumentList.Add("--play");
                 psi.ArgumentList.Add(GhostProject.ManifestPath!);
+
                 psi.ArgumentList.Add("--scene");
                 psi.ArgumentList.Add(rel);
+
+                GhostEngine.GhostEngine_GetVideoSettings(out GhostVideoSettings vs);
+                psi.ArgumentList.Add("--video");
+                psi.ArgumentList.Add(GhostVideo.Format(vs));
+
                 Process.Start(psi);
             }
             catch (Exception ex)
@@ -103,22 +110,26 @@ namespace GhostShell
     {
         public static bool IsPlayer { get; private set; }
         public static string? ProjectPath { get; private set; }
-
         public static string? SceneOverride { get; private set; }
+        public static string? VideoOverride { get; private set; }          // --video "w,h,mode,filter,fit" from the editor
+        public static bool SaveVideo => VideoOverride == null;
 
         public static void ParseArgs(string[] args)
         {
-            for (int i = 0; i + 1 < args.Length; i++)
+            for (int i = 0; i < args.Length; i++)
             {
-                if (args[i].Equals("--play", StringComparison.OrdinalIgnoreCase))
+                string a = args[i];
+                bool hasValue = i + 1 < args.Length && !args[i + 1].StartsWith("--");
+
+                if (a.Equals("--play", StringComparison.OrdinalIgnoreCase) && hasValue)
                 {
                     IsPlayer = true;
-                    ProjectPath = Path.GetFullPath(args[i + 1]);
+                    ProjectPath = Path.GetFullPath(args[++i]);
                 }
-                else if (args[i].Equals("--scene", StringComparison.OrdinalIgnoreCase))
-                {
-                    SceneOverride = args[i + 1];
-                }
+                else if (a.Equals("--scene", StringComparison.OrdinalIgnoreCase) && hasValue)
+                    SceneOverride = args[++i];
+                else if (a.Equals("--video", StringComparison.OrdinalIgnoreCase) && hasValue)
+                    VideoOverride = args[++i];
             }
 
             if (IsPlayer) return;

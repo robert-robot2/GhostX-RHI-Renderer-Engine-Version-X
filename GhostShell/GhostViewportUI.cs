@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Globalization;
 using System.Windows.Forms;
+using System.Text.RegularExpressions;
 
 namespace GhostShell
 {
@@ -68,6 +69,45 @@ namespace GhostShell
             host.Resize += (s, e) => Place();
             Place();
             Sync();
+        }
+
+        private delegate void ChangeV(ref GhostVideoSettings v);
+        private readonly List<(ToolStripMenuItem item, Func<GhostVideoSettings, bool> on)> _marksV = new();
+        private ToolStripMenuItem _customRes = null!;
+
+        private ToolStripMenuItem AddV(ToolStripItemCollection into, string text, Func<GhostVideoSettings, bool> on, ChangeV apply)
+        {
+            var it = new ToolStripMenuItem(text);
+            it.Click += (s, e) => EditV(apply);
+            into.Add(it);
+            _marksV.Add((it, on));
+            return it;
+        }
+
+        // The engine stores it; the form's video timer applies the window part and saves it
+        private static void EditV(ChangeV c)
+        {
+            GhostEngine.GhostEngine_GetVideoSettings(out GhostVideoSettings v);
+            c(ref v);
+            GhostEngine.GhostEngine_SetVideoSettings(ref v);
+        }
+
+        private void PromptCustomResolution()
+        {
+            GhostEngine.GhostEngine_GetVideoSettings(out GhostVideoSettings cur);
+            string def = cur.resW > 0 ? $"{cur.resW} x {cur.resH}" : "1600 x 900";
+            string? text = GhostPrompt.Ask(_host.FindForm()!, "Custom Resolution", "Width x Height (16 - 4096):", def);
+            if (string.IsNullOrWhiteSpace(text)) return;
+
+            Match m = Regex.Match(text, @"^\s*(\d+)\s*[xX\u00D7*,]\s*(\d+)\s*$");
+            if (!m.Success || !int.TryParse(m.Groups[1].Value, out int w) || !int.TryParse(m.Groups[2].Value, out int h) ||
+                w < 16 || h < 16 || w > 4096 || h > 4096)
+            {
+                MessageBox.Show("Enter it like 1600 x 900 (each side 16 - 4096).", "Custom Resolution",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            EditV((ref GhostVideoSettings v) => { v.resW = w; v.resH = h; });
         }
 
         private void Place()
@@ -267,6 +307,36 @@ namespace GhostShell
             AddJit(jit.DropDownItems, "Normal (1x)  default", 1.0f);
             AddJit(jit.DropDownItems, "Fast (2x)", 2.0f);
             AddJit(jit.DropDownItems, "Very fast (3x)", 3.0f);
+
+            it.Add(new ToolStripSeparator());
+
+            ToolStripMenuItem resMenu = Sub(it, "Resolution (main view)");
+            for (int i = 0; i < ResolutionConverter.Sizes.Length; i++)
+            {
+                var (rw, rh) = ResolutionConverter.Sizes[i];
+                AddV(resMenu.DropDownItems, ResolutionConverter.Names[i],
+                    v => v.resW == rw && v.resH == rh,
+                    (ref GhostVideoSettings v) => { v.resW = rw; v.resH = rh; });
+            }
+            resMenu.DropDownItems.Add(new ToolStripSeparator());
+            _customRes = new ToolStripMenuItem("Custom...");
+            _customRes.Click += (s, e) => PromptCustomResolution();
+            resMenu.DropDownItems.Add(_customRes);
+
+            ToolStripMenuItem fitMenu = Sub(it, "Resolution fit");
+            AddV(fitMenu.DropDownItems, "Letterbox (keep aspect)", v => v.fit == 0, (ref GhostVideoSettings v) => v.fit = 0);
+            AddV(fitMenu.DropDownItems, "Integer scale (pixel perfect)", v => v.fit == 1, (ref GhostVideoSettings v) => v.fit = 1);
+            AddV(fitMenu.DropDownItems, "Stretch to window", v => v.fit == 2, (ref GhostVideoSettings v) => v.fit = 2);
+
+            ToolStripMenuItem fltMenu = Sub(it, "Scaling filter");
+            AddV(fltMenu.DropDownItems, "Linear (smooth)", v => v.scaleFilter == 0, (ref GhostVideoSettings v) => v.scaleFilter = 0);
+            AddV(fltMenu.DropDownItems, "Point (sharp pixels)", v => v.scaleFilter == 1, (ref GhostVideoSettings v) => v.scaleFilter = 1);
+
+            ToolStripMenuItem winMenu = Sub(it, "Window mode  (F11 toggles)");
+            AddV(winMenu.DropDownItems, "Windowed", v => v.displayMode == 0, (ref GhostVideoSettings v) => v.displayMode = 0);
+            AddV(winMenu.DropDownItems, "Borderless window", v => v.displayMode == 1, (ref GhostVideoSettings v) => v.displayMode = 1);
+            AddV(winMenu.DropDownItems, "Fullscreen", v => v.displayMode == 2, (ref GhostVideoSettings v) => v.displayMode = 2);
+
             var reset = new ToolStripMenuItem("Reset view settings");
             reset.Click += (s, e) =>
             {
@@ -316,6 +386,10 @@ namespace GhostShell
             _taaItem.Checked = taaNow;
             float js = GhostEngine.GhostEngine_GetTAAJitterSpeed();
             foreach (var (item, v) in _marksJit) item.Checked = Math.Abs(v - js) < 1e-3f;
+            GhostEngine.GhostEngine_GetVideoSettings(out GhostVideoSettings vs);
+            foreach (var (item, on) in _marksV) item.Checked = on(vs);
+            bool isPreset = vs.resW == 0 || Array.Exists(ResolutionConverter.Sizes, z => z.w == vs.resW && z.h == vs.resH);
+            _customRes.Checked = !isPreset;
         }
 
         private void Sync()

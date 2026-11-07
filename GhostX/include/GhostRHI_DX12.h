@@ -37,7 +37,7 @@ public:
     int          GetCurrentSurface() override { return m_cur; }
     unsigned int GetSurfaceWidth() override { return m_width; }
     unsigned int GetSurfaceHeight() override { return m_height; }
-
+    int GetDisplayModes(unsigned int* outWH, int maxPairs) override;
 
 
 private:

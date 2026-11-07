@@ -195,6 +195,14 @@ extern "C" {
 // Returns 0 = no collider, 1 = axis-aligned, 2 = rotated. axes9 = the box's three world axes (x, y, z), 3 floats each.
         int   (*GetCollider)(int id, float* outCenter3, float* outHalf3, float* outAxes9);
 
+        // ---- video (render size of the main view, window mode) ----
+        int   (*SetResolution)(int width, int height);          // 0, 0 = match the window. 1 = applied, 0 = rejected (16..4096)
+        void  (*GetResolution)(int* outWH2);                    // render size in use right now
+        int   (*GetResolutionList)(int* outWH, int maxPairs);   // presets + monitor modes, ascending. Returns the pair count
+        void  (*SetFullscreen)(int mode);                       // 0 windowed, 1 borderless window, 2 fullscreen
+        int   (*GetFullscreen)(void);
+        void  (*SetScaleFilter)(int filter);                    // 0 linear, 1 point
+
     } GhostGameAPI;
 
     // A game module must export:

@@ -58,3 +58,10 @@ void GhostTAA_Begin(IGhostRHI* rhi, GhostPipeline* p, GhostTAA& t, int id,
     const GhostColor* clear, unsigned int w, unsigned int h);
 void GhostTAA_End(IGhostRHI* rhi, GhostPipeline* p, GhostTAA& t, int id,
     D3D12_CPU_DESCRIPTOR_HANDLE dest, bool destIsOffscreen, const GhostTAAFrame& f);
+// Drop this viewport's history (call when the render resolution changes)
+inline void GhostTAA_ResetHistory(GhostTAA& t, int id)
+{
+    if (id < 0 || id >= GHOST_MAX_SURFACES) return;
+    t.reset[id] = true;
+    t.havePrev[id] = false;
+}

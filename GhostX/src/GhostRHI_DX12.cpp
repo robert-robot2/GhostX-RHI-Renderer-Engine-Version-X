@@ -8,6 +8,9 @@
 #include <dxgi1_6.h>
 #include <Windows.h>
 #include <utility>
+#include <vector> 
+#include <algorithm>
+
 // ============================================================
 //  Factory
 // ============================================================
@@ -292,6 +295,41 @@ GhostResult GhostRHI_DX12::ExecuteOneShot(
     m_cmdQueue->ExecuteCommandLists(1, lists);
     FlushGPU();
     return GHOST_OK;
+}
+
+int GhostRHI_DX12::GetDisplayModes(unsigned int* outWH, int maxPairs)
+{
+    if (!outWH || maxPairs <= 0) return 0;
+
+    ComPtr<IDXGIOutput> output;
+    if (!m_swapChain || FAILED(m_swapChain->GetContainingOutput(&output)))
+    {
+        ComPtr<IDXGIFactory4> f;
+        ComPtr<IDXGIAdapter1> a;
+        if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&f))) ||
+            FAILED(f->EnumAdapters1(0, &a)) ||
+            FAILED(a->EnumOutputs(0, &output))) return 0;
+    }
+
+    UINT n = 0;
+    if (FAILED(output->GetDisplayModeList(DXGI_FORMAT_R8G8B8A8_UNORM, 0, &n, nullptr)) || n == 0) return 0;
+    std::vector<DXGI_MODE_DESC> modes(n);
+    if (FAILED(output->GetDisplayModeList(DXGI_FORMAT_R8G8B8A8_UNORM, 0, &n, modes.data()))) return 0;
+
+    std::vector<std::pair<unsigned int, unsigned int>> sizes;     // the list repeats each size once per refresh rate
+    for (UINT i = 0; i < n; i++) sizes.push_back({ modes[i].Width, modes[i].Height });
+    std::sort(sizes.begin(), sizes.end());
+    sizes.erase(std::unique(sizes.begin(), sizes.end()), sizes.end());
+
+    int count = 0;
+    for (const auto& s : sizes)
+    {
+        if (count >= maxPairs) break;
+        outWH[count * 2] = s.first;
+        outWH[count * 2 + 1] = s.second;
+        count++;
+    }
+    return count;
 }
 // ============================================================
 //  Private helpers

@@ -26,6 +26,11 @@ namespace GhostShell
         private bool _engineReady;
         private GhostViewportBar? _viewBar;
 
+        private int _displayMode;                          // what the window is currently doing
+        private Rectangle _savedBounds;
+        private FormWindowState _savedState = FormWindowState.Normal;
+        private GhostVideoSettings _lastVideo;              // all zeros = what a fresh window is
+
         public GhostForm()
         {
             InitializeForm();
@@ -51,7 +56,72 @@ namespace GhostShell
             uint dark = 1;
             Win32.DwmSetWindowAttribute(Handle, 20, ref dark, sizeof(uint));
         }
+        // Applies windowed / borderless / fullscreen to this window. Changing the border can recreate the window handle;
+        // the existing _renderPanel.HandleCreated hook gives the swap chain the new one.
+        private void ApplyDisplayMode(int mode)
+        {
+            if (mode == _displayMode) return;
+            if (_displayMode == 0)
+            {
+                _savedState = WindowState == FormWindowState.Minimized ? FormWindowState.Normal : WindowState;
+                _savedBounds = WindowState == FormWindowState.Normal ? Bounds : RestoreBounds;
+            }
 
+            SuspendLayout();
+            Screen scr = Screen.FromControl(this);
+            if (mode == 0)
+            {
+                TopMost = false;
+                FormBorderStyle = FormBorderStyle.Sizable;
+                WindowState = FormWindowState.Normal;
+                Bounds = _savedBounds;
+                if (_savedState == FormWindowState.Maximized) WindowState = FormWindowState.Maximized;
+                ApplyDarkMode();                                  // a recreated handle loses the dark title bar
+            }
+            else
+            {
+                WindowState = FormWindowState.Normal;             // Bounds is ignored while maximized
+                FormBorderStyle = FormBorderStyle.None;
+                Bounds = mode == 1 ? scr.WorkingArea : scr.Bounds;
+                TopMost = (mode == 2);                            // covers the taskbar
+            }
+            ResumeLayout(true);
+            _displayMode = mode;
+            _renderPanel.Select();
+        }
+
+        // Standalone, windowed, fixed resolution: make the client area match the render size (shrunk to fit the screen)
+        private void FitWindowToResolution(int w, int h)
+        {
+            if (w <= 0 || h <= 0 || WindowState != FormWindowState.Normal) return;
+            Rectangle area = Screen.FromControl(this).WorkingArea;
+            Size frame = Size - ClientSize;
+            double s = Math.Min(1.0, Math.Min((double)(area.Width - frame.Width) / w, (double)(area.Height - frame.Height) / h));
+            ClientSize = new Size(Math.Max((int)(w * s), 320), Math.Max((int)(h * s), 200));
+            Location = new Point(area.Left + (area.Width - Width) / 2, area.Top + (area.Height - Height) / 2);
+        }
+
+        // The engine owns the settings (editor menu, or the game through the API). This follows them.
+        private void StartVideoSync()
+        {
+            var t = new System.Windows.Forms.Timer { Interval = 50 };
+            t.Tick += (s, e) =>
+            {
+                if (!_engineReady) return;
+                GhostEngine.GhostEngine_GetVideoSettings(out GhostVideoSettings cur);
+                if (GhostVideo.Same(cur, _lastVideo)) return;
+
+                bool resChanged = cur.resW != _lastVideo.resW || cur.resH != _lastVideo.resH;
+                _lastVideo = cur;
+
+                ApplyDisplayMode(cur.displayMode);
+                if (GhostPlayer.IsPlayer && cur.displayMode == 0 && resChanged) FitWindowToResolution(cur.resW, cur.resH);
+                GhostVideo.Save(cur);
+            };
+            t.Start();
+            Deactivate += (s, e) => { if (_displayMode == 2) TopMost = false; };    // don't sit on top of other apps after alt-tab
+            Activated += (s, e) => { if (_displayMode == 2) TopMost = true; };
+        }
         // -------------------------------------------------------
         // UI construction
         // -------------------------------------------------------
@@ -91,6 +161,7 @@ namespace GhostShell
             };
             _renderPanel.Controls.Add(_ghostUI);
             _ghostUI.BringToFront();
+            StartVideoSync();
             // Player mode: no menu, no panels. The render panel fills the window.
             if (GhostPlayer.IsPlayer)
             {
@@ -118,6 +189,7 @@ namespace GhostShell
                 hudTimer.Start();
                 return;
             }
+
             // Wire menu callbacks
             _menuBuilder.OnExit += (s, e) => Close();
             _menuBuilder.OnBackgroundColor += OnPickBackgroundColor;
@@ -277,6 +349,7 @@ namespace GhostShell
                 GhostFontAtlas.BakeDefault();     // the on-screen text font (the player needs it too)
                 GhostPadDialog.ApplySaved();      // saved deadzone / rumble / pad slot (the standalone player runs this too)
                 GhostAudioMixer.ApplySaved();     // saved bus volumes and mutes (the standalone player needs them too)
+                GhostVideo.ApplyStartup();        // saved resolution / window mode (editor: per user, player: video.cfg next to the exe)
                 _viewBar?.ApplyStartup();                        // the overlay text needs the font, and the settings need the engine
                 GhostSceneFile.MarkClean();       // the starting scene counts as saved
                 if (GhostPlayer.IsPlayer && !GhostPlayer.Launch(this)) return;
@@ -341,6 +414,13 @@ namespace GhostShell
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
         {
             if (GhostPlayer.IsPlayer && keyData == Keys.Escape) { Close(); return true; }
+            if (_engineReady && (keyData == Keys.F11 || keyData == (Keys.Alt | Keys.Enter)))
+            {
+                GhostEngine.GhostEngine_GetVideoSettings(out GhostVideoSettings v);
+                v.displayMode = v.displayMode == 0 ? 2 : 0;
+                GhostEngine.GhostEngine_SetVideoSettings(ref v);
+                return true;
+            }
             return base.ProcessCmdKey(ref msg, keyData);
         }
 

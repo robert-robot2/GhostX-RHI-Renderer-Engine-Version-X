@@ -19,12 +19,15 @@
 #include "../include/GhostPad.h"
 #include "../include/GhostAudio.h"
 #include "../include/GhostAudioBank.h"
+#include "../include/GhostVideoSettings.h"
 #include <string.h>
 #include <filesystem>
 #include <map>
 #include <set> 
 #include <fstream>
 #include <algorithm>
+#include <vector>
+#include <utility>
 
 // ---- Engine state ----
 static IGhostRHI* g_rhi = nullptr;
@@ -105,7 +108,8 @@ static bool        g_quitRequested = false;
 // Main view render size and where it sits inside the window (for mapping the mouse)
 static int   g_mainRW = 1280, g_mainRH = 720;
 static float g_fitX = 0.0f, g_fitY = 0.0f, g_fitW = 1280.0f, g_fitH = 720.0f;
-
+static GhostVideoSettings g_video = { 0, 0, GHOST_DISPLAY_WINDOWED, GHOST_FILTER_LINEAR, GHOST_FIT_LETTERBOX };
+static unsigned int g_lastRW[GHOST_MAX_SURFACES] = {}, g_lastRH[GHOST_MAX_SURFACES] = {};   // for TAA resets
 
 // Forward Declarations? are interaction state
 static int LoadModelFile(const std::string& absFile, std::string& err);
@@ -1986,16 +1990,19 @@ static void RenderViewport(int vp)
     const bool  mainView = (vp == 0);
     const bool overlays = mainView && g_playState == GhostPlayState::Editing;   // no icons or selection while playing
     const float d2r = GHOST_PI / 180.0f;
-    // ---- Render resolution: the camera's setting, or the window size ("Match Window") ----
-    const bool         custom = (cam->resW > 0 && cam->resH > 0);
-    const unsigned int rw = custom ? (unsigned int)cam->resW : w;
-    const unsigned int rh = custom ? (unsigned int)cam->resH : h;
+    // ---- Render resolution: the global main-view setting wins on viewport 0, otherwise the camera's own ----
+    int wantW = cam->resW, wantH = cam->resH;
+    if (mainView && g_video.resW > 0 && g_video.resH > 0) { wantW = g_video.resW; wantH = g_video.resH; }
+    const bool         custom = (wantW > 0 && wantH > 0);
+    const unsigned int rw = custom ? (unsigned int)wantW : w;
+    const unsigned int rh = custom ? (unsigned int)wantH : h;
 
-    // Where the image sits in the window: aspect kept, centered
+    // Where the image sits in the window
     float fx = 0.0f, fy = 0.0f, fw = (float)w, fh = (float)h;
-    if (custom)
+    if (custom && g_video.fit != GHOST_FIT_STRETCH)
     {
         float s = fminf((float)w / (float)rw, (float)h / (float)rh);
+        if (g_video.fit == GHOST_FIT_INTEGER && s >= 1.0f) s = floorf(s);
         fw = fmaxf(floorf((float)rw * s), 1.0f);
         fh = fmaxf(floorf((float)rh * s), 1.0f);
         fx = floorf(((float)w - fw) * 0.5f);
@@ -2013,6 +2020,11 @@ static void RenderViewport(int vp)
     // TAA targets follow the render size (freed again when TAA is off)
     bool taa = g_taaOn && !msaa && g_taa.ready;
     if (taa && GhostTAA_Ensure(g_rhi, g_taa, vp, rw, rh) != GHOST_OK) taa = false;
+    if (g_lastRW[vp] != rw || g_lastRH[vp] != rh)      // resolution changed: the old TAA history is the wrong size/content
+    {
+        if (taa) GhostTAA_ResetHistory(g_taa, vp);
+        g_lastRW[vp] = rw; g_lastRH[vp] = rh;
+    }
     if (!taa) GhostTAA_Release(g_taa, vp);
     float jx = 0.0f, jy = 0.0f;
     // ---- Matrices ----
@@ -2226,7 +2238,7 @@ static void RenderViewport(int vp)
     if (custom)
     {
         GhostEndOffscreen(g_rhi, g_pipeline, vp);
-        GhostDrawBlit(g_rhi, g_pipeline, vp, fx, fy, fw, fh);
+        GhostDrawBlit(g_rhi, g_pipeline, vp, fx, fy, fw, fh, g_video.scaleFilter == GHOST_FILTER_POINT ? 1 : 0);
     }
     g_rhi->EndFrame();
 }
@@ -2569,7 +2581,8 @@ void GhostEngine_Resize(unsigned int width, unsigned int height)
     g_height = height;
     g_rhi->SetCurrentSurface(0);
     g_rhi->Resize(width, height);
-    GhostResizeDepthBuffer(g_rhi, g_pipeline, 0, width, height);
+    // GhostEnsureDepth creates depth buffer
+  //  GhostResizeDepthBuffer(g_rhi, g_pipeline, 0, width, height);
 }
 
 void GhostEngine_Shutdown()
@@ -2804,6 +2817,49 @@ int GhostEngine_GetActiveCamera() { return g_scene.activeCameraId; }
 
 
 // ============================================================
+//  Exported: video
+// ============================================================
+static int BuildResolutionList(int* out, int maxPairs)
+{
+    std::vector<std::pair<int, int>> v;
+    for (int i = 0; i < GHOST_RES_PRESET_COUNT; i++) v.push_back({ kGhostResPresets[i][0], kGhostResPresets[i][1] });
+
+    unsigned int modes[256 * 2];
+    const int n = g_rhi ? g_rhi->GetDisplayModes(modes, 256) : 0;
+    for (int i = 0; i < n; i++) v.push_back({ (int)modes[i * 2], (int)modes[i * 2 + 1] });
+
+    v.erase(std::remove_if(v.begin(), v.end(), [](const std::pair<int, int>& s)
+        { return s.first < GHOST_VIDEO_MIN_DIM || s.second < GHOST_VIDEO_MIN_DIM ||
+        s.first > GHOST_VIDEO_MAX_DIM || s.second > GHOST_VIDEO_MAX_DIM; }), v.end());
+    std::sort(v.begin(), v.end(), [](const std::pair<int, int>& a, const std::pair<int, int>& b)
+        { const long long pa = (long long)a.first * a.second, pb = (long long)b.first * b.second;
+    return pa != pb ? pa < pb : a.first < b.first; });
+    v.erase(std::unique(v.begin(), v.end()), v.end());
+
+    int count = 0;
+    if (out) for (const auto& s : v) { if (count >= maxPairs) break; out[count * 2] = s.first; out[count * 2 + 1] = s.second; count++; }
+    return count;
+}
+
+void GhostEngine_GetVideoSettings(GhostVideoSettings* out) { if (out) *out = g_video; }
+
+void GhostEngine_SetVideoSettings(const GhostVideoSettings* in)
+{
+    if (!in) return;
+    GhostVideoSettings s = *in;
+    GhostVideo_Sanitize(&s);
+    g_video = s;                     // the form's video timer sees the change and applies the window part
+}
+
+void GhostEngine_GetResolution(int* w, int* h) { if (w) *w = g_mainRW; if (h) *h = g_mainRH; }
+
+int GhostEngine_GetResolutionList(int* outWH, int maxPairs)
+{
+    if (!outWH || maxPairs <= 0) return 0;
+    return BuildResolutionList(outWH, maxPairs);
+}
+
+// ============================================================
 //  Exported: viewports
 // ============================================================
 int GhostEngine_CreateViewport(HWND hwnd, unsigned int width, unsigned int height, int cameraId)
@@ -2853,7 +2909,8 @@ void GhostEngine_ResizeViewport(int vp, unsigned int width, unsigned int height)
     if (!g_rhi || !g_pipeline || vp < 0 || vp >= GHOST_MAX_SURFACES || !g_vp[vp].alive) return;
     if (width == 0 || height == 0) return;
     g_rhi->ResizeSurface(vp, width, height);
-    GhostResizeDepthBuffer(g_rhi, g_pipeline, vp, width, height);
+
+  //  GhostResizeDepthBuffer(g_rhi, g_pipeline, vp, width, height);
 }
 
 void GhostEngine_SetViewportVisible(int vp, int visible)
@@ -3566,6 +3623,32 @@ static int Api_GetTextureId(int id)
 }
 static int Api_SetTextureId(int id, int tex) { return GhostEngine_SetObjectTexture(id, tex); }
 
+static int Api_SetResolution(int w, int h)
+{
+    const bool valid = (w == 0 && h == 0) ||
+        (w >= GHOST_VIDEO_MIN_DIM && h >= GHOST_VIDEO_MIN_DIM && w <= GHOST_VIDEO_MAX_DIM && h <= GHOST_VIDEO_MAX_DIM);
+    if (!valid) return 0;
+    GhostVideoSettings s = g_video;
+    s.resW = w; s.resH = h;
+    GhostEngine_SetVideoSettings(&s);
+    return 1;
+}
+static void Api_GetResolution(int* wh) { if (wh) { wh[0] = g_mainRW; wh[1] = g_mainRH; } }
+static int  Api_GetResolutionList(int* out, int maxPairs) { return GhostEngine_GetResolutionList(out, maxPairs); }
+static void Api_SetFullscreen(int mode)
+{
+    GhostVideoSettings s = g_video;
+    s.displayMode = mode;
+    GhostEngine_SetVideoSettings(&s);
+}
+static int  Api_GetFullscreen() { return g_video.displayMode; }
+static void Api_SetScaleFilter(int f)
+{
+    GhostVideoSettings s = g_video;
+    s.scaleFilter = f;
+    GhostEngine_SetVideoSettings(&s);
+}
+
 static void BuildGameApi()
 {
     GhostGameAPI& a = g_gameApi;
@@ -3607,6 +3690,8 @@ static void BuildGameApi()
     a.SetSoundEnabled = Api_SetSoundEnabled;  a.GetSoundEnabled = Api_GetSoundEnabled;
     a.GetTextureId = Api_GetTextureId;  a.SetTextureId = Api_SetTextureId;
     a.GetCollider = Api_GetCollider;
+    a.SetResolution = Api_SetResolution;  a.GetResolution = Api_GetResolution;  a.GetResolutionList = Api_GetResolutionList;
+    a.SetFullscreen = Api_SetFullscreen;  a.GetFullscreen = Api_GetFullscreen;  a.SetScaleFilter = Api_SetScaleFilter;
 }
 
 // Runs between steps (never inside game code). The editor's own scene stays safe in g_playBackup.

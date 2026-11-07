@@ -73,6 +73,8 @@ public:
     virtual int          GetCurrentSurface() = 0;
     virtual unsigned int GetSurfaceWidth() = 0;
     virtual unsigned int GetSurfaceHeight() = 0;
+    // Distinct width/height pairs the monitor supports, written as w,h,w,h... Returns the pair count.
+    virtual int GetDisplayModes(unsigned int* outWH, int maxPairs) = 0;
 };
 
 // ---- Factory ----

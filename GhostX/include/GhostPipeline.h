@@ -109,7 +109,11 @@ struct GhostPipeline
     unsigned int           srvIncrement = 0;
     // Scene Buffer
     ComPtr<ID3D12Resource> sceneBuffer;
-    void* sceneMappedData = nullptr;
+        void* sceneMappedData = nullptr;
+
+    ComPtr<ID3D12Resource> blitCB;              // blit pass constants (GhostObjectCB layout)
+    void* blitCBMapped = nullptr;
+
     // ---- Depth Buffer ----
     ComPtr<ID3D12Resource>       depthBuffers[GHOST_MAX_SURFACES];
     unsigned int                 dsvIncrement = 0;
@@ -202,7 +206,7 @@ void GhostBeginOffscreen(IGhostRHI* rhi, GhostPipeline* pipeline, int surfaceId,
     const GhostColor* clear, unsigned int w, unsigned int h);
 void GhostEndOffscreen(IGhostRHI* rhi, GhostPipeline* pipeline, int surfaceId);
 void GhostDrawBlit(IGhostRHI* rhi, GhostPipeline* pipeline, int surfaceId,
-    float x, float y, float w, float h);
+    float x, float y, float w, float h, int pointFilter = 0);
 
 // Draws the quad list into the current render target. scale = reference units -> pixels.
 void GhostDrawUI(IGhostRHI* rhi, GhostPipeline* pipeline, const std::vector<GhostUIQuad>& quads,

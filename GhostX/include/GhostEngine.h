@@ -1,5 +1,6 @@
 // GhostEngine.h
 #pragma once
+#include "GhostVideoSettings.h"
 #include <Windows.h>
 
 #ifdef GHOSTENGINE_EXPORTS
@@ -336,5 +337,11 @@ extern "C"
     GHOST_API int  GhostEngine_PreviewFile(const char* utf8Path);       // editor only, streamed on the Music bus
     GHOST_API int  GhostEngine_GetSceneAudio(int which, char* buf, int bufSize);   // 0 music, 1 ambience
     GHOST_API void GhostEngine_SetSceneAudio(int which, const char* utf8Name);
+
+    // ---- Video ----
+    GHOST_API void GhostEngine_GetVideoSettings(GhostVideoSettings* out);
+    GHOST_API void GhostEngine_SetVideoSettings(const GhostVideoSettings* in);
+    GHOST_API void GhostEngine_GetResolution(int* w, int* h);               // render size of the main view right now
+    GHOST_API int  GhostEngine_GetResolutionList(int* outWH, int maxPairs); // presets + monitor modes, ascending. Returns pairs
 
 }

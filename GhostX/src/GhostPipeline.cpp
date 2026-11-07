@@ -1196,6 +1196,12 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
     p->sceneBuffer->Map(0, &rr, &p->sceneMappedData);
     memset(p->sceneMappedData, 0, (size_t)GHOST_SCENE_CB_SIZE);
 
+    if (CreateUploadBuffer(device, GHOST_OBJECT_CB_STRIDE, &p->blitCB) != GHOST_OK)
+    {
+        delete p; return GHOST_FAIL;
+    }
+    p->blitCB->Map(0, &rr, &p->blitCBMapped);
+
     // ---- CBV Heap ----
     D3D12_DESCRIPTOR_HEAP_DESC hd = {};
       hd.NumDescriptors = GHOST_MAX_TEXTURES + GHOST_MAX_SURFACES + 1;     // textures, offscreen targets, then the shadow maps
@@ -1559,6 +1565,8 @@ void GhostPipelineDestroy(GhostPipeline* pipeline)
         pipeline->shadowCB->Unmap(0, nullptr);
     if (pipeline->ovMapped)
         pipeline->ovVB->Unmap(0, nullptr);
+    if (pipeline->blitCBMapped)
+        pipeline->blitCB->Unmap(0, nullptr);
     delete pipeline;
 }
 
@@ -1674,24 +1682,37 @@ void GhostEndOffscreen(IGhostRHI* rhi, GhostPipeline* p, int id)
     p->rtvOverrideActive = false;
 }
 
-// Draws the offscreen image into the surface's back buffer, inside the rect (x, y, w, h)
-void GhostDrawBlit(IGhostRHI* rhi, GhostPipeline* p, int id, float x, float y, float w, float h)
+void GhostDrawBlit(IGhostRHI* rhi, GhostPipeline* p, int id, float x, float y, float w, float h, int pointFilter)
 {
     auto* cmd = rhi->GetCmdList();
+
+    D3D12_GPU_VIRTUAL_ADDRESS cbAddr = p->constantBuffer->GetGPUVirtualAddress();
+    if (p->blitCBMapped)
+    {
+        GhostObjectCB cb = {};
+        cb.model = GhostMat4::Identity();
+        cb.view = GhostMat4::Identity();
+        cb.proj = GhostMat4::Identity();
+        cb.color[0] = cb.color[1] = cb.color[2] = cb.color[3] = 1.0f;
+        cb.mapParams[2] = 1.0f;                         // clamp
+        cb.mapParams[3] = pointFilter ? 1.0f : 0.0f;    // 0 linear, 1 point
+        memcpy(p->blitCBMapped, &cb, sizeof cb);
+        cbAddr = p->blitCB->GetGPUVirtualAddress();
+    }
 
     ID3D12DescriptorHeap* heaps[] = { p->cbvHeap.Get() };
     cmd->SetDescriptorHeaps(1, heaps);
     cmd->SetPipelineState(p->blitPso.Get());
     cmd->SetGraphicsRootSignature(p->rootSignature.Get());
     BindShadowTable(cmd, p);
-    cmd->SetGraphicsRootConstantBufferView(0, p->constantBuffer->GetGPUVirtualAddress());
+    cmd->SetGraphicsRootConstantBufferView(0, cbAddr);
     cmd->SetGraphicsRootConstantBufferView(1, p->sceneBuffer->GetGPUVirtualAddress());
 
     D3D12_GPU_DESCRIPTOR_HANDLE srv = p->cbvHeap->GetGPUDescriptorHandleForHeapStart();
     srv.ptr += (UINT64)(GHOST_MAX_TEXTURES + id) * p->srvIncrement;
     cmd->SetGraphicsRootDescriptorTable(2, srv);
 
-    D3D12_CPU_DESCRIPTOR_HANDLE rtv = rhi->GetRTV();            // the window's back buffer
+    D3D12_CPU_DESCRIPTOR_HANDLE rtv = rhi->GetRTV();
     cmd->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
 
     D3D12_VIEWPORT vp = { x, y, w, h, 0.0f, 1.0f };

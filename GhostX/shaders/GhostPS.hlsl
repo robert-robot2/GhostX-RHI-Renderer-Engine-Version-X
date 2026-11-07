@@ -394,8 +394,12 @@ struct BlitPSInput
 
 float4 BlitPS(BlitPSInput input) : SV_TARGET
 {
-    // The offscreen image already holds gamma-encoded colors, so it is copied as is
-    return float4(gTexture.Sample(sLinClamp, input.uv).rgb, 1.0f);
+    // The offscreen image already holds gamma-encoded colors, so it is copied as is.
+    // mapParams.w comes from the blit constant buffer: 0 = linear, 1 = point (Scaling filter in the View menu).
+    // The offscreen target has a single mip, so SampleLevel(…, 0) is exact and avoids gradient warnings.
+    float3 c = (mapParams.w > 0.5f) ? gTexture.SampleLevel(sPtClamp,  input.uv, 0).rgb
+                                    : gTexture.SampleLevel(sLinClamp, input.uv, 0).rgb;
+    return float4(c, 1.0f);
 }
 
 // ---------------- 2D UI ----------------
