@@ -16,8 +16,7 @@
 ![HLSL](https://img.shields.io/badge/HLSL-5C2D91?logoColor=white)
 ![MS-DOS](https://img.shields.io/badge/Platform-MS--DOS-black)
 ![Visual Studio](https://img.shields.io/badge/IDE-Visual%20Studio-5C2D91?style=flat-square&logo=visualstudio&logoColor=white)
-![Blender](https://img.shields.io/badge/3D-Blender-F5792A?style=flat-square&logo=blender&logoColor=white)
-![GIMP](https://img.shields.io/badge/Graphics-GIMP-5C5543?style=flat-square&logo=gimp&logoColor=white)
+
 ---
 **GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (RHI-style)** with a **C# WinForms editor shell** and a Blazor WASM UIwith a Visual Studio Docking Suite Editor*.**
 ---
