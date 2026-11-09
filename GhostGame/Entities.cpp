@@ -35,6 +35,16 @@ static void Boss_Init();
 static void Boss_Reset();
 struct CoinPop { int id; float vy, y0, life; };
 static std::vector<CoinPop> g_coinPops;
+// ---- Checkpoints ----
+static std::vector<int> g_checkpoints;      // every object tagged "Checkpoint"
+static std::vector<int> g_cpActive;         // the ones Mario has touched
+static bool  g_cpSet = false;
+static float g_cpSpawn[3] = { 0, 0, 0 };    // marker centre X/Z, bottom Y
+static int   g_cpDeaths = 0;                // S.deaths at the last Level_Reset
+
+struct CpDrop { int flag; float stopY; };
+static std::vector<CpDrop> g_cpDrops;     // flags lowering or already lowered
+static std::vector<int>    g_cpFlagIds;   // every object tagged "CheckpointFlag"
 
 static float g_skyBase = 12.0f, g_skyCur = 12.0f;   // the level's own hour, and the hour we are showing
 extern float g_faceDir;
@@ -194,7 +204,7 @@ void Level_Init()
 {
     g_saved.clear(); g_coins.clear(); g_enemyIds.clear(); g_blocks.clear(); g_enemies.clear(); g_pickups.clear(); g_blockMem.clear(); g_hidden.clear();
     g_breaking.clear(); g_moverIds.clear(); g_projIds.clear(); g_movers.clear(); g_debris.clear();    g_shells.clear(); g_shellSwapped.clear(); g_castleFlags.clear();
-    g_coinPops.clear();
+    g_coinPops.clear(); g_checkpoints.clear(); g_cpActive.clear(); g_cpDrops.clear(); g_cpFlagIds.clear(); g_cpSet = false; g_cpDeaths = S.deaths;
     Snapshot("Player", nullptr);
     Snapshot("Coin", &g_coins);
     Snapshot("Enemy", &g_enemyIds);
@@ -207,6 +217,8 @@ void Level_Init()
     std::vector<int> cf;
     Snapshot("CastleFlag", &cf);
     Snapshot("Doppelganger", &g_blocks);       // restores its tag on restart, and counts its coins
+    Snapshot("Checkpoint", &g_checkpoints);
+    Snapshot("CheckpointFlag", &g_cpFlagIds);
     for (int id : cf)
     {
         float p[3]; G->GetPosition(id, p);
@@ -233,6 +245,9 @@ void Level_Init()
 
 void Level_Reset()
 {
+    const bool diedNow = S.deaths > g_cpDeaths;
+    g_cpDeaths = S.deaths;
+    if (!diedNow) { g_cpSet = false; g_cpActive.clear(); g_cpDrops.clear(); }
     g_shells.clear();
     for (const Swapped& sw : g_shellSwapped)
     {
@@ -268,6 +283,23 @@ void Level_Reset()
     g_skyCur = g_skyBase;                           // respawn: back to the level's own sky
     G->SkySetTime(g_skyBase);
     Boss_Reset();
+    if (g_cpSet)
+    {
+        for (int id : g_cpActive) Sprite_Play(id, "Active", nullptr);
+        for (const CpDrop& d : g_cpDrops)                       // snapshot restore raised them: put them back down
+        {
+            float p[3];
+            if (G->GetPosition(d.flag, p)) { p[1] = d.stopY; G->SetPosition(d.flag, p); }
+        }
+        Body pb;
+        if (LoadBody(S.player, pb))
+        {
+            pb.pos[0] = g_cpSpawn[0];
+            pb.pos[1] = g_cpSpawn[1] + pb.half[1] + 0.02f;
+            pb.pos[2] = g_cpSpawn[2];
+            StoreBody(pb);
+        }
+    }
 }
 
 void Coin_Collect(int id)
@@ -950,9 +982,73 @@ static void Boss_Update(float dt)
     }
 }
 
+static bool MarkerBox(int id, float* mn, float* mx)
+{
+    if (G->GetBounds(id, mn, mx)) return true;          // has a collider
+    float p[3], s[3];                                    // no collider: position +/- half scale
+    if (!G->GetPosition(id, p) || !G->GetScale(id, s)) return false;
+    for (int i = 0; i < 3; i++) { mn[i] = p[i] - s[i] * 0.5f; mx[i] = p[i] + s[i] * 0.5f; }
+    return true;
+}
+
+static void Checkpoint_Update(float dt)
+{
+    // Lower flags first, so they keep sliding even if Mario has moved on
+    for (CpDrop& d : g_cpDrops)
+    {
+        float p[3];
+        if (!G->GetPosition(d.flag, p) || p[1] <= d.stopY) continue;
+        p[1] -= Cfg::PoleSlide * 1.5f * dt;                 // same speed as the Goal flag
+        if (p[1] < d.stopY) p[1] = d.stopY;
+        G->SetPosition(d.flag, p);
+    }
+
+    if (g_checkpoints.empty() || !S.player) return;
+    if (S.deathTimer > 0.0f || S.complete || S.onPole || S.bossCut) return;
+    Body pb;
+    if (!LoadBody(S.player, pb)) return;
+
+    for (int id : g_checkpoints)
+    {
+        if (std::find(g_cpActive.begin(), g_cpActive.end(), id) != g_cpActive.end()) continue;
+        float mn[3], mx[3];
+        if (!MarkerBox(id, mn, mx)) continue;
+
+        bool hit = true;
+        for (int k = 0; k < 3; k++)
+            if (pb.pos[k] - pb.half[k] > mx[k] || pb.pos[k] + pb.half[k] < mn[k]) hit = false;
+        if (!hit) continue;
+
+        const float cx = (mn[0] + mx[0]) * 0.5f, cz = (mn[2] + mx[2]) * 0.5f;
+        g_cpSet = true;
+        g_cpSpawn[0] = cx; g_cpSpawn[1] = mn[1]; g_cpSpawn[2] = cz;
+        g_cpActive.push_back(id);
+        Sfx("checkpoint");
+        Sprite_Play(id, "Active", nullptr);
+
+        // Pair with the nearest flag that isn't already taken
+        int best = 0; float bestD = 1e9f;
+        for (int f : g_cpFlagIds)
+        {
+            bool used = false;
+            for (const CpDrop& d : g_cpDrops) if (d.flag == f) used = true;
+            float fp[3];
+            if (used || !G->GetPosition(f, fp)) continue;
+            const float d2 = (fp[0] - cx) * (fp[0] - cx) + (fp[2] - cz) * (fp[2] - cz);
+            if (d2 < bestD) { bestD = d2; best = f; }
+        }
+        if (best)
+        {
+            float fs[3];
+            G->GetScale(best, fs);
+            g_cpDrops.push_back({ best, mn[1] + fs[1] * 0.5f + 0.05f });   // same stop as the Goal flag
+        }
+    }
+}
 
 void Entities_Update(float dt)
 {
+    Checkpoint_Update(dt);
     CastleFlag_Update(dt);
     Boss_Update(dt);
     // ---- Spinning coins and power-ups ----

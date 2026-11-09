@@ -14,3 +14,9 @@ void Bind_Name(int act, char* out, int n);   // "A", "Shift", "Left Mouse"...
 void Keys_Update(int ui);                 // call every frame while the Keyboard tab is showing
 bool Keys_Listening();                    // true while waiting for a key
 void Keys_CancelListen();
+
+// Gamepad tab
+void Pad_Name(int act, char* out, int n);   // "A", "D-Pad Left"...
+void Pad_Update(int ui);                    // call every frame while the Gamepad tab is showing
+bool Pad_Listening();
+void Pad_CancelListen();

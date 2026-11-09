@@ -203,6 +203,7 @@ static bool Clicked(int ui, const char* widget)
 static void MenuOpt_SetTab(int tab)
 {
     Keys_CancelListen();
+    Pad_CancelListen();
     g_optTab = tab;
     if (!g_menuOptUi) return;
     static const char* kPanels[] = { "PanelKeyboard","PanelGamepad","PanelVideo","PanelAudio" };
@@ -383,9 +384,12 @@ static void Hud()
 
     char nm[ACT_COUNT][24];
     for (int i = 0; i < ACT_COUNT; i++) Bind_Name(i, nm[i], sizeof nm[i]);
+    char pn[ACT_COUNT][16];
+    for (int i = 0; i < ACT_COUNT; i++) Pad_Name(i, pn[i], sizeof pn[i]);
     char hint[256];
     if (G->PadActive())
-        snprintf(hint, sizeof hint, "Left stick move    X run    A jump    B attack    RB interact    Right stick camera    Start options");
+        snprintf(hint, sizeof hint, "Left stick move    %s run    %s jump    %s attack    L1 pipe    Right stick camera    Start options",
+            pn[ACT_SPRINT], pn[ACT_JUMP], pn[ACT_ATTACK]);
     else
         snprintf(hint, sizeof hint, "%s %s %s %s move    %s run    %s jump    %s attack    %s",
             nm[ACT_FORWARD], nm[ACT_LEFT], nm[ACT_BACK], nm[ACT_RIGHT], nm[ACT_SPRINT], nm[ACT_JUMP], nm[ACT_ATTACK],
@@ -521,15 +525,19 @@ static bool Screens_Update()
             if (G->UIButtonClicked(g_menuOptUi, "TabVideo"))    MenuOpt_SetTab(2);
             if (G->UIButtonClicked(g_menuOptUi, "TabAudio"))    MenuOpt_SetTab(3);
 
-            const bool wasListening = Keys_Listening();
+            const bool wasListening = Keys_Listening() || Pad_Listening();
             if (g_optTab == 0) Keys_Update(g_menuOptUi);
+            else if (g_optTab == 1) Pad_Update(g_menuOptUi);
 
-            if (wasListening || Keys_Listening())
+            if (wasListening || Keys_Listening() || Pad_Listening())
             {
-                // Menu navigation is paused while a key is being captured. Otherwise binding Space/Enter/Backspace
-                // would also "press" Back. A mouse click on Back still works.
                 Nav_Idle();
-                if (G->UIButtonClicked(g_menuOptUi, "OptionsBackButton")) { Keys_CancelListen(); s_menuOptOpen = false; }
+                if (G->UIButtonClicked(g_menuOptUi, "OptionsBackButton"))
+                {
+                    Keys_CancelListen();
+                    Pad_CancelListen();
+                    s_menuOptOpen = false;
+                }
             }
             else
             {

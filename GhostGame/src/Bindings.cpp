@@ -79,12 +79,96 @@ static void Load()
     if (ok) for (int i = 0; i < ACT_COUNT; i++) s_key[i] = t[i];
 }
 
-void Bind_Init() { Defaults(); Load(); s_listen = -1; }
+// =====================  GAMEPAD BINDINGS  =====================
+static const char* kPadBtn[GHOST_PAD_BUTTON_COUNT] =
+{ "A", "B", "X", "Y", "L1", "R1", "Select", "Start", "L3", "R3", "D-Pad Up", "D-Pad Down", "D-Pad Left", "D-Pad Right" };
+// order: Left, Right, Forward, Back, Sprint, Jump, Attack
+static const int kPadDefault[ACT_COUNT] = { GHOST_PAD_LEFT, GHOST_PAD_RIGHT, GHOST_PAD_UP, GHOST_PAD_DOWN, GHOST_PAD_X, GHOST_PAD_A, GHOST_PAD_B };
+static int s_pad[ACT_COUNT];
+static int s_padListen = -1;
+
+// L1 = pipe, R1 = view switch, Start = pause: the game reads their synthesized keys (F, Z, F10)
+static bool PadReserved(int b) { return b == GHOST_PAD_LB || b == GHOST_PAD_RB || b == GHOST_PAD_START; }
+static bool PadValid(int b) { return b >= 0 && b < GHOST_PAD_BUTTON_COUNT && !PadReserved(b); }
+
+static void PadDefaults() { for (int i = 0; i < ACT_COUNT; i++) s_pad[i] = kPadDefault[i]; }
+
+static bool PadPath(char* out, size_t n)
+{
+    char base[MAX_PATH];
+    if (!GetEnvironmentVariableA("APPDATA", base, sizeof base)) return false;
+    snprintf(out, n, "%s\\AdventuresOfCube", base);
+    CreateDirectoryA(out, nullptr);
+    strcat_s(out, n, "\\padbinds.txt");
+    return true;
+}
+
+static void PadSave()
+{
+    char p[MAX_PATH];
+    if (!PadPath(p, sizeof p)) return;
+    FILE* f = nullptr;
+    if (fopen_s(&f, p, "w") != 0 || !f) return;
+    for (int i = 0; i < ACT_COUNT; i++) fprintf(f, "%d\n", s_pad[i]);
+    fclose(f);
+}
+
+static void PadLoad()
+{
+    char p[MAX_PATH];
+    if (!PadPath(p, sizeof p)) return;
+    FILE* f = nullptr;
+    if (fopen_s(&f, p, "r") != 0 || !f) return;
+    int t[ACT_COUNT];
+    bool ok = true;
+    for (int i = 0; i < ACT_COUNT && ok; i++)
+    {
+        if (fscanf_s(f, "%d", &t[i]) != 1 || !PadValid(t[i])) { ok = false; break; }
+        for (int j = 0; j < i && ok; j++) if (t[j] == t[i]) ok = false;
+    }
+    fclose(f);
+    if (ok) for (int i = 0; i < ACT_COUNT; i++) s_pad[i] = t[i];
+}
+
+// Pad buttons / sticks currently held. While true, any key the engine "presses" is the pad talking.
+static bool PadBusy()
+{
+    if (!G->PadConnected()) return false;
+    for (int b = 0; b < GHOST_PAD_BUTTON_COUNT; b++) if (G->PadButtonDown(b)) return true;
+    return fabsf(G->PadAxis(GHOST_PAD_AXIS_LX)) > 0.4f || fabsf(G->PadAxis(GHOST_PAD_AXIS_LY)) > 0.4f ||
+        fabsf(G->PadAxis(GHOST_PAD_AXIS_RX)) > 0.4f;
+}
+
+static bool PadMode() { return G->PadConnected() && G->PadActive(); }
+
+static int PadAssign(int act, int b)
+{
+    int swapped = -1;
+    for (int i = 0; i < ACT_COUNT; i++)
+        if (i != act && s_pad[i] == b) { s_pad[i] = s_pad[act]; swapped = i; break; }
+    s_pad[act] = b;
+    PadSave();
+    return swapped;
+}
+
+void Bind_Init() { Defaults(); Load(); PadDefaults(); PadLoad(); s_listen = -1; s_padListen = -1; }
 void Bind_Reset() { Defaults(); Save(); }
 
-bool Bind_Down(int a) { return G->KeyDown(s_key[a]) || (Alias(a) && G->KeyDown(Alias(a))); }
-bool Bind_Pressed(int a) { return G->KeyPressed(s_key[a]) || (Alias(a) && G->KeyPressed(Alias(a))); }
-bool Bind_Released(int a) { return G->KeyReleased(s_key[a]) || (Alias(a) && G->KeyReleased(Alias(a))); }
+bool Bind_Down(int a)
+{
+    if (PadMode()) return G->PadButtonDown(s_pad[a]) != 0;
+    return G->KeyDown(s_key[a]) || (Alias(a) && G->KeyDown(Alias(a)));
+}
+bool Bind_Pressed(int a)
+{
+    if (PadMode()) return G->PadButtonPressed(s_pad[a]) != 0;
+    return G->KeyPressed(s_key[a]) || (Alias(a) && G->KeyPressed(Alias(a)));
+}
+bool Bind_Released(int a)
+{
+    if (PadMode()) return G->PadButtonReleased(s_pad[a]) != 0;
+    return G->KeyReleased(s_key[a]) || (Alias(a) && G->KeyReleased(Alias(a)));
+}
 
 // Gives vk to act. If another action already had it, that action gets this one's old key (swap). Returns the swapped action or -1.
 static int Assign(int act, int vk)
@@ -124,7 +208,7 @@ void Keys_Update(int ui)
     if (s_listen >= 0)
     {
         if (G->KeyPressed(VK_ESCAPE)) s_listen = -1;
-        else
+        else if (!PadBusy())
         {
             for (int vk = 8; vk < 255; vk++)       // starts at 8: skips the mouse buttons so the row click can't bind itself
             {
@@ -163,4 +247,57 @@ void Keys_Update(int ui)
     }
     else if (s_msg[0] && G->GetTime() < s_msgUntil) G->UISetText(ui, "KeyHint", s_msg);
     else G->UISetText(ui, "KeyHint", "Click a row, then press the new key. Esc cancels. Arrow keys always move too.");
+}
+
+
+// ---- the Gamepad tab ----
+void Pad_Name(int act, char* out, int n) { strcpy_s(out, n, kPadBtn[s_pad[act]]); }
+bool Pad_Listening() { return s_padListen >= 0; }
+void Pad_CancelListen() { s_padListen = -1; }
+
+void Pad_Update(int ui)
+{
+    char row[16], name[32], line[96];
+
+    if (s_padListen >= 0)
+    {
+        if (G->KeyPressed(VK_ESCAPE)) s_padListen = -1;
+        else
+        {
+            for (int b = 0; b < GHOST_PAD_BUTTON_COUNT; b++)
+            {
+                if (!G->PadButtonPressed(b)) continue;
+                if (PadReserved(b)) { Say("That button is reserved"); break; }   // keep listening
+                const int sw = PadAssign(s_padListen, b);
+                if (sw >= 0) { snprintf(line, sizeof line, "Swapped with %s", kLabel[sw]); Say(line); }
+                s_padListen = -1;
+                break;
+            }
+        }
+    }
+
+    for (int i = 0; i < ACT_COUNT; i++)
+    {
+        snprintf(row, sizeof row, "PadBind%d", i);
+        if (!G->UIButtonClicked(ui, row)) continue;
+        if (!G->PadConnected()) { Say("No gamepad connected"); continue; }
+        s_padListen = i; s_msg[0] = 0;
+    }
+    if (G->UIButtonClicked(ui, "PadReset")) { PadDefaults(); PadSave(); s_padListen = -1; Say("Pad reset to default"); }
+
+    for (int i = 0; i < ACT_COUNT; i++)
+    {
+        snprintf(row, sizeof row, "PadBind%d", i);
+        if (i == s_padListen) snprintf(line, sizeof line, "%s:  press a button...", kLabel[i]);
+        else { Pad_Name(i, name, sizeof name); snprintf(line, sizeof line, "%s:  %s", kLabel[i], name); }
+        G->UISetText(ui, row, line);
+    }
+
+    if (s_padListen >= 0)
+    {
+        snprintf(line, sizeof line, "Press a button for %s.  Esc cancels.", kLabel[s_padListen]);
+        G->UISetText(ui, "PadStatus", line);
+    }
+    else if (s_msg[0] && G->GetTime() < s_msgUntil) G->UISetText(ui, "PadStatus", s_msg);
+    else G->UISetText(ui, "PadStatus", "Click a row, then press a pad button. Esc cancels. Left stick always moves too.");
 }
