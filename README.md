@@ -19,6 +19,8 @@
 ---
 # ***Super Mario Infinitus has Been Released to the World, Download now through the interweeb and play*.**
 # **https://robert-robot2.github.io/GitPages-RoboutesTentacleBurgers/SuperMarioInfinitus**
+# SuperMarioInfinitus Click to Download Zip No install required just launch MyGame.exe!!
+# Copy contents Of Folder to New Created Folder /SuperMarioInfinitus anywhere on your hard drive!
 ---
 ***GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (RHI-style)** with a **C# WinForms editor shell** and a Blazor WASM UIwith a Visual Studio Docking Suite Editor*.**
 ---
