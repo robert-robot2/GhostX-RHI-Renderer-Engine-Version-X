@@ -17,10 +17,10 @@
 ![MS-DOS](https://img.shields.io/badge/Platform-MS--DOS-black)
 ![Visual Studio](https://img.shields.io/badge/IDE-Visual%20Studio-5C2D91?style=flat-square&logo=visualstudio&logoColor=white)
 ---
-# **Super Mario Infinitus has Been Released to the World, Download now thorugh the interweeb and play*.**
+# ***Super Mario Infinitus has Been Released to the World, Download now thorugh the interweeb and play*.**
 # **https://robert-robot2.github.io/GitPages-RoboutesTentacleBurgers/SuperMarioInfinitus**
 ---
-**GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (RHI-style)** with a **C# WinForms editor shell** and a Blazor WASM UIwith a Visual Studio Docking Suite Editor*.**
+***GhostX is a custom renderer engine built on a **native C++ DirectX 12 renderer (RHI-style)** with a **C# WinForms editor shell** and a Blazor WASM UIwith a Visual Studio Docking Suite Editor*.**
 ---
 # **https://robert-robot2.github.io/GitPages-RoboutesTentacleBurgers/GhostDocsPage**
 <img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/2f5a7c70-59fe-4753-8adf-2b9798ea8dfd" />
