@@ -346,7 +346,15 @@ namespace GhostShell
                     return;
                 }
                 _engineReady = true;
-                GhostFontAtlas.BakeDefault();     // the on-screen text font (the player needs it too)
+              
+
+                string fontPath = Path.Combine(AppContext.BaseDirectory, "Fonts", "Super Mario Bros. NES.ttf");
+                if (!File.Exists(fontPath))
+                    MessageBox.Show("Font not found at:\n" + fontPath);   // temporary, shows exactly where it's looking
+
+                if (!GhostFontAtlas.BakeFromFile(fontPath, 32f))
+                    GhostFontAtlas.BakeDefault();
+                GhostFontAtlas.InstallProvider();
                 GhostPadDialog.ApplySaved();      // saved deadzone / rumble / pad slot (the standalone player runs this too)
                 GhostAudioMixer.ApplySaved();     // saved bus volumes and mutes (the standalone player needs them too)
                 GhostVideo.ApplyStartup();        // saved resolution / window mode (editor: per user, player: video.cfg next to the exe)

@@ -33,7 +33,7 @@ namespace GhostShell
         private bool _moved;
         private float[] _so = new float[2], _ss = new float[2];
 
-        private readonly Dictionary<int, Font> _fonts = new();
+        private readonly Dictionary<string, Font> _fonts = new();
         private readonly StringFormat _fmt;
         private readonly Bitmap _mbmp = new(1, 1);
         private readonly Graphics _mg;
@@ -74,6 +74,7 @@ namespace GhostShell
             if (disposing)
             {
                 foreach (Font f in _fonts.Values) f.Dispose();
+                foreach (var fm in _fams.Values) fm.pfc?.Dispose();
                 foreach (var i in _images.Values) i.bmp?.Dispose();
                 _fmt.Dispose(); _mg.Dispose(); _mbmp.Dispose();
             }
@@ -88,14 +89,45 @@ namespace GhostShell
         }
 
         // The engine's text size is the LINE height; GDI+ wants the em size
-        private Font FontFor(float size)
+        private readonly Dictionary<string, (PrivateFontCollection? pfc, FontFamily fam, float ratio, FontStyle style)> _fams
+       = new(StringComparer.OrdinalIgnoreCase);
+
+        private static FontStyle StyleOf(FontFamily f) =>
+            f.IsStyleAvailable(FontStyle.Regular) ? FontStyle.Regular :
+            f.IsStyleAvailable(FontStyle.Bold) ? FontStyle.Bold : FontStyle.Italic;
+
+        private (FontFamily fam, float ratio, FontStyle style) FamilyFor(string file)
         {
-            float em = Math.Max(size / FontRatio, 1f);
-            int key = (int)Math.Round(em * 10f);
+            if (file.Length == 0) return (Family, FontRatio, FontStyle.Regular);
+            if (_fams.TryGetValue(file, out var c)) return (c.fam, c.ratio, c.style);
+            try
+            {
+                string path = Path.IsPathRooted(file) ? file : Path.Combine(GhostProject.Root ?? "", file);
+                if (File.Exists(path))
+                {
+                    var pfc = new PrivateFontCollection();
+                    pfc.AddFontFile(path);
+                    FontFamily fam = pfc.Families[0];
+                    FontStyle st = StyleOf(fam);
+                    float ratio = fam.GetLineSpacing(st) / (float)fam.GetEmHeight(st);
+                    _fams[file] = (pfc, fam, ratio, st);
+                    return (fam, ratio, st);
+                }
+            }
+            catch { }
+            return (Family, FontRatio, FontStyle.Regular);       // missing or bad file: fall back to Segoe UI
+        }
+
+        // The engine's text size is the LINE height; GDI+ wants the em size
+        private Font FontFor(float size, string file)
+        {
+            var (fam, ratio, style) = FamilyFor(file);
+            float em = Math.Max(size / ratio, 1f);
+            string key = file + "|" + (int)Math.Round(em * 10f);
             if (!_fonts.TryGetValue(key, out Font? f))
             {
                 if (_fonts.Count > 64) { foreach (Font o in _fonts.Values) o.Dispose(); _fonts.Clear(); }
-                f = new Font(Family, em, FontStyle.Regular, GraphicsUnit.Pixel);
+                f = new Font(fam, em, style, GraphicsUnit.Pixel);
                 _fonts[key] = f;
             }
             return f;
@@ -233,7 +265,7 @@ namespace GhostShell
         private void DrawText(Graphics g, DWidget w, int align, bool centerV, float[] col)
         {
             if (w.Text.Length == 0 || col[3] <= 0.001f) return;
-            Font f = FontFor(w.FontSize);
+            Font f = FontFor(w.FontSize, w.Font);
             float k = _v.Sy / _v.Sx;                   // only differs from 1 in Stretch: the engine never stretches glyphs sideways
             float tw = _mg.MeasureString(w.Text, f, PointF.Empty, _fmt).Width * k;
 

@@ -4,6 +4,7 @@
 #include <string.h>
 #include <stdio.h>
 #include "../GhostX/include/GhostGameAPI.h"
+#include "../GhostGame/include/Bindings.h"
 
 // Game.h
 
@@ -52,6 +53,15 @@ namespace Cfg
     constexpr float ShellKickSafe = 0.3f;    // a freshly kicked or thrown shell can't hurt Mario for this long
     constexpr float HurryTime = 100.0f;      // the hurry-up jingle plays when the timer drops to this
     constexpr float RunJump = 20.0f;   // jump speed while sprinting (Jump = 15 otherwise)
+    constexpr float CamFocusPitch = -15.0f;   // Z-reset tilt (negative = camera above Mario, looking down, same as CamPitch)
+    constexpr float CamFocusPitchSpeed = 300.0f;   // degrees per second the tilt eases back
+    constexpr float GrowPop = 0.1f;   // extra lift when growing, so the bigger collider clears the floor
+    constexpr float ShrinkTime = 0.9f;   // freeze while the Shrink animation plays
+    constexpr float SkidMinSpeed = 4.5f;    // planar speed needed to skid. Walk = 4.0, so only sprinting skids. Lower it (e.g. 2.0) to skid from a walk too
+    constexpr float SkidExitSpeed = 0.5f;    // skid ends when speed drops below this
+    constexpr float SkidFriction = 28.0f;   // braking, units/s^2 (GroundAccel is 60). Lower = longer slide
+    constexpr float SkidOpposeCos = -0.6f;   // input must oppose velocity this much (-1 = exactly opposite)
+    constexpr bool  SkidFlipSprite = false;   // true if your skid art is drawn facing the other way
 }
 
 enum { MODE_MENU = 0, MODE_PLAY, MODE_OVER, MODE_SELECT, MODE_OPTIONS };

@@ -52,6 +52,7 @@ namespace GhostShell
         public int Align;
         public bool Shadow = true;
         public string Texture = "";
+        public string Font = "";          // "" = default UI font, otherwise a .ttf/.otf path relative to the project
         public float Value = 1f;
 
         // layout result (reference units)
@@ -384,7 +385,7 @@ namespace GhostShell
             w.Shadow = Bool(j, "shadow", true);
             w.Value = Math.Clamp(Num(j, "value", 1f), 0f, 1f);
             w.Texture = Str(j, "texture", "");
-
+            w.Font = Str(j, "font", "");
             count++;
             (parent == null ? d.Roots : parent.Children).Add(w);
 
@@ -424,10 +425,12 @@ namespace GhostShell
                     break;
                 case "Text":
                     j["text"] = w.Text; j["fontSize"] = R(w.FontSize); j["align"] = w.Align; j["shadow"] = w.Shadow;
+                    if (w.Font.Length > 0) j["font"] = w.Font;
                     break;
                 case "Button":
                     j["text"] = w.Text; j["fontSize"] = R(w.FontSize); j["shadow"] = w.Shadow;
                     j["textColor"] = A(w.TextColor);
+                    if (w.Font.Length > 0) j["font"] = w.Font;
                     if (w.HoverColor != null && !Same(w.HoverColor, DeriveHover(w.Color))) j["hoverColor"] = A(w.HoverColor);
                     if (w.PressColor != null && !Same(w.PressColor, DerivePress(w.Color))) j["pressColor"] = A(w.PressColor);
                     break;

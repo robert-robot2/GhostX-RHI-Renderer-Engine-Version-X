@@ -126,6 +126,9 @@ namespace GhostShell
         public int scaleFilter;       // 0 linear, 1 point
         public int fit;               // 0 letterbox, 1 integer, 2 stretch
     }
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    internal delegate int GhostFontProviderFn([MarshalAs(UnmanagedType.LPUTF8Str)] string path);
+
 
     internal static class GhostEngine
     {
@@ -460,6 +463,12 @@ namespace GhostShell
         public static extern void GhostEngine_GetResolution(out int w, out int h);
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern int GhostEngine_GetResolutionList([Out] int[] outWH, int maxPairs);
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_RegisterFont(int textureId, int atlasW, int atlasH, float cellW, float cellH,
+                                                  float pad, float lineHeight, [In] float[] advances);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetFontProvider(GhostFontProviderFn fn);
 
     }
 }

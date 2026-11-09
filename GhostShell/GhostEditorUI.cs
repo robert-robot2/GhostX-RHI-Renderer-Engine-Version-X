@@ -88,7 +88,7 @@ namespace GhostShell
 
             for (int i = 0; i < n; i++)
             {
-                if (i == GhostFontAtlas.TextureId) continue; // the UI font isn't a material texture
+                if (i == GhostFontAtlas.TextureId || GhostFontAtlas.ExtraTextures.Contains(i)) continue;
 
                 list.Add(DisplayName(i));
             }

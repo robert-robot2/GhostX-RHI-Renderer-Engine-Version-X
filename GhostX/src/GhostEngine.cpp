@@ -96,6 +96,10 @@ static std::vector<GhostUIAsset> g_uiAssets;                    // handle = inde
 static float g_uiMouseX = -1.0f, g_uiMouseY = -1.0f;            // cursor in reference units
 static bool  g_uiMouseInside = false;
 static GhostFont                g_font;
+static std::vector<GhostFont> g_fonts;                       // slot n lives at g_fonts[n-1]; slot 0 = g_font
+static GhostFontProviderFn g_fontProvider = nullptr;
+static std::vector<std::pair<std::string, int>> g_fontCache; // absolute path -> slot
+static std::string StoredToAbs(const std::string& stored);   // defined further down
 static float                    g_uiRefW = 1920.0f;       // reference width of the main view (height is 1080)
 static std::string g_projectRoot;
 static float g_skyScroll[2] = { 0.0f, 0.0f };      // day / night layer scroll in degrees (play only)
@@ -2224,7 +2228,7 @@ static void RenderViewport(int vp)
         for (GhostUIAsset& a : g_uiAssets)
         {
             GhostUI_Layout(a, g_uiRefW, 1080.0f);
-            GhostUI_Build(a, g_font, frameQuads);
+            GhostUI_Build(a, g_font, g_fonts, frameQuads);
         }
         frameQuads.insert(frameQuads.end(), g_uiQuads.begin(), g_uiQuads.end());
         if (frameQuads.size() > GHOST_UI_MAX_QUADS) frameQuads.resize(GHOST_UI_MAX_QUADS);
@@ -3301,6 +3305,16 @@ static GhostWidget* UiWidget(int h, const char* name)
     return nullptr;
 }
 
+static int ResolveFont(const std::string& stored)
+{
+    if (stored.empty() || !g_fontProvider) return 0;
+    const std::string abs = StoredToAbs(stored);
+    for (auto& kv : g_fontCache) if (_stricmp(kv.first.c_str(), abs.c_str()) == 0) return kv.second;
+    const int slot = g_fontProvider(abs.c_str());
+    g_fontCache.push_back({ abs, slot });
+    return slot;
+}
+
 static int Api_UILoad(const char* rel)
 {
     if (!rel || !*rel) return 0;
@@ -3321,6 +3335,7 @@ static int Api_UILoad(const char* rel)
         return 0;
     }
     if (!warn.empty()) Api_Log(("UILoad: " + warn).c_str());
+    for (GhostWidget& w : a.widgets) w.fontId = ResolveFont(w.font);
     a.path = p;
     g_uiAssets.push_back(std::move(a));
     return (int)g_uiAssets.size();
@@ -4141,6 +4156,22 @@ int GhostEngine_SetFont(int tex, int aw, int ah, float cw, float ch, float pad, 
     g_font = f;
     return 1;
 }
+
+int GhostEngine_RegisterFont(int tex, int aw, int ah, float cw, float ch, float pad, float lh, const float* adv)
+{
+    if (!adv || tex < 0 || tex >= (int)g_scene.textures.size() || aw <= 0 || ah <= 0 ||
+        cw <= 0.0f || ch <= 0.0f || lh <= 0.0f || g_fonts.size() >= 32) return 0;
+    GhostFont f;
+    f.textureId = tex; f.atlasW = aw; f.atlasH = ah;
+    f.cellW = cw; f.cellH = ch; f.pad = pad; f.lineHeight = lh;
+    memcpy(f.advance, adv, 95 * sizeof(float));
+    f.advance[95] = 0.0f;
+    f.ready = true;
+    g_fonts.push_back(f);
+    return (int)g_fonts.size();
+}
+
+void GhostEngine_SetFontProvider(GhostFontProviderFn fn) { g_fontProvider = fn; }
 
 // ============================================================
 //  Exported: mods

@@ -123,6 +123,7 @@ static void LoadWidget(const json& j, int parent, int depth, GhostUIAsset& a, co
     if (w.align < 0) w.align = 0;
     if (w.align > 2) w.align = 2;
     w.shadow = j.value("shadow", true);
+    w.font = j.value("font", std::string());
     w.value = j.value("value", 1.0f);
     if (w.value < 0.0f) w.value = 0.0f;
     if (w.value > 1.0f) w.value = 1.0f;
@@ -216,9 +217,11 @@ static json SaveWidget(const GhostUIAsset& a, int idx)
         break;
     case GHOST_W_TEXT:
         j["text"] = w.text; j["fontSize"] = w.fontSize; j["align"] = w.align; j["shadow"] = w.shadow;
+        if (!w.font.empty()) j["font"] = w.font;
         break;
     case GHOST_W_BUTTON:
         j["text"] = w.text; j["fontSize"] = w.fontSize; j["shadow"] = w.shadow;
+        if (!w.font.empty()) j["font"] = w.font;
         j["textColor"] = A4(w.textColor); j["hoverColor"] = A4(w.hoverColor); j["pressColor"] = A4(w.pressColor);
         break;
     case GHOST_W_PROGRESS:

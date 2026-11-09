@@ -31,6 +31,65 @@ static const char* PowerAnim(int level) { return (S.character == 1 ? kLuigiAnim 
 static const char* kFlagAnim[2] = { "Content/Animations/FlagSlideMario.ghostanim",
                                     "Content/Animations/FlagSlideLuigi.ghostanim" };
 static bool g_poleAnim = false;       // the flag sheet is currently assigned
+static bool g_shrinking = false;   // Shrink anim is playing; SetPower(0) happens when it ends
+// ---------------------------------------------------------------------------
+// Skid: running one way, pressing the other. Velocity keeps its old direction and brakes.
+// The skid art lives on its own sheet, so the sheet is swapped in and back out.
+// ---------------------------------------------------------------------------
+static const char* kMarioSkid[3] = { "Content/Animations/SmallMarioSkid.ghostanim",
+                                     "Content/Animations/BigMarioSkid.ghostanim",
+                                     "Content/Animations/FireMarioSkid.ghostanim" };
+static const char* kLuigiSkid[3] = { "Content/Animations/SmallLuigiSkid.ghostanim",
+                                     "Content/Animations/BigLuigiSkid.ghostanim",
+                                     "Content/Animations/FireMarioSkid.ghostanim" };   // no FireLuigiSkid: same as your fire sheet
+static const char* SkidAnimFor(int level) { return (S.character == 1 ? kLuigiSkid : kMarioSkid)[level]; }
+
+static bool  g_skidding = false;
+static bool  g_skidAnim = false;                // the skid sheet is currently assigned
+static float g_skidDir[2] = { 0, 0 };           // unit travel direction (world X, Z) when the skid began
+
+static void Skid_End()
+{
+    if (g_skidAnim) { G->SpriteSetAnim(S.player, PowerAnim(PowerLevel())); g_skidAnim = false; }
+    g_skidding = false;
+}
+
+// Call before the normal ground acceleration. Returns true if it handled velocity this frame.
+static bool Skid_Update(float dx, float dz, float dt)
+{
+    if (S.transformTimer > 0.0f) return false;               // Transform_Begin already ended any skid
+    if (S.onPole || S.bossCut) { Skid_End(); return false; }
+
+    const float speed = sqrtf(g_vel[0] * g_vel[0] + g_vel[2] * g_vel[2]);
+    const float il = sqrtf(dx * dx + dz * dz);
+
+    bool opposed = false;                                    // is the input pushing against the motion?
+    if (il > 0.3f && speed > 0.001f)
+    {
+        const float cosA = (g_vel[0] * dx + g_vel[2] * dz) / (speed * il);
+        opposed = cosA < Cfg::SkidOpposeCos;
+    }
+
+    if (!g_skidding)
+    {
+        if (!(g_grounded && opposed && speed >= Cfg::SkidMinSpeed)) return false;
+        g_skidding = true;
+        g_skidDir[0] = g_vel[0] / speed;
+        g_skidDir[1] = g_vel[2] / speed;
+        g_skidAnim = G->SpriteSetAnim(S.player, SkidAnimFor(PowerLevel())) != 0;   // no file: falls back to the normal sheet
+        Sfx("skid");                                         // safe if the bank has no "skid" sound
+    }
+    else if (!g_grounded || !opposed || speed < Cfg::SkidExitSpeed)
+    {
+        Skid_End();                                          // normal movement takes over and accelerates the new way
+        return false;
+    }
+
+    const float ns = fmaxf(0.0f, speed - Cfg::SkidFriction * dt);   // brake, don't zero
+    g_vel[0] = g_skidDir[0] * ns;
+    g_vel[2] = g_skidDir[1] * ns;
+    return true;
+}
 
 void Player_Reset()
 {
@@ -44,12 +103,15 @@ void Player_Reset()
     g_haveMoveYaw = false;
     g_poleAnim = false;
     S.transformTimer = 0.0f;
+    g_shrinking = false; 
+    g_skidding = false; g_skidAnim = false;
 }
 
 static void SetPower(Body& b, int level)
 {
     const int old = PowerLevel();
     if (old == level) return;
+    Skid_End();
     const float kx = Cfg::PowerScaleX[level] / Cfg::PowerScaleX[old];
     const float ky = Cfg::PowerScaleY[level] / Cfg::PowerScaleY[old];
     S.big = level >= 1; S.fire = level == 2;
@@ -57,7 +119,7 @@ static void SetPower(Body& b, int level)
                          g_baseScale[2] * Cfg::PowerScaleX[level] };
     G->SetScale(S.player, s);
     G->SpriteSetAnim(S.player, PowerAnim(level));
-    b.pos[1] += b.half[1] * (ky - 1.0f) + (ky > 1.0f ? 0.01f : 0.0f);
+    b.pos[1] += b.half[1] * (ky - 1.0f) + (ky > 1.0f ? Cfg::GrowPop : 0.0f);
     b.half[0] *= kx; b.half[2] *= kx; b.half[1] *= ky;
     b.off[0] *= kx;  b.off[2] *= kx;  b.off[1] *= ky;
 }
@@ -65,12 +127,19 @@ static void SetPower(Body& b, int level)
 static const char* kTransformAnim[2] = { "Content/Animations/MarioTransform.ghostanim",
                                          "Content/Animations/LuigiTransform.ghostanim" };
 
-static void Transform_Begin()
+static const char* kShrinkAnim[2] = { "Content/Animations/MarioShrink.ghostanim",
+                                      "Content/Animations/LuigiShrink.ghostanim" };
+
+static bool Transform_Begin(bool shrink)
 {
-    if (!G->SpriteSetAnim(S.player, kTransformAnim[S.character == 1 ? 1 : 0])) return;   // no file: skip the freeze
-    S.transformTimer = Cfg::TransformTime;
+    Skid_End();
+    const int c = (S.character == 1) ? 1 : 0;
+    if (!G->SpriteSetAnim(S.player, shrink ? kShrinkAnim[c] : kTransformAnim[c])) return false;   // no file: skip
+    S.transformTimer = shrink ? Cfg::ShrinkTime : Cfg::TransformTime;
     memset(g_vel, 0, sizeof g_vel);
-    Sprite_Play(S.player, "Transform", "Idle");
+    if (shrink) Sprite_Play(S.player, "Shrink", "Transform");
+    else        Sprite_Play(S.player, "Transform", "Idle");
+    return true;
 }
 
 static void Collect(Body& b, int type)
@@ -85,7 +154,7 @@ static void Collect(Body& b, int type)
     case PU_STAR:     S.starTime = Cfg::StarTime; S.starChain = 0; break;
     case PU_ONEUP:    Life_Add(); break;
     }
-    if (before == 0 && PowerLevel() == 1) Transform_Begin();
+    if (before == 0 && PowerLevel() == 1) Transform_Begin(false);
 }
 
 // true = Mario died (caller returns)
@@ -93,7 +162,17 @@ static bool Hurt(Body& b)
 {
     if (S.starTime > 0.0f || S.invuln > 0.0f) return false;
     G->PadRumble(S.big ? 0.6f : 1.0f, 0.8f, S.big ? 0.25f : 0.5f);
-    if (S.big) { Sfx("hurt"); SetPower(b, 0); S.invuln = Cfg::Invulnerable; S.hurt = 0.45f; g_vel[1] = 6.0f; return false; }
+    if (S.big)
+    {
+        S.invuln = Cfg::Invulnerable;
+        if (Transform_Begin(true))            // Shrink anim exists: shrink for real when it ends
+        {
+            g_shrinking = true;
+            Sfx("powerup_collect");           // same sound as the transform
+            return false;
+        }
+        Sfx("hurt"); SetPower(b, 0); S.hurt = 0.45f; g_vel[1] = 6.0f; return false;   // fallback: old behavior
+    }
     Player_Die();
     return true;
 }
@@ -170,7 +249,7 @@ static bool TryPortal(Body& b, int entry)
     GhostObjectProps pr = {};
     if (!G->GetObjectProps(entry, &pr)) return false;
     const bool go = pr.portalTrigger == 0 ||
-        (pr.portalTrigger == 1 && (G->KeyPressed(VK_DOWN) || G->KeyPressed('S'))) ||
+        (pr.portalTrigger == 1 && (G->KeyPressed(VK_DOWN) || Bind_Pressed(ACT_BACK))) ||
         (pr.portalTrigger == 2 && G->KeyPressed('F'));
     if (!go) return false;
     if (strstr(pr.link, ".ghostscene")) { const bool ok = G->LoadScene(pr.link) != 0; if (ok) Sfx("pipe"); return ok; }
@@ -234,7 +313,7 @@ static void Shells_Update(const Body& b)
 {
     float fx, fz;
     FaceVec(fx, fz);
-    const bool shift = G->KeyDown(VK_SHIFT);
+    const bool shift = Bind_Down(ACT_SPRINT);
 
     // ---- Holding a shell ----
     if (S.heldShell)
@@ -301,8 +380,8 @@ void Player_Update(float dt)
     S.error = nullptr;
 
     // ---- Input: camera-relative movement ----
-    float ix = ((G->KeyDown('D') || G->KeyDown(VK_RIGHT)) ? 1.0f : 0.0f) - ((G->KeyDown('A') || G->KeyDown(VK_LEFT)) ? 1.0f : 0.0f);
-    float iz = Cfg::SideScroller ? 0.0f : ((G->KeyDown('W') ? 1.0f : 0.0f) - (G->KeyDown('S') ? 1.0f : 0.0f));
+    float ix = (Bind_Down(ACT_RIGHT) ? 1.0f : 0.0f) - (Bind_Down(ACT_LEFT) ? 1.0f : 0.0f);
+    float iz = Cfg::SideScroller ? 0.0f : ((Bind_Down(ACT_FORWARD) ? 1.0f : 0.0f) - (Bind_Down(ACT_BACK) ? 1.0f : 0.0f));
     if (G->PadConnected())                          // the stick overrides the keys, so a light push walks slowly
     {
         const float sx = G->PadAxis(GHOST_PAD_AXIS_LX), sy2 = G->PadAxis(GHOST_PAD_AXIS_LY);
@@ -315,23 +394,27 @@ void Player_Update(float dt)
     float len = sqrtf(dx * dx + dz * dz);
     if (len > 1.0f) { dx /= len; dz /= len; }
     if (len > 0.3f) { g_moveYawDeg = atan2f(dx, dz) * 57.2957795f; g_haveMoveYaw = true; }
-    const float speed = G->KeyDown(VK_SHIFT) ? Cfg::Run : Cfg::Walk;
+    const float speed = Bind_Down(ACT_SPRINT) ? Cfg::Run : Cfg::Walk;
     const float accel = (g_grounded ? Cfg::GroundAccel : Cfg::AirAccel) * dt;
-    g_vel[0] = Approach(g_vel[0], dx * speed, accel);
-    g_vel[2] = Approach(g_vel[2], dz * speed, accel);
+    if (!Skid_Update(dx, dz, dt))
+    {
+        g_vel[0] = Approach(g_vel[0], dx * speed, accel);
+        g_vel[2] = Approach(g_vel[2], dz * speed, accel);
+    }
 
     // ---- Jump ----
-    g_jumpBuf = G->KeyPressed(VK_SPACE) ? Cfg::JumpBuffer : g_jumpBuf - dt;
+    g_jumpBuf = Bind_Pressed(ACT_JUMP) ? Cfg::JumpBuffer : g_jumpBuf - dt;
     g_coyote = g_grounded ? Cfg::CoyoteTime : g_coyote - dt;
     if (g_jumpBuf > 0.0f && g_coyote > 0.0f)
     {
+        Skid_End();
         const float planarNow = sqrtf(g_vel[0] * g_vel[0] + g_vel[2] * g_vel[2]);
-        const bool sprintJump = G->KeyDown(VK_SHIFT) && planarNow > Cfg::Walk + 0.5f;   // Shift AND actually moving faster than a walk
+        const bool sprintJump = Bind_Down(ACT_SPRINT) && planarNow > Cfg::Walk + 0.5f;   // Shift AND actually moving faster than a walk
         g_vel[1] = sprintJump ? Cfg::RunJump : Cfg::Jump;
         g_jumpBuf = 0.0f; g_coyote = 0.0f;
         Sfx(S.big ? "big_jump" : "jump");
     }
-    if (G->KeyReleased(VK_SPACE) && g_vel[1] > 0.0f) g_vel[1] *= 0.5f;
+    if (Bind_Released(ACT_JUMP) && g_vel[1] > 0.0f) g_vel[1] *= 0.5f;
 
     g_vel[1] -= Cfg::Gravity * dt;
     if (g_vel[1] < -Cfg::MaxFall) g_vel[1] = -Cfg::MaxFall;
@@ -374,7 +457,7 @@ void Player_Update(float dt)
 
             if (S.starTime > 0.0f) { Enemy_Kill(ids[i]); continue; }
             const bool stomp = preVy < 0.0f && feetBefore >= emx[1] - 0.25f;
-            if (stomp) { Enemy_Kill(ids[i],true); g_vel[1] = G->KeyDown(VK_SPACE) ? Cfg::StompBounceHeld : Cfg::StompBounce; G->PadRumble(0.0f, 0.4f, 0.08f); }
+            if (stomp) { Enemy_Kill(ids[i],true); g_vel[1] = Bind_Down(ACT_JUMP) ? Cfg::StompBounceHeld : Cfg::StompBounce; G->PadRumble(0.0f, 0.4f, 0.08f); }
             else if (Hurt(b)) return;
         }
         else if (strcmp(tag, "SlidingShell") == 0)
@@ -387,7 +470,7 @@ void Player_Update(float dt)
                 Shell_Stop(ids[i]);
                 Score_Add(400);
                 Sfx("stomp");
-                g_vel[1] = G->KeyDown(VK_SPACE) ? Cfg::StompBounceHeld : Cfg::StompBounce;
+                g_vel[1] = Bind_Down(ACT_JUMP) ? Cfg::StompBounceHeld : Cfg::StompBounce;
             }
             else if (Shell_Dangerous(ids[i]) && Hurt(b)) return;   // side contact hurts (big shrinks, small dies)
         }
@@ -412,7 +495,7 @@ void Player_Update(float dt)
 
     if (S.attackCool > 0.0f) S.attackCool -= dt;
 
-    if (G->KeyPressed(VK_LBUTTON) && S.attackCool <= 0.0f)
+    if (Bind_Pressed(ACT_ATTACK) && S.attackCool <= 0.0f)
     {
         S.attackCool = 0.4f;
         if (PowerLevel() == 0)      Sprite_Play(S.player, "SpinAttack", "Idle");
@@ -480,14 +563,16 @@ void Player_Update(float dt)
         return;
     }
 
-    if (S.transformTimer > 0.0f)                                  // frozen while the Transform clip plays
+    if (S.transformTimer > 0.0f)                                  // frozen while Transform / Shrink plays
     {
         S.transformTimer -= dt;
         if (S.transformTimer <= 0.0f)
         {
             S.transformTimer = 0.0f;
-            G->SpriteSetAnim(S.player, PowerAnim(PowerLevel()));  // back to the normal Big sheet
+            if (g_shrinking) { g_shrinking = false; SetPower(b, 0); }                // now go small
+            else G->SpriteSetAnim(S.player, PowerAnim(PowerLevel()));
         }
+        StoreBody(b);                                             // <-- the ground-sink fix
         return;
     }
     StoreBody(b);
@@ -507,15 +592,17 @@ void Player_Update(float dt)
         }
 
         const float planar = sqrtf(g_vel[0] * g_vel[0] + g_vel[2] * g_vel[2]);
-        const bool shift = G->KeyDown(VK_SHIFT);
-        const bool crouch = G->KeyDown(VK_DOWN) || G->KeyDown('S');
+        const bool shift = Bind_Down(ACT_SPRINT);
+        const bool crouch = G->KeyDown(VK_DOWN) || Bind_Down(ACT_BACK);
+        if (g_skidding && (!g_grounded || S.hurt > 0.0f)) Skid_End();
         if (S.hurt > 0.0f)        Sprite_Play(S.player, "Hurt", "Idle");
         else if (!g_grounded)     Sprite_Play(S.player, g_vel[1] > 0.0f ? "Jump" : "Fall", "Jump");
+        else if (g_skidding)      Sprite_Play(S.player, "Skid", "Idle");
         else if (planar > 0.4f) { if (shift) Sprite_Play(S.player, "Run", "Walk"); else Sprite_Play(S.player, "Walk", "Idle"); }
         else if (crouch)          Sprite_Play(S.player, "Crouch", "Idle");
         else                      Sprite_Play(S.player, "Idle", nullptr);
 
-        G->SpriteSetSpeed(S.player, (g_grounded && planar > 0.4f && G->KeyDown(VK_SHIFT)) ? 1.6f : 1.0f);
+        G->SpriteSetSpeed(S.player, (g_grounded && !g_skidding && planar > 0.4f && Bind_Down(ACT_SPRINT)) ? 1.6f : 1.0f);
         if (S.hurt > 0.0f) S.hurt -= dt;
     }
 

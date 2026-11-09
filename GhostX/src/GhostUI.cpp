@@ -66,9 +66,11 @@ static void PushRect(std::vector<GhostUIQuad>& out, float x, float y, float w, f
     out.push_back(q);
 }
 
-static void PushText(std::vector<GhostUIQuad>& out, const GhostFont& font, const GhostWidget& w,
-    int align, bool centerV, const float* col)
+static void PushText(std::vector<GhostUIQuad>& out, const GhostFont& defFont, const std::vector<GhostFont>& fonts,
+    const GhostWidget& w, int align, bool centerV, const float* col)
 {
+    const GhostFont& font = (w.fontId >= 1 && w.fontId <= (int)fonts.size() && fonts[(size_t)w.fontId - 1].ready)
+        ? fonts[(size_t)w.fontId - 1] : defFont;
     if (w.text.empty() || col[3] <= 0.001f) return;
     const float fs = w.fontSize * w.drawScale;                  // text follows the UI scale, never stretched sideways
     const float tw = GhostText_Measure(font, fs, w.text.c_str());
@@ -85,7 +87,7 @@ static void PushText(std::vector<GhostUIQuad>& out, const GhostFont& font, const
     GhostText_Draw(out, font, tx, ty, fs, w.text.c_str(), col);
 }
 
-void GhostUI_Build(const GhostUIAsset& a, const GhostFont& font, std::vector<GhostUIQuad>& out)
+void GhostUI_Build(const GhostUIAsset& a, const GhostFont& font, const std::vector<GhostFont>& fonts, std::vector<GhostUIQuad>& out)
 {
     if (!a.shown) return;
     for (const GhostWidget& w : a.widgets)
@@ -100,13 +102,13 @@ void GhostUI_Build(const GhostUIAsset& a, const GhostFont& font, std::vector<Gho
             PushRect(out, w.rect[0], w.rect[1], w.rect[2], w.rect[3], w.color, w.textureId);
             break;
         case GHOST_W_TEXT:
-            PushText(out, font, w, w.align, false, w.color);
+            PushText(out, font, fonts, w, w.align, false, w.color);
             break;
         case GHOST_W_BUTTON:
         {
             const float* face = w.pressed ? w.pressColor : (w.hovered ? w.hoverColor : w.color);
             PushRect(out, w.rect[0], w.rect[1], w.rect[2], w.rect[3], face, 0);
-            PushText(out, font, w, 1, true, w.textColor);            // button labels are always centered
+            PushText(out, font, fonts, w, 1, true, w.textColor);
             break;
         }
         case GHOST_W_PROGRESS:

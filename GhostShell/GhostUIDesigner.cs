@@ -36,7 +36,29 @@ namespace GhostShell
         public static readonly string[] Names = { "Left", "Center", "Right" };
         protected override string[] Items => Names;
     }
-
+    // .ttf / .otf files in the project's Content folder, plus Browse...
+    internal sealed class UIFontConverter : StringConverter
+    {
+        public const string Default = "(default)", Browse = "Browse...";
+        public override bool GetStandardValuesSupported(ITypeDescriptorContext? context) => true;
+        public override bool GetStandardValuesExclusive(ITypeDescriptorContext? context) => false;
+        public override StandardValuesCollection GetStandardValues(ITypeDescriptorContext? context)
+        {
+            var list = new List<string> { Default };
+            try
+            {
+                string? content = GhostProject.ContentDir, root = GhostProject.Root;
+                if (content != null && root != null && Directory.Exists(content))
+                    foreach (string f in Directory.EnumerateFiles(content, "*.*", SearchOption.AllDirectories)
+                                 .Where(p => p.EndsWith(".ttf", StringComparison.OrdinalIgnoreCase) ||
+                                             p.EndsWith(".otf", StringComparison.OrdinalIgnoreCase)).Take(200))
+                        list.Add(Path.GetRelativePath(root, f).Replace('\\', '/'));
+            }
+            catch { }
+            list.Add(Browse);
+            return new StandardValuesCollection(list);
+        }
+    }
     // Image files in the project's Content folder, plus Browse...; typing any path also works
     internal sealed class UITextureConverter : StringConverter
     {
@@ -191,6 +213,43 @@ namespace GhostShell
 
         [Category("Text")]
         public bool Shadow { get => W.Shadow; set => W.Shadow = value; }
+        [Category("Text"), DisplayName("Font")]
+        [TypeConverter(typeof(UIFontConverter))]
+        public string FontFile
+        {
+            get => W.Font.Length == 0 ? UIFontConverter.Default : W.Font;
+            set
+            {
+                if (value == UIFontConverter.Browse) { string? p = BrowseForFont(); if (p != null) W.Font = p; }
+                else W.Font = value == UIFontConverter.Default ? "" : value;
+            }
+        }
+
+        private static string? BrowseForFont()
+        {
+            using var dlg = new OpenFileDialog
+            {
+                Title = "Choose a font",
+                Filter = "Fonts (*.ttf;*.otf)|*.ttf;*.otf",
+            };
+            if (dlg.ShowDialog() != DialogResult.OK) return null;
+            try
+            {
+                string local = GhostProject.EnsureInContent(dlg.FileName, null);
+                string? root = GhostProject.Root;
+                if (root != null)
+                {
+                    string rel = Path.GetRelativePath(root, local);
+                    if (!rel.StartsWith("..") && !Path.IsPathRooted(rel)) return rel.Replace('\\', '/');
+                }
+                return local;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ex.Message, "Font", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return null;
+            }
+        }
     }
 
     internal sealed class TextWidgetProxy : LabelProxy
@@ -738,10 +797,7 @@ namespace GhostShell
 
             w.Parent = parent;
             (parent == null ? _doc.Roots : parent.Children).Add(w);
-            AutoAnchor(w);                                   // NEW: corners hug edges, middles stay centered
-
-            w.Parent = parent;
-            (parent == null ? _doc.Roots : parent.Children).Add(w);
+            AutoAnchor(w);                                   // NEW: corners hug edges, middles stay centered          
 
             RebuildTree();
             SelectWidget(w);

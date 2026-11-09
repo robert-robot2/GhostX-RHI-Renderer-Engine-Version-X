@@ -34,6 +34,8 @@ struct GhostWidget
     int   align = 0;                              // 0 left, 1 center, 2 right
     bool  shadow = true;
     std::string texture;                          // Image: project-relative path
+    std::string font;                             // project-relative .ttf/.otf, "" = default UI font
+    int   fontId = 0;                             // runtime: slot from GhostEngine_RegisterFont, 0 = default
     int   textureId = 0;
     float value = 1.0f;                           // ProgressBar 0..1
 
@@ -62,6 +64,6 @@ bool GhostUI_Save(const GhostUIAsset& a, const std::string& absFile, std::string
 
 // W x H = the real screen in reference units (H is always 1080). Applies the asset's scale mode and safe area.
 void GhostUI_Layout(GhostUIAsset& a, float W, float H);
-void GhostUI_Build(const GhostUIAsset& a, const GhostFont& font, std::vector<GhostUIQuad>& out);
+void GhostUI_Build(const GhostUIAsset& a, const GhostFont& font, const std::vector<GhostFont>& fonts, std::vector<GhostUIQuad>& out);
 // ev: 0 move, 1 left down, 2 left up, 3 leave. mx, my in reference units.
 void GhostUI_Mouse(GhostUIAsset& a, int ev, float mx, float my, bool inside);

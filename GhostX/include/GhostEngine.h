@@ -125,6 +125,7 @@ struct GhostSoundInfo
     char  name[48];
     char  file[260];
 };
+typedef int(__cdecl* GhostFontProviderFn)(const char* utf8AbsPath);   // returns a font slot, 0 = failed
 
 extern "C"
 {
@@ -344,4 +345,7 @@ extern "C"
     GHOST_API void GhostEngine_GetResolution(int* w, int* h);               // render size of the main view right now
     GHOST_API int  GhostEngine_GetResolutionList(int* outWH, int maxPairs); // presets + monitor modes, ascending. Returns pairs
 
+    GHOST_API int  GhostEngine_RegisterFont(int textureId, int atlasW, int atlasH, float cellW, float cellH,
+        float pad, float lineHeight, const float* advances);          // returns slot >= 1, 0 = failed
+    GHOST_API void GhostEngine_SetFontProvider(GhostFontProviderFn fn);
 }
