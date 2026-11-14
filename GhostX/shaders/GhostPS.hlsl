@@ -16,6 +16,7 @@ cbuffer SceneBuffer : register(b1)
     uint   lightCount;
     uint3  padScene;
     float4 shadowGlobal;    // x strength (0 = off), y map size
+    float4 shadowTune;      // x filter mode, y softness (texels), z depth bias scale, w normal bias scale
     Light  lights[MAX_LIGHTS];
     row_major float4x4 shadowVP[MAX_LIGHTS];
 };
@@ -40,6 +41,7 @@ cbuffer ObjectBuffer : register(b0)       // same layout as MVPBuffer in GhostVS
     float4 sky[16];                       // sky pass parameters (see GhostSky_Build)
     float4 pbrA;                          // metallic, roughness, specular, emissive strength
     float4 pbrB;                          // emissive rgb, w = 1 when this draw uses PBR
+    float4 alphaP;                        // x alpha mode (1 = cutout), y source (0 tex alpha, 1 brightness, 2 inverted), z cutoff
 };
 
 struct PSInput
@@ -185,14 +187,45 @@ float ShadowTap(float2 uv, float slice, float refDepth)
 }
 
 // 0 = fully shadowed, 1 = lit. Normal-offset plus a small depth bias, then a 3x3 soft edge.
-float ShadowFactor(Light L, float3 worldPos, float3 N, int type)
+static const float2 kPoisson[16] =
 {
+    float2(-0.94201624f, -0.39906216f), float2(0.94558609f, -0.76890725f),
+    float2(-0.09418410f, -0.92938870f), float2(0.34495938f,  0.29387760f),
+    float2(-0.91588581f,  0.45771432f), float2(-0.81544232f, -0.87912464f),
+    float2(-0.38277543f,  0.27676845f), float2(0.97484398f,  0.75648379f),
+    float2(0.44323325f, -0.97511554f), float2(0.53742981f, -0.47373420f),
+    float2(-0.26496911f, -0.41893023f), float2(0.79197514f,  0.19090188f),
+    float2(-0.24188840f,  0.99706507f), float2(-0.81409955f,  0.91437590f),
+    float2(0.19984126f,  0.78641367f), float2(0.14383161f, -0.14100790f)
+};
+
+// One tap with a bilinear blend of the four nearest texels: a clean edge instead of stair-steps
+float ShadowTapBilinear(float2 uv, float slice, float refDepth)
+{
+    const float size = shadowGlobal.y;
+    const float inv = 1.0f / size;
+    float2 t = uv * size - 0.5f;
+    float2 f = frac(t);
+    float2 base = (floor(t) + 0.5f) * inv;
+    float a = ShadowTap(base, slice, refDepth);
+    float b = ShadowTap(base + float2(inv, 0.0f), slice, refDepth);
+    float c = ShadowTap(base + float2(0.0f, inv), slice, refDepth);
+    float d = ShadowTap(base + float2(inv, inv), slice, refDepth);
+    return lerp(lerp(a, b, f.x), lerp(c, d, f.x), f.y);
+}
+
+// 0 = fully shadowed, 1 = lit
+float ShadowFactor(Light L, float3 worldPos, float3 N, int type, float2 pixelPos)
+{
+    const int    mode = (int)(shadowTune.x + 0.5f);
+    const float  soft = (mode == 0) ? 1.0f : max(shadowTune.y, 0.05f);
     const float  farW = max(L.shadow.y, 1e-3f);
     const float3 rel = worldPos - L.posRange.xyz;
     const float  dist = length(rel);
-    const float  texel = (type == 0) ? L.shadow.z : L.shadow.z * dist;
-    const float3 p = worldPos + N * (texel * 1.5f);
-    const float  bias = (texel * 2.0f) / farW;
+    // a wider filter needs proportionally more bias, or the surface shadows itself
+    const float  texel = ((type == 0) ? L.shadow.z : L.shadow.z * dist) * max(soft, 1.0f);
+    const float3 p = worldPos + N * (texel * 1.5f * shadowTune.w);       // normal offset
+    const float  bias = (texel * 2.0f * shadowTune.z) / farW;               // depth bias
 
     float  slice = L.shadow.x;
     float4 clip;
@@ -217,12 +250,38 @@ float ShadowFactor(Light L, float3 worldPos, float3 N, int type)
     float2 uv = float2(clip.x / clip.w * 0.5f + 0.5f, 0.5f - clip.y / clip.w * 0.5f);
     if (uv.x < 0.0f || uv.x > 1.0f || uv.y < 0.0f || uv.y > 1.0f) return 1.0f;      // outside the map: lit
 
-    const float step = 1.0f / shadowGlobal.y;
+    const float step = soft / shadowGlobal.y;                // filter radius unit: texels -> uv
+
+    if (mode == 0)                                           // sharp: one bilinear tap
+        return ShadowTapBilinear(uv, slice, refDepth);
+
     float lit = 0.0f;
-    [unroll] for (int y = -1; y <= 1; y++)
-        [unroll] for (int x = -1; x <= 1; x++)
-        lit += ShadowTap(uv + float2((float)x, (float)y) * step, slice, refDepth);
-    return lit / 9.0f;
+    if (mode == 1)                                           // classic 3x3, point taps
+    {
+        [unroll] for (int y = -1; y <= 1; y++)
+            [unroll] for (int x = -1; x <= 1; x++)
+            lit += ShadowTap(uv + float2((float)x, (float)y) * step, slice, refDepth);
+        return lit / 9.0f;
+    }
+    if (mode == 2)                                           // smooth: 3x3 of bilinear taps
+    {
+        [unroll] for (int y2 = -1; y2 <= 1; y2++)
+            [unroll] for (int x2 = -1; x2 <= 1; x2++)
+            lit += ShadowTapBilinear(uv + float2((float)x2, (float)y2) * step, slice, refDepth);
+        return lit / 9.0f;
+    }
+    // soft: 16 Poisson taps, rotated per pixel (noise instead of banding; TAA cleans it up)
+    const float ign = frac(52.9829189f * frac(dot(pixelPos, float2(0.06711056f, 0.00583715f))));
+    const float ang = ign * 6.2831853f;
+    const float cs = cos(ang), sn = sin(ang);
+    const float rad = step * 2.5f;
+    [unroll] for (int i = 0; i < 16; i++)
+    {
+        float2 k = kPoisson[i];
+        float2 o = float2(cs * k.x - sn * k.y, sn * k.x + cs * k.y) * rad;
+        lit += ShadowTap(uv + o, slice, refDepth);
+    }
+    return lit / 16.0f;
 }
 
 float4 PSMain(PSInput input, bool isFront : SV_IsFrontFace) : SV_TARGET
@@ -235,6 +294,19 @@ float4 PSMain(PSInput input, bool isFront : SV_IsFrontFace) : SV_TARGET
     float4 texel = MappedTexel(input);
     const int spriteFlags = (int)(objPad.y + 0.5f);
     if ((spriteFlags & 1) != 0 && texel.a < 0.5f) discard;
+    // ---- per-slot alpha cutout (materials only, sprites keep their own path) ----
+    if (pbrB.w > 0.5f && alphaP.x > 0.5f)
+    {
+        float a = texel.a;                                            // source 0: the PNG's alpha channel
+        if (alphaP.y > 0.5f)
+        {
+            // texel is linear (sRGB view). Brightness is converted back to display space,
+            // so the cutoff slider matches the grey values you see in GIMP.
+            float lum = pow(saturate(dot(texel.rgb, float3(0.2126f, 0.7152f, 0.0722f))), 1.0f / 2.2f);
+            a = (alphaP.y < 1.5f) ? lum : (1.0f - lum);               // 1: dark = clear, 2: light = clear
+        }
+        clip(a - alphaP.z);                                           // discard below the cutoff
+    }
     const bool receive = objPad.z < 0.5f;                  // Receive Shadows
     float3 albedo = pow(input.color.rgb, 2.2f) * texel.rgb;
 
@@ -290,7 +362,7 @@ float4 PSMain(PSInput input, bool isFront : SV_IsFrontFace) : SV_TARGET
 
         float NoL = saturate(dot(N, toLight));
         if (receive && NoL > 0.0f && atten > 0.0f && L.shadow.x >= 0.0f)
-            atten *= lerp(1.0f, ShadowFactor(L, input.worldPos, N, type), shadowGlobal.x);
+            atten *= lerp(1.0f, ShadowFactor(L, input.worldPos, N, type, input.pos.xy), shadowGlobal.x);
         diffuseSum += radiance * NoL * atten;
 
         if (usePbr && NoL > 0.0f)

@@ -37,6 +37,8 @@ struct GhostMaterialInfo
     float r, g, b;                     // tint
     float metallic, roughness, specular;
     float emR, emG, emB, emissiveStrength;
+    int   alphaMode, alphaSource;
+    float alphaCutoff;
 };
 struct GhostCameraInfo
 {
@@ -126,6 +128,7 @@ struct GhostSoundInfo
     char  file[260];
 };
 typedef int(__cdecl* GhostFontProviderFn)(const char* utf8AbsPath);   // returns a font slot, 0 = failed
+struct GhostShadowTuning { int filter; float softness, bias, normalBias, distance; };
 
 extern "C"
 {
@@ -253,6 +256,13 @@ extern "C"
     GHOST_API void GhostEngine_SetLightShadows(int lightId, int on);
     GHOST_API void GhostEngine_GetShadowSettings(int* enabled, float* strength);
     GHOST_API void GhostEngine_SetShadowSettings(int enabled, float strength);
+
+    GHOST_API int  GhostEngine_GetShadowResolution();            // 512, 1024, 2048 or 4096
+    GHOST_API void GhostEngine_SetShadowResolution(int size);    // snapped to the nearest allowed size
+
+    GHOST_API void GhostEngine_GetShadowTuning(GhostShadowTuning* out);
+    GHOST_API void GhostEngine_SetShadowTuning(const GhostShadowTuning* in);
+
     // ---- Models ----
 // Returns the new mesh id (>= 5), or -1 on failure (msg = the reason). On success msg holds a summary.
 // upAxis: 0 auto, 1 Y up, 2 Z up. fitSize 0 = off.

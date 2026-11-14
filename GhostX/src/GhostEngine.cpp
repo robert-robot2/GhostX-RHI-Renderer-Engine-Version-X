@@ -28,6 +28,7 @@
 #include <algorithm>
 #include <vector>
 #include <utility>
+#include <cctype>
 
 // ---- Engine state ----
 static IGhostRHI* g_rhi = nullptr;
@@ -378,7 +379,10 @@ static void BuildSceneCB(const GhostScene& s, GhostSceneCB& out)
         if (m.typeId == GHOST_MOD_SKY) { amb = GhostSky_AmbientIntensity(m, amb); break; }
     for (int i = 0; i < 3; i++)
         out.ambient[i] = s.ambientColor[i] * amb;
-
+    out.shadowTune[0] = (float)s.shadowFilter;
+    out.shadowTune[1] = s.shadowSoftness;
+    out.shadowTune[2] = s.shadowBias;
+    out.shadowTune[3] = s.shadowNormalBias;
     for (const GhostLight& l : s.lights)
     {
         if (out.lightCount >= GHOST_MAX_LIGHTS) break;
@@ -1073,11 +1077,11 @@ static bool ShadowEligible(const GhostObject& o, const GhostLight& l)
     return o.shadowMode == 1 || (o.shadowMode == 2 && o.shadowLightId == l.id);
 }
 
-static void RenderShadowPass(GhostSceneCB& cb, const GhostVec3& eye, unsigned int rw, unsigned int rh)
+static void RenderShadowPass(GhostSceneCB& cb, const GhostVec3& eye, const GhostVec3& forward, unsigned int rw, unsigned int rh)
 {
     for (unsigned int i = 0; i < GHOST_MAX_LIGHTS; i++) cb.lights[i].shadow[0] = -1.0f;   // "no shadow" by default
     cb.shadowGlobal[0] = 0.0f;
-    cb.shadowGlobal[1] = (float)GHOST_SHADOW_SIZE;
+    cb.shadowGlobal[1] = (float)g_pipeline->shadowSize;
     if (!g_scene.shadowsEnabled || g_scene.shadowStrength <= 0.0f || cb.lightCount == 0) return;
 
     bool anyLight = false;
@@ -1131,9 +1135,12 @@ static void RenderShadowPass(GhostSceneCB& cb, const GhostVec3& eye, unsigned in
     }
     if (casters.empty()) return;
 
-    const GhostVec3 center = (bmin + bmax) * 0.5f;
+    GhostVec3 center = (bmin + bmax) * 0.5f;
     float R = (bmax - bmin).Length() * 0.5f;
     R = R < 1.0f ? 1.0f : (R > 1000.0f ? 1000.0f : R);
+    const float fitR = g_scene.shadowDistance * 0.5f;                  // fit the map to the area in front of the camera
+    const bool  fit = fitR >= 1.0f && fitR < R;                        // a small scene already fits, so it keeps the old way
+    if (fit) { R = fitR; center = eye + forward * R; }
 
     // ---- one job per map slice ----
     struct Job { const GhostLight* light; int slice; float vp[16]; float posFar[4]; float mode; };
@@ -1175,19 +1182,28 @@ static void RenderShadowPass(GhostSceneCB& cb, const GhostVec3& eye, unsigned in
         {
             const GhostVec3 dir = LightForward(l).Normalize();
             const GhostVec3 up = fabsf(dir.y) > 0.99f ? GhostVec3(0, 0, 1) : GhostVec3(0, 1, 0);
-            const GhostVec3 from = center - dir * (R * 1.1f);
-            const float farW = R * 2.2f;
-            const GhostMat4 vpm = GhostMat4::OrthoLH(2.0f * R, 2.0f * R, 0.0f, farW) * GhostMat4::LookAtLH(from, center, up);
+            const float texelW = (2.0f * R) / (float)g_pipeline->shadowSize;
+            GhostVec3 c = center;
+            if (fit)                                       // snap to the texel grid, so shadows don't shimmer when the camera moves
+            {
+                const GhostVec3 lr = up.Cross(dir).Normalize();
+                const GhostVec3 lu = dir.Cross(lr);
+                const float cx = c.Dot(lr), cy = c.Dot(lu);
+                c = c + lr * (floorf(cx / texelW + 0.5f) * texelW - cx) + lu * (floorf(cy / texelW + 0.5f) * texelW - cy);
+            }
+            const GhostVec3 from = c - dir * (R * 2.0f);
+            const float farW = R * 4.0f;
+            const GhostMat4 vpm = GhostMat4::OrthoLH(2.0f * R, 2.0f * R, 0.0f, farW) * GhostMat4::LookAtLH(from, c, up);
             g.shadow[1] = farW;
-            g.shadow[2] = (2.0f * R) / (float)GHOST_SHADOW_SIZE;
-            push(l, next, vpm, center, farW, 0.0f);
+            g.shadow[2] = texelW;
+            push(l, next, vpm, c, farW, 0.0f);
         }
         else
         {
             const float farW = fmaxf(l.range, 0.5f);
             const GhostMat4 proj = GhostMat4::PerspectiveFovLH(2.0f * atanf(kTanHalf), 1.0f, 0.05f, farW);
             g.shadow[1] = farW;
-            g.shadow[2] = (2.0f * kTanHalf) / (float)GHOST_SHADOW_SIZE;
+            g.shadow[2] = (2.0f * kTanHalf) / (float)g_pipeline->shadowSize;
             for (int f = 0; f < 6; f++)
                 push(l, next + f, proj * GhostMat4::LookAtLH(l.position, l.position + kFaceDir[f], kFaceUp[f]),
                     l.position, farW, 1.0f);
@@ -2076,7 +2092,7 @@ static void RenderViewport(int vp)
     if (taa) GhostTAA_Begin(g_rhi, g_pipeline, g_taa, vp, &g_clearColor, rw, rh);   // scene, icons and overlays draw jittered
     GhostSceneCB sceneCB;
     BuildSceneCB(g_scene, sceneCB);
-    RenderShadowPass(sceneCB, eye, rw, rh);          // renders the shadow maps and fills the shadow fields
+    RenderShadowPass(sceneCB, eye, forward, rw, rh);
     GhostUpdateSceneCB(g_pipeline, &sceneCB);
 
     // ---- Draw scene objects (one draw per run of faces that share a material) ----
@@ -2162,7 +2178,9 @@ static void RenderViewport(int vp)
             cb.pbr[0] = m.metallic;  cb.pbr[1] = m.roughness;  cb.pbr[2] = m.specular;  cb.pbr[3] = m.emissiveStrength;
             cb.pbr[4] = m.emissive[0];  cb.pbr[5] = m.emissive[1];  cb.pbr[6] = m.emissive[2];
             cb.pbr[7] = 1.0f;                                  // this draw uses PBR
-
+            cb.alphaP[0] = (float)m.alphaMode;
+            cb.alphaP[1] = (float)m.alphaSource;
+            cb.alphaP[2] = m.alphaCutoff;
             GhostUpdateObjectCB(g_pipeline, slot, &cb);
             GhostDrawMesh(g_rhi, g_pipeline, o.meshId, slot, (unsigned int)m.textureId,
                 a.firstIndex, b.firstIndex + b.indexCount - a.firstIndex);
@@ -2299,9 +2317,11 @@ struct UndoSnap
     float ambientColor[3] = { 1, 1, 1 };
     float ambientIntensity = 0.15f, shadowStrength = 1.0f;
     bool  shadowsEnabled = true;
+    int   shadowRes = 1024, shadowFilter = 2;
+    float shadowSoftness = 1.0f, shadowBias = 1.0f, shadowNormalBias = 1.0f, shadowDistance = 30.0f;
     std::string music, ambience;
     int   activeCameraId = 0, gameStartCameraId = 0, nextId = 1;
-};
+ };
 static std::vector<UndoSnap> g_undo, g_redo;
 static UndoSnap     g_undoBase;
 static unsigned int g_undoBaseHash = 0;
@@ -2315,6 +2335,8 @@ static void UndoCapture(UndoSnap& s)
     for (int i = 0; i < 3; i++) s.ambientColor[i] = g_scene.ambientColor[i];
     s.ambientIntensity = g_scene.ambientIntensity; s.shadowStrength = g_scene.shadowStrength;
     s.shadowsEnabled = g_scene.shadowsEnabled;
+    s.shadowRes = g_scene.shadowRes; s.shadowFilter = g_scene.shadowFilter; s.shadowSoftness = g_scene.shadowSoftness;
+    s.shadowBias = g_scene.shadowBias; s.shadowNormalBias = g_scene.shadowNormalBias; s.shadowDistance = g_scene.shadowDistance;
     s.activeCameraId = g_scene.activeCameraId; s.gameStartCameraId = g_scene.gameStartCameraId; s.nextId = g_scene.nextId;
     s.music = g_scene.music; s.ambience = g_scene.ambience;
 }
@@ -2354,6 +2376,8 @@ static void UndoRestore(const UndoSnap& s)
     for (int i = 0; i < 3; i++) g_scene.ambientColor[i] = s.ambientColor[i];
     g_scene.ambientIntensity = s.ambientIntensity; g_scene.shadowStrength = s.shadowStrength;
     g_scene.shadowsEnabled = s.shadowsEnabled;
+    g_scene.shadowRes = s.shadowRes; g_scene.shadowFilter = s.shadowFilter; g_scene.shadowSoftness = s.shadowSoftness;
+    g_scene.shadowBias = s.shadowBias; g_scene.shadowNormalBias = s.shadowNormalBias; g_scene.shadowDistance = s.shadowDistance;
     g_scene.music = s.music; g_scene.ambience = s.ambience;
     g_scene.activeCameraId = s.activeCameraId; g_scene.gameStartCameraId = s.gameStartCameraId;
     if (s.nextId > g_scene.nextId) g_scene.nextId = s.nextId;      // ids never go backwards
@@ -2568,7 +2592,9 @@ void GhostEngine_Tick()
         PruneMulti();
         if (g_marquee && !(GetAsyncKeyState(VK_LBUTTON) & 0x8000)) g_marquee = false;
     }
-
+    if (g_pipeline->shadowSize != (unsigned int)g_scene.shadowRes)        // shadow resolution changed
+        if (GhostSetShadowSize(g_rhi, g_pipeline, (unsigned int)g_scene.shadowRes) != GHOST_OK)
+            g_scene.shadowRes = (int)g_pipeline->shadowSize;              // could not allocate: keep what works
     GhostMSAA_Apply(g_rhi, g_pipeline, g_msaa, g_taaOn ? 1 : g_msaaWanted);   // TAA and MSAA are exclusive
     // ---- Render: camera windows first, the main view last (it carries the vsync) ----
     for (int vp = 1; vp < GHOST_MAX_SURFACES; vp++)
@@ -2636,7 +2662,8 @@ int GhostEngine_GetMaterial(int objectId, int face, GhostMaterialInfo* out)
              m.tiling[0], m.tiling[1], m.offset[0], m.offset[1], m.rotationDeg,
              m.tint[0], m.tint[1], m.tint[2],
              m.metallic, m.roughness, m.specular,
-             m.emissive[0], m.emissive[1], m.emissive[2], m.emissiveStrength };
+             m.emissive[0], m.emissive[1], m.emissive[2], m.emissiveStrength,
+             m.alphaMode, m.alphaSource, m.alphaCutoff };
     return 1;
 }
 
@@ -2664,6 +2691,9 @@ void GhostEngine_SetMaterial(int objectId, int face, const GhostMaterialInfo* in
     m.specular = c01(in->specular);
     m.emissive[0] = c01(in->emR); m.emissive[1] = c01(in->emG); m.emissive[2] = c01(in->emB);
     m.emissiveStrength = in->emissiveStrength < 0.0f ? 0.0f : (in->emissiveStrength > 20.0f ? 20.0f : in->emissiveStrength);
+    m.alphaMode = in->alphaMode ? 1 : 0;
+    m.alphaSource = in->alphaSource < 0 ? 0 : (in->alphaSource > 2 ? 2 : in->alphaSource);
+    m.alphaCutoff = c01(in->alphaCutoff);
     const int from = face < 0 ? 0 : face;
     const int to = face < 0 ? count - 1 : face;
     for (int f = from; f <= to; f++) o->faces[f] = m;
@@ -3013,6 +3043,9 @@ void GhostEngine_ClearScene()
     g_scene.ambientColor[0] = g_scene.ambientColor[1] = g_scene.ambientColor[2] = 1.0f;
     g_scene.ambientIntensity = 0.15f;    g_scene.shadowsEnabled = true;
     g_scene.shadowStrength = 1.0f;
+    g_scene.shadowRes = 1024;
+    g_scene.shadowFilter = 2; g_scene.shadowSoftness = 1.0f; g_scene.shadowBias = 1.0f;
+    g_scene.shadowNormalBias = 1.0f; g_scene.shadowDistance = 30.0f;
     g_scene.nextId = 1;
     g_scene.music.clear(); g_scene.ambience.clear();
     g_scene.selectedId = 0;
@@ -4397,9 +4430,27 @@ void GhostEngine_SetShadowSettings(int enabled, float strength)
     g_scene.shadowStrength = strength < 0.0f ? 0.0f : (strength > 1.0f ? 1.0f : strength);
 }
 
+int GhostEngine_GetShadowResolution() { return g_scene.shadowRes; }
 
+void GhostEngine_SetShadowResolution(int size) { g_scene.shadowRes = GhostShadowRes_Clamp(size); }
 
+void GhostEngine_GetShadowTuning(GhostShadowTuning* out)
+{
+    if (!out) return;
+    *out = { g_scene.shadowFilter, g_scene.shadowSoftness, g_scene.shadowBias, g_scene.shadowNormalBias, g_scene.shadowDistance };
+}
 
+void GhostEngine_SetShadowTuning(const GhostShadowTuning* in)
+{
+    if (!in) return;
+    auto cf = [](float v, float lo, float hi) { return v != v ? lo : (v < lo ? lo : (v > hi ? hi : v)); };
+    g_scene.shadowFilter = in->filter < 0 ? 0 : (in->filter > 3 ? 3 : in->filter);
+    g_scene.shadowSoftness = cf(in->softness, 0.25f, 4.0f);
+    g_scene.shadowBias = cf(in->bias, 0.0f, 8.0f);
+    g_scene.shadowNormalBias = cf(in->normalBias, 0.0f, 8.0f);
+    const float d = cf(in->distance, 0.0f, 1000.0f);
+    g_scene.shadowDistance = (d > 0.0f && d < 2.0f) ? 2.0f : d;        // 0 = whole scene, otherwise at least 2
+}
 
 // ============================================================
 //  Exported: model import, materials, re-import and .ghostmesh loading
@@ -4529,6 +4580,14 @@ static GhostFaceDef MakeFace(const GhostModelSub& s, std::string& warn)
     g.roughness = m.roughness;
     g.specular = m.specular;
     g.emissiveStrength = m.emissiveStrength;
+    {
+        std::string n = s.name;
+        for (char& c : n) c = (char)tolower((unsigned char)c);
+        if (n.find("lash") != std::string::npos || n.find("brow") != std::string::npos)
+        {
+            g.alphaMode = 1; g.alphaSource = 2;
+        }      // cutout, light background = clear
+    }
     if (!m.texPath.empty())
     {
         const std::string abs = StoredToAbs(m.texPath);

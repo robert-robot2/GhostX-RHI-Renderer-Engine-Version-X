@@ -84,6 +84,9 @@ static json MatToJson(const GhostMaterial& m, const std::set<int>& savedTex)
     j["specular"] = m.specular;
     j["emissive"] = F3(m.emissive);
     j["emissiveStrength"] = m.emissiveStrength;
+    j["alphaMode"] = m.alphaMode;
+    j["alphaSource"] = m.alphaSource;
+    j["alphaCutoff"] = m.alphaCutoff;
     return j;
 }
 
@@ -108,6 +111,9 @@ static GhostMaterial MatFromJson(const json& j, const std::function<int(int)>& m
     m.emissiveStrength = j.value("emissiveStrength", 1.0f);
     m.emissiveStrength = m.emissiveStrength < 0.0f ? 0.0f : (m.emissiveStrength > 20.0f ? 20.0f : m.emissiveStrength);
     for (int i = 0; i < 2; i++) if (fabsf(m.tiling[i]) < 0.001f) m.tiling[i] = 1.0f;
+    m.alphaMode = Clampi(j.value("alphaMode", 0), 0, 1);
+    m.alphaSource = Clampi(j.value("alphaSource", 0), 0, 2);
+    m.alphaCutoff = c01(j.value("alphaCutoff", 0.5f));
     return m;
 }
 
@@ -128,7 +134,9 @@ bool GhostScene_Save(const GhostScene& s, const std::string& root, const std::st
         amb["color"] = F3(s.ambientColor);
         amb["intensity"] = s.ambientIntensity;
         j["ambient"] = amb;
-        j["shadows"] = json{ { "enabled", s.shadowsEnabled },{ "strength", s.shadowStrength } };
+        j["shadows"] = json{ { "enabled", s.shadowsEnabled },{ "strength", s.shadowStrength },{ "resolution", s.shadowRes },
+            { "filter", s.shadowFilter },{ "softness", s.shadowSoftness },{ "bias", s.shadowBias },
+            { "normalBias", s.shadowNormalBias },{ "distance", s.shadowDistance } };
         j["audio"] = json{ { "music", s.music },{ "ambience", s.ambience } };
         std::set<int> saved;
         json texs = json::array();
@@ -398,12 +406,21 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
         }
         s.shadowsEnabled = true;
         s.shadowStrength = 1.0f;
+        s.shadowRes = 1024; s.shadowFilter = 2; s.shadowSoftness = 1.0f; s.shadowBias = 1.0f; s.shadowNormalBias = 1.0f; s.shadowDistance = 30.0f;
         if (j.contains("shadows") && j["shadows"].is_object())
         {
             s.shadowsEnabled = j["shadows"].value("enabled", true);
             float st = j["shadows"].value("strength", 1.0f);
             s.shadowStrength = st < 0.0f ? 0.0f : (st > 1.0f ? 1.0f : st);
+            s.shadowRes = GhostShadowRes_Clamp(j["shadows"].value("resolution", 1024));
+            s.shadowFilter = Clampi(j["shadows"].value("filter", 2), 0, 3);
+            auto cf = [](float v, float lo, float hi) { return v != v ? lo : (v < lo ? lo : (v > hi ? hi : v)); };
+            s.shadowSoftness = cf(j["shadows"].value("softness", 1.0f), 0.25f, 4.0f);
+            s.shadowBias = cf(j["shadows"].value("bias", 1.0f), 0.0f, 8.0f);
+            s.shadowNormalBias = cf(j["shadows"].value("normalBias", 1.0f), 0.0f, 8.0f);
+            s.shadowDistance = cf(j["shadows"].value("distance", 30.0f), 0.0f, 1000.0f);
         }
+
         s.music.clear(); s.ambience.clear();
         if (j.contains("audio") && j["audio"].is_object())
         {
@@ -676,7 +693,7 @@ unsigned int GhostScene_Hash(const GhostScene& s)
 
     I(s.activeCameraId);
     I(s.gameStartCameraId);
-    I(s.shadowsEnabled ? 1 : 0); F(s.shadowStrength);
+    I(s.shadowsEnabled ? 1 : 0); F(s.shadowStrength); I(s.shadowRes); I(s.shadowFilter); F(s.shadowSoftness); F(s.shadowBias); F(s.shadowNormalBias); F(s.shadowDistance);
     S(s.music); S(s.ambience);
     F(s.ambientColor[0]); F(s.ambientColor[1]); F(s.ambientColor[2]); F(s.ambientIntensity);
 

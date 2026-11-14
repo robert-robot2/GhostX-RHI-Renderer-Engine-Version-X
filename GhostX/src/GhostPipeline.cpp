@@ -795,6 +795,75 @@ static void BuildMipChain(const unsigned char* rgba, unsigned int w, unsigned in
     }
 }
 
+// Builds the shadow map array at `size` x `size`, its DSVs and its SRV. Nothing changes if the allocation fails.
+static GhostResult CreateShadowMap(ID3D12Device* device, GhostPipeline* p, unsigned int size)
+{
+    D3D12_HEAP_PROPERTIES hp = {};
+    hp.Type = D3D12_HEAP_TYPE_DEFAULT;
+
+    D3D12_RESOURCE_DESC rd = {};
+    rd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    rd.Width = size;
+    rd.Height = size;
+    rd.DepthOrArraySize = GHOST_SHADOW_SLICES;
+    rd.MipLevels = 1;
+    rd.Format = DXGI_FORMAT_R32_TYPELESS;
+    rd.SampleDesc.Count = 1;
+    rd.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    rd.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+
+    D3D12_CLEAR_VALUE cv = {};
+    cv.Format = DXGI_FORMAT_D32_FLOAT;
+    cv.DepthStencil.Depth = 1.0f;
+
+    ComPtr<ID3D12Resource> map;
+    if (FAILED(device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd,
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &cv, IID_PPV_ARGS(&map))))
+        return GHOST_FAIL;
+
+    for (UINT i = 0; i < GHOST_SHADOW_SLICES; i++)
+    {
+        D3D12_DEPTH_STENCIL_VIEW_DESC dv = {};
+        dv.Format = DXGI_FORMAT_D32_FLOAT;
+        dv.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2DARRAY;
+        dv.Texture2DArray.MipSlice = 0;
+        dv.Texture2DArray.FirstArraySlice = i;
+        dv.Texture2DArray.ArraySize = 1;
+        D3D12_CPU_DESCRIPTOR_HANDLE h = p->shadowDsvHeap->GetCPUDescriptorHandleForHeapStart();
+        h.ptr += (SIZE_T)i * p->shadowDsvInc;
+        device->CreateDepthStencilView(map.Get(), &dv, h);
+    }
+
+    D3D12_SHADER_RESOURCE_VIEW_DESC sv = {};
+    sv.Format = DXGI_FORMAT_R32_FLOAT;
+    sv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
+    sv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    sv.Texture2DArray.MostDetailedMip = 0;
+    sv.Texture2DArray.MipLevels = 1;
+    sv.Texture2DArray.FirstArraySlice = 0;
+    sv.Texture2DArray.ArraySize = GHOST_SHADOW_SLICES;
+    D3D12_CPU_DESCRIPTOR_HANDLE sh = p->cbvHeap->GetCPUDescriptorHandleForHeapStart();
+    sh.ptr += (SIZE_T)GHOST_SHADOW_SRV_INDEX * p->srvIncrement;
+    device->CreateShaderResourceView(map.Get(), &sv, sh);
+
+    p->shadowMap = map;                         // the GPU is idle between frames, so the old map can be released here
+    return GHOST_OK;
+}
+
+GhostResult GhostSetShadowSize(IGhostRHI* rhi, GhostPipeline* p, unsigned int size)
+{
+    if (!rhi || !p || !p->shadowDsvHeap) return GHOST_FAIL;
+    if (size == p->shadowSize) return GHOST_OK;
+    if (CreateShadowMap(rhi->GetDevice(), p, size) != GHOST_OK) return GHOST_FAIL;
+    p->shadowSize = size;
+    return GHOST_OK;
+}
+
+
+
+
+
+
 
 static GhostResult UploadMesh(ID3D12Device* device, GhostMesh& m,
     const void* verts, unsigned int vbSize,
@@ -1225,32 +1294,9 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
     p->rtvIncrement = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
     CreateDepthBuffer(device, desc->width, desc->height, p, 0);
-    // ---- Shadow maps: one array texture, a DSV per slice, one SRV over the whole array ----
+
+       // ---- Shadow maps: one array texture, a DSV per slice, one SRV over the whole array ----
     {
-        D3D12_HEAP_PROPERTIES hp = {};
-        hp.Type = D3D12_HEAP_TYPE_DEFAULT;
-
-        D3D12_RESOURCE_DESC rd = {};
-        rd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-        rd.Width = GHOST_SHADOW_SIZE;
-        rd.Height = GHOST_SHADOW_SIZE;
-        rd.DepthOrArraySize = GHOST_SHADOW_SLICES;
-        rd.MipLevels = 1;
-        rd.Format = DXGI_FORMAT_R32_TYPELESS;
-        rd.SampleDesc.Count = 1;
-        rd.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
-        rd.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
-
-        D3D12_CLEAR_VALUE cv = {};
-        cv.Format = DXGI_FORMAT_D32_FLOAT;
-        cv.DepthStencil.Depth = 1.0f;
-
-        if (FAILED(device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd,
-            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &cv, IID_PPV_ARGS(&p->shadowMap))))
-        {
-            delete p; return GHOST_FAIL;
-        }
-
         D3D12_DESCRIPTOR_HEAP_DESC sdh = {};
         sdh.NumDescriptors = GHOST_SHADOW_SLICES;
         sdh.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
@@ -1259,30 +1305,12 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
             delete p; return GHOST_FAIL;
         }
         p->shadowDsvInc = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
-        for (UINT i = 0; i < GHOST_SHADOW_SLICES; i++)
-        {
-            D3D12_DEPTH_STENCIL_VIEW_DESC dv = {};
-            dv.Format = DXGI_FORMAT_D32_FLOAT;
-            dv.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2DARRAY;
-            dv.Texture2DArray.MipSlice = 0;
-            dv.Texture2DArray.FirstArraySlice = i;
-            dv.Texture2DArray.ArraySize = 1;
-            D3D12_CPU_DESCRIPTOR_HANDLE h = p->shadowDsvHeap->GetCPUDescriptorHandleForHeapStart();
-            h.ptr += (SIZE_T)i * p->shadowDsvInc;
-            device->CreateDepthStencilView(p->shadowMap.Get(), &dv, h);
-        }
 
-        D3D12_SHADER_RESOURCE_VIEW_DESC sv = {};
-        sv.Format = DXGI_FORMAT_R32_FLOAT;
-        sv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
-        sv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-        sv.Texture2DArray.MostDetailedMip = 0;
-        sv.Texture2DArray.MipLevels = 1;
-        sv.Texture2DArray.FirstArraySlice = 0;
-        sv.Texture2DArray.ArraySize = GHOST_SHADOW_SLICES;
-        D3D12_CPU_DESCRIPTOR_HANDLE sh = p->cbvHeap->GetCPUDescriptorHandleForHeapStart();
-        sh.ptr += (SIZE_T)GHOST_SHADOW_SRV_INDEX * p->srvIncrement;
-        device->CreateShaderResourceView(p->shadowMap.Get(), &sv, sh);
+        p->shadowSize = GHOST_SHADOW_SIZE;
+        if (CreateShadowMap(device, p, p->shadowSize) != GHOST_OK)
+        {
+            delete p; return GHOST_FAIL;
+        }
 
         if (CreateUploadBuffer(device, GHOST_OBJECT_CB_STRIDE * GHOST_MAX_SHADOW_CASTERS, &p->shadowCB) != GHOST_OK)
         {
@@ -1849,8 +1877,8 @@ void GhostShadowSlice(IGhostRHI* rhi, GhostPipeline* p, int slice, const float* 
     cmd->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
     cmd->OMSetRenderTargets(0, nullptr, FALSE, &dsv);
 
-    D3D12_VIEWPORT vp = { 0.0f, 0.0f, (float)GHOST_SHADOW_SIZE, (float)GHOST_SHADOW_SIZE, 0.0f, 1.0f };
-    D3D12_RECT sc = { 0, 0, (LONG)GHOST_SHADOW_SIZE, (LONG)GHOST_SHADOW_SIZE };
+    D3D12_VIEWPORT vp = { 0.0f, 0.0f, (float)p->shadowSize, (float)p->shadowSize, 0.0f, 1.0f };
+    D3D12_RECT sc = { 0, 0, (LONG)p->shadowSize, (LONG)p->shadowSize };
     cmd->RSSetViewports(1, &vp);
     cmd->RSSetScissorRects(1, &sc);
 

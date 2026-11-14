@@ -29,10 +29,10 @@ struct GhostObjectCB            // matches cbuffer MVPBuffer (VS) and ObjectBuff
     float     uvParams[4];      // tilingU, tilingV, offsetU, offsetV
     float     mapParams[4];     // mode, rotation (radians), wrap, filter
     float     sky[64];          // sky pass parameters (16 float4); zero for every other draw
-    float     pbr[8];           // [0] metallic, [1] roughness, [2] specular, [3] emissive strength,
-    // [4..6] emissive rgb, [7] = 1 when the draw uses PBR (sprites leave it 0)
+    float     pbr[8];           // ...existing...
+    float     alphaP[4];        // [0] alpha mode, [1] alpha source, [2] cutoff
 };
-static_assert(sizeof(GhostObjectCB) == 544, "GhostObjectCB layout must match the HLSL cbuffer");
+static_assert(sizeof(GhostObjectCB) == 560, "GhostObjectCB layout must match the HLSL cbuffer");
 constexpr unsigned int GHOST_SHADOW_SIZE = 1024;     // each shadow map is 1024 x 1024
 constexpr unsigned int GHOST_SHADOW_SLICES = 16;       // a directional light uses 1, a point or rect light 6
 
@@ -52,6 +52,7 @@ struct GhostSceneCB                 // matches cbuffer SceneBuffer (b1)
     unsigned int lightCount;
     unsigned int pad[3];
     float        shadowGlobal[4];   // x strength (0 = off), y map size
+    float        shadowTune[4];     // x filter mode, y softness (texels), z depth bias scale, w normal bias scale
     GhostGPULight lights[GHOST_MAX_LIGHTS];
     float        shadowVP[GHOST_SHADOW_SLICES][16];     // light view-projection per slice
 };                               // 32 + 16*80 = 1312 bytes
@@ -141,6 +142,7 @@ struct GhostPipeline
     unsigned int                 shadowDsvInc = 0;
     ComPtr<ID3D12Resource>       shadowCB;             // per-caster constant buffers (GhostObjectCB layout)
     void* shadowCBMapped = nullptr;
+    unsigned int                 shadowSize = GHOST_SHADOW_SIZE;   // current map size per side (runtime)
 
     ComPtr<ID3D12Resource>       uiVB;
     void* uiMapped = nullptr;
@@ -221,6 +223,7 @@ void GhostShadowSlice(IGhostRHI* rhi, GhostPipeline* pipeline, int slice,
     const float* vp16, const float* posFar4, float mode);       // mode 0 = directional, 1 = point
 void GhostShadowDraw(IGhostRHI* rhi, GhostPipeline* pipeline, int meshId, unsigned int slot, unsigned int textureIndex);
 void GhostShadowEnd(IGhostRHI* rhi, GhostPipeline* pipeline, unsigned int w, unsigned int h);
+GhostResult GhostSetShadowSize(IGhostRHI* rhi, GhostPipeline* pipeline, unsigned int size);   // between frames only
 
 // ---- Viewport overlay (grid, gizmos, dimensions, text) ----
 void GhostOverlayBegin(GhostPipeline* pipeline);               // once per viewport frame

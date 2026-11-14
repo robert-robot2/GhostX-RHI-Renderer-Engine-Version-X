@@ -189,6 +189,36 @@ namespace GhostShell
         public static readonly string[] Names = { "Repeat", "Clamp" };
         protected override string[] Items => Names;
     }
+    internal class ShadowResConverter : FixedListConverter
+    {
+        public static readonly string[] Names =
+            { "512 (low)", "1024 (default)", "2048 (high)", "4096 (very high, ~1 GB video memory)" };
+        public static readonly int[] Sizes = { 512, 1024, 2048, 4096 };
+        protected override string[] Items => Names;
+    }
+
+    internal class ShadowFilterConverter : FixedListConverter
+    {
+        public static readonly string[] Names =
+        {
+            "Sharp (1 bilinear tap)",
+            "PCF 3x3 (classic)",
+            "PCF Smooth (bilinear 3x3)",
+            "Soft (16 rotated taps)"
+        };
+        protected override string[] Items => Names;
+    }
+
+    internal class AlphaModeConverter : FixedListConverter
+    {
+        public static readonly string[] Names = { "Opaque", "Cutout (alpha test)" };
+        protected override string[] Items => Names;
+    }
+    internal class AlphaSourceConverter : FixedListConverter
+    {
+        public static readonly string[] Names = { "Texture Alpha", "Brightness (dark = clear)", "Inverted Brightness (light = clear)" };
+        protected override string[] Items => Names;
+    }
 
     internal class FilterConverter : FixedListConverter
     {
@@ -746,7 +776,7 @@ namespace GhostShell
             return list;
         }
 
-        [Category("Material"), DisplayName("Target Face")]
+        [Category("Material"), DisplayName("Material Slot")]
         [TypeConverter(typeof(FaceChoiceConverter))]
         public string TargetFace
         {
@@ -859,6 +889,29 @@ namespace GhostShell
         {
             get { var m = ReadMat(); return GhostColorUtil.ToColor(m.r, m.g, m.b); }
             set => EditMat((ref GhostMaterialInfo m) => { m.r = value.R / 255f; m.g = value.G / 255f; m.b = value.B / 255f; });
+        }
+
+        [Category("Transparency"), DisplayName("Alpha Mode")]
+        [TypeConverter(typeof(AlphaModeConverter))]
+        public string AlphaMode
+        {
+            get => AlphaModeConverter.Names[Math.Clamp(ReadMat().alphaMode, 0, 1)];
+            set { int i = Array.IndexOf(AlphaModeConverter.Names, value); if (i >= 0) EditMat((ref GhostMaterialInfo m) => m.alphaMode = i); }
+        }
+
+        [Category("Transparency"), DisplayName("Alpha Source")]
+        [TypeConverter(typeof(AlphaSourceConverter))]
+        public string AlphaSource
+        {
+            get => AlphaSourceConverter.Names[Math.Clamp(ReadMat().alphaSource, 0, 2)];
+            set { int i = Array.IndexOf(AlphaSourceConverter.Names, value); if (i >= 0) EditMat((ref GhostMaterialInfo m) => m.alphaSource = i); }
+        }
+
+        [Category("Transparency"), DisplayName("Alpha Cutoff (0-1)")]
+        public float AlphaCutoff
+        {
+            get => ReadMat().alphaCutoff;
+            set => EditMat((ref GhostMaterialInfo m) => m.alphaCutoff = value);
         }
 
         // ---- Surface (PBR) ----
@@ -1216,6 +1269,45 @@ namespace GhostShell
             get { GhostEngine.GhostEngine_GetShadowSettings(out _, out float s); return s; }
             set { GhostEngine.GhostEngine_GetShadowSettings(out int e, out _); GhostEngine.GhostEngine_SetShadowSettings(e, value); }
         }
+
+        [Category("Shadows"), DisplayName("Shadow Resolution")]
+        [TypeConverter(typeof(ShadowResConverter))]
+        public string ShadowResolution
+        {
+            get
+            {
+                int i = Array.IndexOf(ShadowResConverter.Sizes, GhostEngine.GhostEngine_GetShadowResolution());
+                return ShadowResConverter.Names[i < 0 ? 1 : i];
+            }
+            set
+            {
+                int i = Array.IndexOf(ShadowResConverter.Names, value);
+                if (i >= 0) GhostEngine.GhostEngine_SetShadowResolution(ShadowResConverter.Sizes[i]);
+            }
+        }
+        private static GhostShadowTuning GetTune() { GhostEngine.GhostEngine_GetShadowTuning(out var t); return t; }
+        private static void SetTune(GhostShadowTuning t) => GhostEngine.GhostEngine_SetShadowTuning(ref t);
+
+        [Category("Shadows"), DisplayName("Shadow Filter")]
+        [TypeConverter(typeof(ShadowFilterConverter))]
+        public string ShadowFilter
+        {
+            get => ShadowFilterConverter.Names[Math.Clamp(GetTune().filter, 0, 3)];
+            set { int i = Array.IndexOf(ShadowFilterConverter.Names, value); if (i >= 0) { var t = GetTune(); t.filter = i; SetTune(t); } }
+        }
+
+        [Category("Shadows"), DisplayName("Shadow Softness (texels, 0.25-4)")]
+        public float ShadowSoftness { get => GetTune().softness; set { var t = GetTune(); t.softness = value; SetTune(t); } }
+
+        [Category("Shadows"), DisplayName("Depth Bias (x, 0-8)")]
+        public float ShadowDepthBias { get => GetTune().bias; set { var t = GetTune(); t.bias = value; SetTune(t); } }
+
+        [Category("Shadows"), DisplayName("Normal Bias (x, 0-8)")]
+        public float ShadowNormalBias { get => GetTune().normalBias; set { var t = GetTune(); t.normalBias = value; SetTune(t); } }
+
+        [Category("Shadows"), DisplayName("Shadow Distance (m, 0 = whole scene)")]
+        public float ShadowDistance { get => GetTune().distance; set { var t = GetTune(); t.distance = value; SetTune(t); } }
+
         [Category("Audio"), DisplayName("Scene Music (plays during Play)")]
         [TypeConverter(typeof(MusicChoiceConverter))]
         public string SceneMusic { get => GhostSceneAudio.Get(0); set => GhostSceneAudio.Set(0, value); }
@@ -1388,15 +1480,26 @@ namespace GhostShell
             {
                 if (_syncing || e.Node == null) return;
                 int id = (int)e.Node.Tag!;
+                if (id < 0 && e.Node.Parent?.Tag is int parentId)          // a material slot row
+                {
+                    if (GhostEngine.GhostEngine_GetSelected() != parentId) GhostEngine.GhostEngine_SelectEntity(parentId);
+                    GhostEngine.GhostEngine_SetTargetFace(-id - 1);
+                    ShowDetails(parentId);
+                    _lastSel = parentId;
+                    _lastSnap = Snapshot(parentId);
+                    return;
+                }
                 GhostEngine.GhostEngine_SelectEntity(id);
                 ShowDetails(id);
                 _lastSel = id;
                 _lastSnap = Snapshot(id);
             };
+            // NodeMouseDoubleClick:  if (e.Node?.Tag is int id && id > 0)
+            // NodeMouseClick:        if (... || e.Node.Tag is not int id || id <= 0) return;
             // Double-click a camera in the hierarchy to make it the main view
             _tree.NodeMouseDoubleClick += (s, e) =>
             {
-                if (e.Node?.Tag is int id && id != 0)
+                if (e.Node?.Tag is int id && id > 0)
                 {
                     var c = new GhostCameraInfo();
                     if (GhostEngine.GhostEngine_GetCamera(id, ref c) != 0)
@@ -1406,7 +1509,7 @@ namespace GhostShell
             };
             _tree.NodeMouseClick += (s, e) =>
             {
-                if (e.Button != MouseButtons.Right || e.Node == null || e.Node.Tag is not int id || id == 0) return;
+                if (e.Button != MouseButtons.Right || e.Node == null || e.Node.Tag is not int id || id <= 0) return;
                 _tree.SelectedNode = e.Node;
                 _ctx.Show(_tree, e.Location);
             };
@@ -2047,6 +2150,7 @@ namespace GhostShell
             {
                 SelectNode(sel);
                 ShowDetails(sel);
+                HighlightSlot(sel);
                 _lastSel = sel;
                 _lastSnap = Snapshot(sel);
                 return;
@@ -2062,6 +2166,7 @@ namespace GhostShell
                     ShowDetails(sel);
                 else
                     _grid.Refresh();
+                HighlightSlot(sel);
             }
         }
 
@@ -2069,6 +2174,8 @@ namespace GhostShell
         {
             _syncing = true;
             _tree.BeginUpdate();
+            var open = new HashSet<int>();
+            foreach (TreeNode t in _tree.Nodes) if (t.IsExpanded && t.Tag is int tid) open.Add(tid);
             _tree.Nodes.Clear();
             _nodes.Clear();
 
@@ -2089,6 +2196,11 @@ namespace GhostShell
                 };
                 _tree.Nodes.Add(node);
                 _nodes[buf[i].id] = node;
+                if (buf[i].kind == 0 && IsImportedMesh(buf[i].subtype))
+                {
+                    AddSlotNodes(node, buf[i].id);
+                    if (open.Contains(buf[i].id)) node.Expand();
+                }
             }
             _tree.EndUpdate();
             _syncing = false;
@@ -2096,7 +2208,32 @@ namespace GhostShell
             for (int i = 0; i < n; i++) if (buf[i].kind == 2) camIds.Add(buf[i].id);
             _vp.SyncCameras(camIds);                       // a deleted camera takes its window with it
         }
+        private static bool IsImportedMesh(int meshId) =>
+    GhostEngine.GhostEngine_GetMeshInfo(meshId, out GhostMeshStats s) != 0 && s.builtin == 0 && s.faceCount > 1;
 
+        private static void AddSlotNodes(TreeNode parent, int objectId)
+        {
+            int n = GhostEngine.GhostEngine_GetFaceCount(objectId);
+            for (int f = 0; f < n; f++)
+            {
+                var sb = new StringBuilder(64);
+                GhostEngine.GhostEngine_GetFaceName(objectId, f, sb, sb.Capacity);
+                parent.Nodes.Add(new TreeNode($"[{f}] {sb}") { Tag = -(f + 1), ForeColor = Fg });
+            }
+        }
+
+        // Keeps the slot row in step with the target face (also when it was picked in the viewport with F)
+        private void HighlightSlot(int objectId)
+        {
+            if (!_nodes.TryGetValue(objectId, out TreeNode? node) || node.Nodes.Count == 0) return;
+            int face = GhostEngine.GhostEngine_GetTargetFace();
+            TreeNode target = (face >= 0 && face < node.Nodes.Count) ? node.Nodes[face] : node;
+            if (_tree.SelectedNode == target) return;
+            _syncing = true;
+            node.Expand();
+            _tree.SelectedNode = target;
+            _syncing = false;
+        }
         private void SelectNode(int id)
         {
             _syncing = true;
@@ -2143,7 +2280,8 @@ namespace GhostShell
             {
                 GhostEngine.GhostEngine_GetAmbient(out float r, out float g, out float b, out float k);
                 GhostEngine.GhostEngine_GetShadowSettings(out int se, out float ss);
-                return (r, g, b, k, GhostEngine.GhostEngine_GetGameStartCamera(), se, ss);
+                GhostEngine.GhostEngine_GetShadowTuning(out GhostShadowTuning st);
+                return (r, g, b, k, GhostEngine.GhostEngine_GetGameStartCamera(), se, ss, GhostEngine.GhostEngine_GetShadowResolution(), st);
             }
             var o = new GhostObjectInfo();
             if (GhostEngine.GhostEngine_GetObject(id, ref o) != 0)

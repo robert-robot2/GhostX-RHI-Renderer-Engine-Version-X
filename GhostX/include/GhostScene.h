@@ -53,6 +53,9 @@ struct GhostMaterial
     float specular = 0.5f;                    // dielectric reflectance (0.5 = the standard 4%)
     float emissive[3] = { 0, 0, 0 };          // glow color (display colors, like the tint)
     float emissiveStrength = 1.0f;
+    int   alphaMode = 0;       // 0 opaque, 1 cutout (pixels under alphaCutoff are discarded)
+    int   alphaSource = 0;       // 0 texture alpha, 1 brightness (dark = clear), 2 inverted brightness (light = clear)
+    float alphaCutoff = 0.5f;
 };
 
 inline bool GhostMaterial_Equal(const GhostMaterial& a, const GhostMaterial& b)
@@ -352,10 +355,16 @@ struct GhostScene
     int          selectedFace = -1;   // -1 = all faces; always belongs to selectedId
     bool         shadowsEnabled = true;
     float        shadowStrength = 1.0f;          // 1 = a shadowed spot gets only ambient light
+    int          shadowRes = 1024;               // shadow map size per side: 512, 1024, 2048 or 4096
+    int          shadowFilter = 2;        // 0 sharp (bilinear), 1 PCF 3x3, 2 PCF smooth (bilinear 3x3), 3 soft (16 rotated taps)
+    float        shadowSoftness = 1.0f;   // filter radius in shadow-map texels (0.25 .. 4)
+    float        shadowBias = 1.0f;       // depth bias multiplier (0 .. 8), 1 = the old fixed bias
+    float        shadowNormalBias = 1.0f; // normal-offset multiplier (0 .. 8), 1 = the old fixed offset
+    float        shadowDistance = 30.0f;  // directional light: how far from the camera shadows reach (0 = whole scene)
     std::string  music, ambience;       // names from Content/Audio/Sounds.ghostaudio, "" = none
     unsigned int version = 0;         // bumps on any structural change
 };
-
+inline int GhostShadowRes_Clamp(int v) { return v <= 512 ? 512 : (v <= 1024 ? 1024 : (v <= 2048 ? 2048 : 4096)); }
 // NOTE: returned pointers are only valid until the next Add/Remove. Use immediately. old comment
 
 inline GhostObject* GhostScene_AddObject(GhostScene& s, int meshId)

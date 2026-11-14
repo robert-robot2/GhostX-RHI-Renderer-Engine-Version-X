@@ -34,6 +34,8 @@ namespace GhostShell
         public float r, g, b;
         public float metallic, roughness, specular;
         public float emR, emG, emB, emissiveStrength;
+        public int alphaMode, alphaSource;
+        public float alphaCutoff;
     }
     [StructLayout(LayoutKind.Sequential)]
     internal struct GhostCameraInfo
@@ -128,6 +130,13 @@ namespace GhostShell
     }
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     internal delegate int GhostFontProviderFn([MarshalAs(UnmanagedType.LPUTF8Str)] string path);
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GhostShadowTuning
+    {
+        public int filter;
+        public float softness, bias, normalBias, distance;
+    }
 
 
     internal static class GhostEngine
@@ -364,6 +373,18 @@ namespace GhostShell
         public static extern void GhostEngine_GetShadowSettings(out int enabled, out float strength);
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern void GhostEngine_SetShadowSettings(int enabled, float strength);
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetShadowResolution();
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetShadowResolution(int size);
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_GetShadowTuning(out GhostShadowTuning t);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetShadowTuning(ref GhostShadowTuning t);
+
+
         // ---- Models ----
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern int GhostEngine_ImportModel([MarshalAs(UnmanagedType.LPUTF8Str)] string path,
