@@ -37,6 +37,28 @@ constexpr unsigned int GHOST_MAX_CAMERAS = 4;
 constexpr int GHOST_MAX_FACES = 32;
 constexpr int GHOST_FIRST_USER_TEXTURE = 3;     // ids 0..2 are the built-ins
 
+
+constexpr int GHOST_MAP_COUNT = 13;
+enum GhostMapSlot {
+    GHOST_MAP_NORMAL = 0, GHOST_MAP_SPECULAR, GHOST_MAP_METALLIC, GHOST_MAP_ROUGHNESS, GHOST_MAP_AO,
+    GHOST_MAP_EMISSIVE, GHOST_MAP_OPACITY, GHOST_MAP_MASK, GHOST_MAP_TANGENT, GHOST_MAP_WPO,
+    GHOST_MAP_REFRACTION, GHOST_MAP_REFLECTION, GHOST_MAP_CUSTOM
+};
+inline const char* GhostMapKey(int k)
+{
+    static const char* n[GHOST_MAP_COUNT] = { "normal", "specular", "metallic", "roughness", "ao", "emissive",
+        "opacity", "opacityMask", "tangent", "wpo", "refraction", "reflection", "custom" };
+    return (k >= 0 && k < GHOST_MAP_COUNT) ? n[k] : "";
+}
+struct GhostMapParams
+{
+    int   textureId = 0;     // 0 = no map
+    float amount = 1.0f;     // meaning depends on the map (strength, blend, intensity)
+    int   channel = 0;       // 0 R, 1 G, 2 B, 3 A, 4 luminance (scalar maps)
+    int   invert = 0;        // scalar maps: 1 - value. Normal map: flip green
+};
+
+
 struct GhostMaterial
 {
     int   textureId = 0;                      // 0 = built-in white
@@ -53,9 +75,21 @@ struct GhostMaterial
     float specular = 0.5f;                    // dielectric reflectance (0.5 = the standard 4%)
     float emissive[3] = { 0, 0, 0 };          // glow color (display colors, like the tint)
     float emissiveStrength = 1.0f;
-    int   alphaMode = 0;       // 0 opaque, 1 cutout (pixels under alphaCutoff are discarded)
-    int   alphaSource = 0;       // 0 texture alpha, 1 brightness (dark = clear), 2 inverted brightness (light = clear)
+    int   alphaMode = 0;       // 0 opaque, 1 masked (alpha test), 2 translucent (blended)
+    int   alphaSource = 0;
     float alphaCutoff = 0.5f;
+    GhostMapParams maps[GHOST_MAP_COUNT];
+    float mapTiling[2] = { 1, 1 };            // shared by all extra maps of this slot
+    float mapOffset[2] = { 0, 0 };
+    float opacity = 1.0f;
+    int   twoSided = 1;
+    float refractionIOR = 1.5f;
+    float reflectionRotDeg = 0.0f;
+    float anisotropy = 0.0f;
+    float sssColor[3] = { 1.0f, 0.35f, 0.25f };
+    float sssAmount = 0.0f;
+    float wpoSway = 0.0f, wpoSpeed = 1.0f, wpoMid = 0.5f;
+    GhostMaterial() { maps[GHOST_MAP_WPO].amount = 0.02f; }     // 2 cm unless you change it
 };
 
 inline bool GhostMaterial_Equal(const GhostMaterial& a, const GhostMaterial& b)

@@ -87,6 +87,24 @@ static json MatToJson(const GhostMaterial& m, const std::set<int>& savedTex)
     j["alphaMode"] = m.alphaMode;
     j["alphaSource"] = m.alphaSource;
     j["alphaCutoff"] = m.alphaCutoff;
+    json mp = json::object();
+    for (int k = 0; k < GHOST_MAP_COUNT; k++)
+    {
+        const GhostMapParams& p = m.maps[k];
+        const int t = (p.textureId < GHOST_FIRST_USER_TEXTURE || savedTex.count(p.textureId)) ? p.textureId : 0;
+        mp[GhostMapKey(k)] = json{ { "texture", t },{ "amount", p.amount },{ "channel", p.channel },{ "invert", p.invert } };
+    }
+    j["maps"] = mp;
+    j["mapTiling"] = json::array({ m.mapTiling[0], m.mapTiling[1] });
+    j["mapOffset"] = json::array({ m.mapOffset[0], m.mapOffset[1] });
+    j["opacity"] = m.opacity;
+    j["twoSided"] = m.twoSided;
+    j["refractionIOR"] = m.refractionIOR;
+    j["reflectionRot"] = m.reflectionRotDeg;
+    j["anisotropy"] = m.anisotropy;
+    j["sss"] = F3(m.sssColor);
+    j["sssAmount"] = m.sssAmount;
+    j["wpo"] = json{ { "sway", m.wpoSway },{ "speed", m.wpoSpeed },{ "mid", m.wpoMid } };
     return j;
 }
 
@@ -111,9 +129,36 @@ static GhostMaterial MatFromJson(const json& j, const std::function<int(int)>& m
     m.emissiveStrength = j.value("emissiveStrength", 1.0f);
     m.emissiveStrength = m.emissiveStrength < 0.0f ? 0.0f : (m.emissiveStrength > 20.0f ? 20.0f : m.emissiveStrength);
     for (int i = 0; i < 2; i++) if (fabsf(m.tiling[i]) < 0.001f) m.tiling[i] = 1.0f;
-    m.alphaMode = Clampi(j.value("alphaMode", 0), 0, 1);
+    m.alphaMode = Clampi(j.value("alphaMode", 0), 0, 2);
     m.alphaSource = Clampi(j.value("alphaSource", 0), 0, 2);
-    m.alphaCutoff = c01(j.value("alphaCutoff", 0.5f));
+    m.alphaCutoff = c01(j.value("alphaCutoff", 0.5f));  
+    if (j.contains("maps") && j["maps"].is_object())
+        for (int k = 0; k < GHOST_MAP_COUNT; k++)
+        {
+            auto it = j["maps"].find(GhostMapKey(k));
+            if (it == j["maps"].end() || !it->is_object()) continue;
+            GhostMapParams& p = m.maps[k];
+            p.textureId = mapTex(it->value("texture", 0));
+            p.amount = it->value("amount", p.amount);
+            p.channel = Clampi(it->value("channel", 0), 0, 4);
+            p.invert = Clampi(it->value("invert", 0), 0, 1);
+        }
+    ReadF(j, "mapTiling", m.mapTiling, 2);
+    ReadF(j, "mapOffset", m.mapOffset, 2);
+    for (int i = 0; i < 2; i++) if (fabsf(m.mapTiling[i]) < 0.001f) m.mapTiling[i] = 1.0f;
+    m.opacity = c01(j.value("opacity", 1.0f));
+    m.twoSided = Clampi(j.value("twoSided", 1), 0, 1);
+    m.refractionIOR = j.value("refractionIOR", 1.5f);
+    m.reflectionRotDeg = j.value("reflectionRot", 0.0f);
+    m.anisotropy = j.value("anisotropy", 0.0f);
+    ReadF(j, "sss", m.sssColor, 3);
+    m.sssAmount = c01(j.value("sssAmount", 0.0f));
+    if (j.contains("wpo") && j["wpo"].is_object())
+    {
+        m.wpoSway = j["wpo"].value("sway", 0.0f);
+        m.wpoSpeed = j["wpo"].value("speed", 1.0f);
+        m.wpoMid = j["wpo"].value("mid", 0.5f);
+    }
     return m;
 }
 

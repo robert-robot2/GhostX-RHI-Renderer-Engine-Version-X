@@ -736,11 +736,16 @@ static std::wstring ShaderPath(const wchar_t* file)
     return std::wstring(L"shaders/") + file;
 }
 // Every draw that uses the main root signature binds the shadow maps (parameter 3)
+// Every draw that uses the main root signature binds the shadow maps (parameter 3) and the material map table (parameter 4)
 static void BindShadowTable(ID3D12GraphicsCommandList* cmd, GhostPipeline* p)
 {
     D3D12_GPU_DESCRIPTOR_HANDLE h = p->cbvHeap->GetGPUDescriptorHandleForHeapStart();
     h.ptr += (UINT64)GHOST_SHADOW_SRV_INDEX * p->srvIncrement;
     cmd->SetGraphicsRootDescriptorTable(3, h);
+
+    D3D12_GPU_DESCRIPTOR_HANDLE m = p->cbvHeap->GetGPUDescriptorHandleForHeapStart();
+    m.ptr += (UINT64)GHOST_DATA_SRV_BASE * p->srvIncrement;
+    cmd->SetGraphicsRootDescriptorTable(4, m);
 }
 // ---- Mip chain (box filter in linear space, RGBA8 sRGB in/out) ----
 struct MipLevel { unsigned int w, h; std::vector<unsigned char> px; };
@@ -919,7 +924,14 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
     shadowRange.RegisterSpace = 0;
     shadowRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
-    D3D12_ROOT_PARAMETER rp[4] = {};
+    D3D12_DESCRIPTOR_RANGE mapRange = {};                       // gTex[256] : register(t0, space1)
+    mapRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    mapRange.NumDescriptors = GHOST_MAX_TEXTURES;
+    mapRange.BaseShaderRegister = 0;
+    mapRange.RegisterSpace = 1;
+    mapRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+    D3D12_ROOT_PARAMETER rp[5] = {};
 
     // b0 — per-object CB (transform + material), VS and PS.
     rp[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
@@ -945,6 +957,11 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
     rp[3].DescriptorTable.pDescriptorRanges = &shadowRange;
     rp[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
+    rp[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    rp[4].DescriptorTable.NumDescriptorRanges = 1;
+    rp[4].DescriptorTable.pDescriptorRanges = &mapRange;
+    rp[4].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;        // the vertex shader samples the WPO map too
+
     // s0 linear/wrap, s1 linear/clamp, s2 point/wrap, s3 point/clamp
     D3D12_STATIC_SAMPLER_DESC samplers[4] = {};
     const D3D12_FILTER filters[4] = {
@@ -967,11 +984,11 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
         samplers[i].MaxLOD = D3D12_FLOAT32_MAX;
         samplers[i].ShaderRegister = (UINT)i;
         samplers[i].RegisterSpace = 0;
-        samplers[i].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+        samplers[i].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     }
 
     D3D12_ROOT_SIGNATURE_DESC rsd = {};
-    rsd.NumParameters = 4;
+    rsd.NumParameters = 5;
     rsd.pParameters = rp;
     rsd.NumStaticSamplers = 4;
     rsd.pStaticSamplers = samplers;
@@ -1021,11 +1038,11 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
     }
     // ---- Shaders ----
     ComPtr<ID3DBlob> vs, ps;
-    if (CompileShaderFromFile(ShaderPath(L"GhostVS.hlsl").c_str(), "VSMain", "vs_5_0", &vs) != GHOST_OK)
+    if (CompileShaderFromFile(ShaderPath(L"GhostVS.hlsl").c_str(), "VSMain", "vs_5_1", &vs) != GHOST_OK)
     {
         delete p; return GHOST_FAIL;
     }
-    if (CompileShaderFromFile(ShaderPath(L"GhostPS.hlsl").c_str(), "PSMain", "ps_5_0", &ps) != GHOST_OK)
+    if (CompileShaderFromFile(ShaderPath(L"GhostPS.hlsl").c_str(), "PSMain", "ps_5_1", &ps) != GHOST_OK)
     {
         delete p; return GHOST_FAIL;
     }
@@ -1064,18 +1081,30 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
     {
         delete p; return GHOST_FAIL;
     }
+    // this may be wrong
+    {
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC bd = psoDesc;         // translucent: premultiplied blend, no depth write
+        D3D12_RENDER_TARGET_BLEND_DESC& tb = bd.BlendState.RenderTarget[0];
+        tb.BlendEnable = TRUE;
+        tb.SrcBlend = D3D12_BLEND_ONE;            tb.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;   tb.BlendOp = D3D12_BLEND_OP_ADD;
+        tb.SrcBlendAlpha = D3D12_BLEND_ONE;       tb.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA; tb.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+        tb.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+        bd.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+        if (FAILED(device->CreateGraphicsPipelineState(&bd, IID_PPV_ARGS(&p->blendPso)))) { delete p; return GHOST_FAIL; }
+    }
+
 
     // ---- Icon PSO: unlit billboard quads, no vertex buffer, drawn on top ----
     ComPtr<ID3DBlob> ivs, ips;
-    if (CompileShaderFromFile(ShaderPath(L"GhostVS.hlsl").c_str(), "IconVS", "vs_5_0", &ivs) != GHOST_OK ||
-        CompileShaderFromFile(ShaderPath(L"GhostPS.hlsl").c_str(), "IconPS", "ps_5_0", &ips) != GHOST_OK)
+    if (CompileShaderFromFile(ShaderPath(L"GhostVS.hlsl").c_str(), "IconVS", "vs_5_1", &ivs) != GHOST_OK ||
+        CompileShaderFromFile(ShaderPath(L"GhostPS.hlsl").c_str(), "IconPS", "ps_5_1", &ips) != GHOST_OK)
     {
         delete p; return GHOST_FAIL;
     }
     // ---- Blit PSO: fullscreen quad that shows an offscreen image, no depth ----
     ComPtr<ID3DBlob> bvs, bps;
-    if (CompileShaderFromFile(ShaderPath(L"GhostVS.hlsl").c_str(), "BlitVS", "vs_5_0", &bvs) != GHOST_OK ||
-        CompileShaderFromFile(ShaderPath(L"GhostPS.hlsl").c_str(), "BlitPS", "ps_5_0", &bps) != GHOST_OK)
+    if (CompileShaderFromFile(ShaderPath(L"GhostVS.hlsl").c_str(), "BlitVS", "vs_5_1", &bvs) != GHOST_OK ||
+        CompileShaderFromFile(ShaderPath(L"GhostPS.hlsl").c_str(), "BlitPS", "ps_5_1", &bps) != GHOST_OK)
     {
         delete p; return GHOST_FAIL;
     }
@@ -1097,8 +1126,8 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
 
     // ---- UI PSO: alpha-blended quads, no depth ----
     ComPtr<ID3DBlob> uvs, ups;
-    if (CompileShaderFromFile(ShaderPath(L"GhostVS.hlsl").c_str(), "UIVS", "vs_5_0", &uvs) != GHOST_OK ||
-        CompileShaderFromFile(ShaderPath(L"GhostPS.hlsl").c_str(), "UIPS", "ps_5_0", &ups) != GHOST_OK)
+    if (CompileShaderFromFile(ShaderPath(L"GhostVS.hlsl").c_str(), "UIVS", "vs_5_1", &uvs) != GHOST_OK ||
+        CompileShaderFromFile(ShaderPath(L"GhostPS.hlsl").c_str(), "UIPS", "ps_5_1", &ups) != GHOST_OK)
     {
         delete p; return GHOST_FAIL;
     }
@@ -1140,7 +1169,7 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
 
     // ---- Overlay PSOs: float3 position, so grid lines can be depth tested ----
     ComPtr<ID3DBlob> ovs;
-    if (CompileShaderFromFile(ShaderPath(L"GhostVS.hlsl").c_str(), "OverlayVS", "vs_5_0", &ovs) != GHOST_OK)
+    if (CompileShaderFromFile(ShaderPath(L"GhostVS.hlsl").c_str(), "OverlayVS", "vs_5_1", &ovs) != GHOST_OK)
     {
         delete p; return GHOST_FAIL;
     }
@@ -1178,8 +1207,8 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
 
     // ---- Sky PSO: full-screen triangle, alpha blended, no depth ----
     ComPtr<ID3DBlob> svs, sps;
-    if (CompileShaderFromFile(ShaderPath(L"GhostVS.hlsl").c_str(), "SkyVS", "vs_5_0", &svs) != GHOST_OK ||
-        CompileShaderFromFile(ShaderPath(L"GhostPS.hlsl").c_str(), "SkyPS", "ps_5_0", &sps) != GHOST_OK)
+    if (CompileShaderFromFile(ShaderPath(L"GhostVS.hlsl").c_str(), "SkyVS", "vs_5_1", &svs) != GHOST_OK ||
+        CompileShaderFromFile(ShaderPath(L"GhostPS.hlsl").c_str(), "SkyPS", "ps_5_1", &sps) != GHOST_OK)
     {
         delete p; return GHOST_FAIL;
     }
@@ -1207,8 +1236,8 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
 
     // ---- Shadow PSO: depth only, double sided, the pixel shader writes the depth ----
     ComPtr<ID3DBlob> shv, shp;
-    if (CompileShaderFromFile(ShaderPath(L"GhostVS.hlsl").c_str(), "ShadowVS", "vs_5_0", &shv) != GHOST_OK ||
-        CompileShaderFromFile(ShaderPath(L"GhostPS.hlsl").c_str(), "ShadowPS", "ps_5_0", &shp) != GHOST_OK)
+    if (CompileShaderFromFile(ShaderPath(L"GhostVS.hlsl").c_str(), "ShadowVS", "vs_5_1", &shv) != GHOST_OK ||
+        CompileShaderFromFile(ShaderPath(L"GhostPS.hlsl").c_str(), "ShadowPS", "ps_5_1", &shp) != GHOST_OK)
     {
         delete p; return GHOST_FAIL;
     }
@@ -1273,11 +1302,22 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
 
     // ---- CBV Heap ----
     D3D12_DESCRIPTOR_HEAP_DESC hd = {};
-      hd.NumDescriptors = GHOST_MAX_TEXTURES + GHOST_MAX_SURFACES + 1;     // textures, offscreen targets, then the shadow maps
+    hd.NumDescriptors = GHOST_DATA_SRV_BASE + GHOST_MAX_TEXTURES;
     hd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
     hd.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     device->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&p->cbvHeap));
     p->srvIncrement = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    {   // fill the linear-view region with null descriptors, so unused array slots are always valid
+        D3D12_SHADER_RESOURCE_VIEW_DESC nd = {};
+        nd.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        nd.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        nd.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        nd.Texture2D.MipLevels = 1;
+        D3D12_CPU_DESCRIPTOR_HANDLE nh = p->cbvHeap->GetCPUDescriptorHandleForHeapStart();
+        nh.ptr += (SIZE_T)GHOST_DATA_SRV_BASE * p->srvIncrement;
+        for (unsigned int i = 0; i < GHOST_MAX_TEXTURES; i++) { device->CreateShaderResourceView(nullptr, &nd, nh); nh.ptr += p->srvIncrement; }
+    }
+
     // ---- DSV Heap + Depth Buffer ----
     D3D12_DESCRIPTOR_HEAP_DESC dsvHeapDesc = {};
     dsvHeapDesc.NumDescriptors = GHOST_MAX_SURFACES;
@@ -1350,7 +1390,7 @@ int GhostCreateTexture(IGhostRHI* rhi, GhostPipeline* p,
     td.Height = height;
     td.DepthOrArraySize = 1;
     td.MipLevels = (UINT16)mipCount;
-    td.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;      // hardware decodes sRGB -> linear on sample
+    td.Format = DXGI_FORMAT_R8G8B8A8_TYPELESS;       // sRGB view for color, linear view for data maps
     td.SampleDesc.Count = 1;
     td.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
 
@@ -1410,7 +1450,7 @@ int GhostCreateTexture(IGhostRHI* rhi, GhostPipeline* p,
     p->textures[idx] = tex;       // when replacing, the old resource is released here; the GPU is idle
 
     D3D12_SHADER_RESOURCE_VIEW_DESC sd = {};
-    sd.Format = td.Format;
+    sd.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
     sd.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
     sd.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
     sd.Texture2D.MipLevels = mipCount;
@@ -1418,6 +1458,11 @@ int GhostCreateTexture(IGhostRHI* rhi, GhostPipeline* p,
     D3D12_CPU_DESCRIPTOR_HANDLE h = p->cbvHeap->GetCPUDescriptorHandleForHeapStart();
     h.ptr += (SIZE_T)idx * p->srvIncrement;
     device->CreateShaderResourceView(tex.Get(), &sd, h);
+
+    sd.Format = DXGI_FORMAT_R8G8B8A8_UNORM;          // linear view for normal / roughness / AO / ... maps
+    D3D12_CPU_DESCRIPTOR_HANDLE hl = p->cbvHeap->GetCPUDescriptorHandleForHeapStart();
+    hl.ptr += (SIZE_T)(GHOST_DATA_SRV_BASE + idx) * p->srvIncrement;
+    device->CreateShaderResourceView(tex.Get(), &sd, hl);
 
     return (int)idx;
 }
@@ -1512,7 +1557,7 @@ void GhostDrawIcon(IGhostRHI* rhi, GhostPipeline* p, unsigned int slot)
 }
 
 void GhostDrawMesh(IGhostRHI* rhi, GhostPipeline* p, int meshId, unsigned int slot,
-    unsigned int textureIndex, unsigned int firstIndex, unsigned int indexCount)
+    unsigned int textureIndex, unsigned int firstIndex, unsigned int indexCount, bool translucent)
 {
 
     // double check this for 11.a
@@ -1530,7 +1575,7 @@ void GhostDrawMesh(IGhostRHI* rhi, GhostPipeline* p, int meshId, unsigned int sl
 
 
     cmd->SetDescriptorHeaps(1, heaps);
-    cmd->SetPipelineState(p->pso.Get());
+    cmd->SetPipelineState((translucent && p->blendPso) ? p->blendPso.Get() : p->pso.Get());
     cmd->SetGraphicsRootSignature(p->rootSignature.Get());
     BindShadowTable(cmd, p);
 
@@ -1987,15 +2032,15 @@ GhostResult GhostRebuildScenePSOs(IGhostRHI* rhi, GhostPipeline* p, unsigned int
     const std::wstring psPath = ShaderPath(L"GhostPS.hlsl");
 
     ComPtr<ID3DBlob> vs, ps, ivs, ips, uvs, ups, ovs, svs, sps;
-    if (CompileShaderFromFile(vsPath.c_str(), "VSMain", "vs_5_0", &vs) != GHOST_OK ||
-        CompileShaderFromFile(psPath.c_str(), "PSMain", "ps_5_0", &ps) != GHOST_OK ||
-        CompileShaderFromFile(vsPath.c_str(), "IconVS", "vs_5_0", &ivs) != GHOST_OK ||
-        CompileShaderFromFile(psPath.c_str(), "IconPS", "ps_5_0", &ips) != GHOST_OK ||
-        CompileShaderFromFile(vsPath.c_str(), "UIVS", "vs_5_0", &uvs) != GHOST_OK ||
-        CompileShaderFromFile(psPath.c_str(), "UIPS", "ps_5_0", &ups) != GHOST_OK ||
-        CompileShaderFromFile(vsPath.c_str(), "OverlayVS", "vs_5_0", &ovs) != GHOST_OK ||
-        CompileShaderFromFile(vsPath.c_str(), "SkyVS", "vs_5_0", &svs) != GHOST_OK ||
-        CompileShaderFromFile(psPath.c_str(), "SkyPS", "ps_5_0", &sps) != GHOST_OK)
+    if (CompileShaderFromFile(vsPath.c_str(), "VSMain", "vs_5_1", &vs) != GHOST_OK ||
+        CompileShaderFromFile(psPath.c_str(), "PSMain", "ps_5_1", &ps) != GHOST_OK ||
+        CompileShaderFromFile(vsPath.c_str(), "IconVS", "vs_5_1", &ivs) != GHOST_OK ||
+        CompileShaderFromFile(psPath.c_str(), "IconPS", "ps_5_1", &ips) != GHOST_OK ||
+        CompileShaderFromFile(vsPath.c_str(), "UIVS", "vs_5_1", &uvs) != GHOST_OK ||
+        CompileShaderFromFile(psPath.c_str(), "UIPS", "ps_5_1", &ups) != GHOST_OK ||
+        CompileShaderFromFile(vsPath.c_str(), "OverlayVS", "vs_5_1", &ovs) != GHOST_OK ||
+        CompileShaderFromFile(vsPath.c_str(), "SkyVS", "vs_5_1", &svs) != GHOST_OK ||
+        CompileShaderFromFile(psPath.c_str(), "SkyPS", "ps_5_1", &sps) != GHOST_OK)
         return GHOST_FAIL;
 
     D3D12_INPUT_ELEMENT_DESC layout[] =
@@ -2092,13 +2137,24 @@ GhostResult GhostRebuildScenePSOs(IGhostRHI* rhi, GhostPipeline* p, unsigned int
     noDepth(skyD);
     alphaBlend(skyD);
 
-    ComPtr<ID3D12PipelineState> nMain, nIcon, nUI, nOvTop, nOvDepth, nSky;
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC blendD = base;
+    {
+        D3D12_RENDER_TARGET_BLEND_DESC& tb = blendD.BlendState.RenderTarget[0];
+        tb.BlendEnable = TRUE;
+        tb.SrcBlend = D3D12_BLEND_ONE;       tb.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;       tb.BlendOp = D3D12_BLEND_OP_ADD;
+        tb.SrcBlendAlpha = D3D12_BLEND_ONE;  tb.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;  tb.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+        tb.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+        blendD.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+    }
+
+    ComPtr<ID3D12PipelineState> nMain, nIcon, nUI, nOvTop, nOvDepth, nSky, nBlend;
     if (FAILED(device->CreateGraphicsPipelineState(&base, IID_PPV_ARGS(&nMain))) ||
         FAILED(device->CreateGraphicsPipelineState(&iconD, IID_PPV_ARGS(&nIcon))) ||
         FAILED(device->CreateGraphicsPipelineState(&uiD, IID_PPV_ARGS(&nUI))) ||
         FAILED(device->CreateGraphicsPipelineState(&ovTopD, IID_PPV_ARGS(&nOvTop))) ||
         FAILED(device->CreateGraphicsPipelineState(&ovDepthD, IID_PPV_ARGS(&nOvDepth))) ||
-        FAILED(device->CreateGraphicsPipelineState(&skyD, IID_PPV_ARGS(&nSky))))
+        FAILED(device->CreateGraphicsPipelineState(&skyD, IID_PPV_ARGS(&nSky))) ||
+        FAILED(device->CreateGraphicsPipelineState(&blendD, IID_PPV_ARGS(&nBlend))))    
         return GHOST_FAIL;
 
     // All six built: swap them in (the GPU is idle, so the old ones can go)

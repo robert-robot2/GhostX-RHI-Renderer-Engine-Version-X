@@ -41,8 +41,16 @@ cbuffer ObjectBuffer : register(b0)       // same layout as MVPBuffer in GhostVS
     float4 sky[16];                       // sky pass parameters (see GhostSky_Build)
     float4 pbrA;                          // metallic, roughness, specular, emissive strength
     float4 pbrB;                          // emissive rgb, w = 1 when this draw uses PBR
-    float4 alphaP;                        // x alpha mode (1 = cutout), y source (0 tex alpha, 1 brightness, 2 inverted), z cutoff
+    float4 alphaP;                        // x blend mode (0 opaque, 1 masked, 2 translucent), y source, z cutoff
+    float4 mapUV;                         // extra maps: tiling u,v / offset u,v
+    float4 maps[13];                      // x texture id (0 none), y amount, z channel, w invert
+    float4 surfA;                         // x two sided, y IOR, z reflection rotation (rad), w anisotropy
+    float4 surfB;                         // subsurface rgb, w amount
+    float4 wpoP;
+    float4 opacityP;                      // x opacity
 };
+
+Texture2D gTex[256] : register(t0, space1);   // linear views, indexed by texture id
 
 struct PSInput
 {
@@ -179,6 +187,68 @@ float3 SpecularGGX(float NoL, float NoV, float NoH, float VoH, float3 f0, float 
     return D * vis * F;
 }
 
+static const int MAP_NORMAL = 0;   static const int MAP_SPECULAR = 1;   static const int MAP_METALLIC = 2;
+static const int MAP_ROUGHNESS = 3; static const int MAP_AO = 4;        static const int MAP_EMISSIVE = 5;
+static const int MAP_OPACITY = 6;  static const int MAP_MASK = 7;       static const int MAP_TANGENT = 8;
+static const int MAP_WPO = 9;      static const int MAP_REFRACTION = 10; static const int MAP_REFLECTION = 11;
+static const int MAP_CUSTOM = 12;
+
+struct MapUV { float2 uv, dx, dy; };
+
+bool HasMap(int k) { return maps[k].x > 0.5f; }
+
+float4 FetchMap(int k, MapUV m)
+{
+    return gTex[(int)(maps[k].x + 0.5f)].SampleGrad(sLinWrap, m.uv, m.dx, m.dy);
+}
+
+float PickChannel(float4 t, float ch)
+{
+    int c = (int)(ch + 0.5f);
+    if (c == 0) return t.r;
+    if (c == 1) return t.g;
+    if (c == 2) return t.b;
+    if (c == 3) return t.a;
+    return dot(t.rgb, float3(0.299f, 0.587f, 0.114f));
+}
+
+float MapRaw(int k, MapUV m)
+{
+    float v = PickChannel(FetchMap(k, m), maps[k].z);
+    return (maps[k].w > 0.5f) ? 1.0f - v : v;
+}
+
+// lerp(slider value, map value, amount); the slider value when there is no map
+float MapValue(int k, MapUV m, float fallback)
+{
+    if (!HasMap(k)) return fallback;
+    return lerp(fallback, MapRaw(k, m), saturate(maps[k].y));
+}
+
+float3x3 CotangentFrame(float3 N, float3 p, float2 uv)      // tangent frame from screen derivatives
+{
+    float3 dp1 = ddx(p), dp2 = ddy(p);
+    float2 duv1 = ddx(uv), duv2 = ddy(uv);
+    float3 dp2perp = cross(dp2, N);
+    float3 dp1perp = cross(N, dp1);
+    float3 T = dp2perp * duv1.x + dp1perp * duv2.x;
+    float3 B = dp2perp * duv1.y + dp1perp * duv2.y;
+    float invmax = rsqrt(max(max(dot(T, T), dot(B, B)), 1e-12f));
+    return float3x3(T * invmax, B * invmax, N);
+}
+
+float3 SpecularGGXAniso(float NoL, float NoV, float NoH, float VoH, float3 f0, float ax, float ay, float XoH, float YoH)
+{
+    float d = XoH * XoH / (ax * ax) + YoH * YoH / (ay * ay) + NoH * NoH;
+    float D = 1.0f / (PI * ax * ay * d * d);
+    float a = sqrt(ax * ay);
+    float gv = NoL * (NoV * (1.0f - a) + a);
+    float gl = NoV * (NoL * (1.0f - a) + a);
+    float vis = 0.5f / max(gv + gl, 1e-4f);
+    float3 F = f0 + (1.0f - f0) * pow(1.0f - VoH, 5.0f);
+    return D * vis * F;
+}
+
 
 float ShadowTap(float2 uv, float slice, float refDepth)
 {
@@ -283,42 +353,77 @@ float ShadowFactor(Light L, float3 worldPos, float3 N, int type, float2 pixelPos
     }
     return lit / 16.0f;
 }
-
 float4 PSMain(PSInput input, bool isFront : SV_IsFrontFace) : SV_TARGET
 {
-    // Culling is off, so flip the normal on back faces
+    // gradients for the extra maps, computed before any branch
+    MapUV mu;
+    mu.uv = input.uv * mapUV.xy + mapUV.zw;
+    mu.dx = ddx(mu.uv);
+    mu.dy = ddy(mu.uv);
+    float3x3 tbn;
+
+    const bool usePbr = pbrB.w > 0.5f;
     float3 N = normalize(input.worldNormal);
     if (!isFront) N = -N;
 
-    // The texture view is sRGB, so the sample arrives already linear
     float4 texel = MappedTexel(input);
     const int spriteFlags = (int)(objPad.y + 0.5f);
     if ((spriteFlags & 1) != 0 && texel.a < 0.5f) discard;
-    // ---- per-slot alpha cutout (materials only, sprites keep their own path) ----
-    if (pbrB.w > 0.5f && alphaP.x > 0.5f)
+    if (usePbr && surfA.x < 0.5f && !isFront) discard;            // Two Sided off
+    const bool receive = objPad.z < 0.5f;
+
+    // ---- alpha: masked = alpha test, translucent = blended ----
+    float srcA = texel.a;
+    if (alphaP.y > 0.5f)
     {
-        float a = texel.a;                                            // source 0: the PNG's alpha channel
-        if (alphaP.y > 0.5f)
-        {
-            // texel is linear (sRGB view). Brightness is converted back to display space,
-            // so the cutoff slider matches the grey values you see in GIMP.
-            float lum = pow(saturate(dot(texel.rgb, float3(0.2126f, 0.7152f, 0.0722f))), 1.0f / 2.2f);
-            a = (alphaP.y < 1.5f) ? lum : (1.0f - lum);               // 1: dark = clear, 2: light = clear
-        }
-        clip(a - alphaP.z);                                           // discard below the cutoff
+        float lum = pow(saturate(dot(texel.rgb, float3(0.2126f, 0.7152f, 0.0722f))), 1.0f / 2.2f);
+        srcA = (alphaP.y < 1.5f) ? lum : (1.0f - lum);
     }
-    const bool receive = objPad.z < 0.5f;                  // Receive Shadows
+    const int blend = usePbr ? (int)(alphaP.x + 0.5f) : 0;
+    float opacity = 1.0f;
+    if (blend == 1) clip(srcA * MapValue(MAP_MASK, mu, 1.0f) - alphaP.z);
+    else if (blend == 2) opacity = saturate(opacityP.x * MapValue(MAP_OPACITY, mu, 1.0f) * srcA);
+
     float3 albedo = pow(input.color.rgb, 2.2f) * texel.rgb;
 
-    // ---- PBR inputs ----
-    const bool  usePbr = pbrB.w > 0.5f;
-    const float metallic = saturate(pbrA.x);
-    const float rough = clamp(pbrA.y, 0.06f, 1.0f);
+    // ---- surface values: slider, or the map ----
+    const float metallic = saturate(MapValue(MAP_METALLIC, mu, saturate(pbrA.x)));
+    const float rough = clamp(MapValue(MAP_ROUGHNESS, mu, pbrA.y), 0.06f, 1.0f);
     const float alpha = rough * rough;
+    const float specular = saturate(MapValue(MAP_SPECULAR, mu, saturate(pbrA.z)));
+    const float ao = saturate(MapValue(MAP_AO, mu, 1.0f));
+    const float sss = surfB.w * MapValue(MAP_CUSTOM, mu, 1.0f);
+    const float aniso = clamp(surfA.w, -0.95f, 0.95f);
+
+    // ---- normal + tangent frame ----
+    tbn = CotangentFrame(N, input.worldPos, mu.uv);
+    const float3 Ng = N;                                          // geometric normal, used for shadow offsets
+    if (usePbr && HasMap(MAP_NORMAL))
+    {
+        float3 nt = FetchMap(MAP_NORMAL, mu).xyz * 2.0f - 1.0f;
+        if (maps[MAP_NORMAL].w > 0.5f) nt.y = -nt.y;              // flip green (OpenGL style maps)
+        nt = normalize(float3(nt.xy * maps[MAP_NORMAL].y, max(nt.z, 1e-3f)));
+        N = normalize(mul(nt, tbn));
+    }
+    float3 Tdir = normalize(tbn[0] - N * dot(tbn[0], N));
+    if (usePbr && HasMap(MAP_TANGENT))
+    {
+        float2 tv = FetchMap(MAP_TANGENT, mu).xy * 2.0f - 1.0f;
+        float3 Tm = tbn[0] * tv.x + tbn[1] * tv.y;
+        Tm = (dot(Tm, Tm) > 1e-6f) ? normalize(Tm) : tbn[0];
+        Tdir = normalize(lerp(Tdir, Tm, saturate(maps[MAP_TANGENT].y)));
+        Tdir = normalize(Tdir - N * dot(Tdir, N));
+    }
+    const float3 Bdir = cross(N, Tdir);
+
+    // ---- view, reflectance (IOR from the slider or the refraction map) ----
     float3 eye = -(view[0].xyz * view[0].w + view[1].xyz * view[1].w + view[2].xyz * view[2].w);
     float3 V = normalize(eye - input.worldPos);
     float  NoV = max(dot(N, V), 1e-3f);
-    float3 f0 = lerp(float3(0.08f, 0.08f, 0.08f) * saturate(pbrA.z), albedo, metallic);
+    float  ior = surfA.y;
+    if (HasMap(MAP_REFRACTION)) ior = lerp(ior, 1.0f + 1.5f * MapRaw(MAP_REFRACTION, mu), saturate(maps[MAP_REFRACTION].y));
+    const float f0d = pow((ior - 1.0f) / (ior + 1.0f), 2.0f) * 2.0f * specular;   // IOR 1.5 and specular 0.5 give the old 0.04
+    float3 f0 = lerp(float3(f0d, f0d, f0d), albedo, metallic);
 
     float3 diffuseSum = float3(0.0f, 0.0f, 0.0f);
     float3 specSum = float3(0.0f, 0.0f, 0.0f);
@@ -331,67 +436,99 @@ float4 PSMain(PSInput input, bool isFront : SV_IsFrontFace) : SV_TARGET
         float3 toLight = float3(0, 1, 0);
         float  atten = 1.0f;
 
-        if (type == 0)                      // directional
+        if (type == 0)
         {
             toLight = -normalize(L.dirType.xyz);
         }
-        else if (type == 1)                 // point
+        else if (type == 1)
         {
             float3 d = L.posRange.xyz - input.worldPos;
             float  dist = length(d);
             toLight = d / max(dist, 1e-4f);
             atten = RangeFalloff(dist, L.posRange.w);
         }
-        else                                // rect area (representative point, one-sided)
+        else
         {
             float3 center = L.posRange.xyz;
             float3 faceN = normalize(L.dirType.xyz);
             float3 fromC = input.worldPos - center;
-
-            if (dot(fromC, faceN) <= 0.0f) continue;   // behind the emitter
-
+            if (dot(fromC, faceN) <= 0.0f) continue;
             float u = clamp(dot(fromC, L.rectRight.xyz), -L.rectRight.w, L.rectRight.w);
             float v = clamp(dot(fromC, L.rectUp.xyz),    -L.rectUp.w,    L.rectUp.w);
             float3 rep = center + L.rectRight.xyz * u + L.rectUp.xyz * v;
-
             float3 d = rep - input.worldPos;
             float  dist = length(d);
             toLight = d / max(dist, 1e-4f);
             atten = RangeFalloff(dist, L.posRange.w) * saturate(dot(-toLight, faceN));
         }
 
-        float NoL = saturate(dot(N, toLight));
+        float rawNoL = dot(N, toLight);
+        float NoL = saturate(rawNoL);
         if (receive && NoL > 0.0f && atten > 0.0f && L.shadow.x >= 0.0f)
-            atten *= lerp(1.0f, ShadowFactor(L, input.worldPos, N, type, input.pos.xy), shadowGlobal.x);
-        diffuseSum += radiance * NoL * atten;
+            atten *= lerp(1.0f, ShadowFactor(L, input.worldPos, Ng, type, input.pos.xy), shadowGlobal.x);
+
+        // diffuse, with tinted wrap lighting for skin (Custom Data / Subsurface)
+        float wrapped = NoL;
+        if (sss > 0.001f) wrapped = saturate((rawNoL + 0.5f * sss) / (1.0f + 0.5f * sss));
+        diffuseSum += radiance * atten * (NoL + (wrapped - NoL) * surfB.rgb);
 
         if (usePbr && NoL > 0.0f)
         {
             float3 H = normalize(V + toLight);
-            // PI keeps the highlight in step with the diffuse term, which isn't divided by PI
-            specSum += radiance * atten * NoL * PI *
-                       SpecularGGX(NoL, NoV, saturate(dot(N, H)), saturate(dot(V, H)), f0, alpha);
+            float NoH = saturate(dot(N, H)), VoH = saturate(dot(V, H));
+            float3 spec;
+            if (abs(aniso) > 0.001f)
+                spec = SpecularGGXAniso(NoL, NoV, NoH, VoH, f0, clamp(alpha * (1.0f + aniso), 0.02f, 1.0f),
+                                        clamp(alpha * (1.0f - aniso), 0.02f, 1.0f), dot(Tdir, H), dot(Bdir, H));
+            else
+                spec = SpecularGGX(NoL, NoV, NoH, VoH, f0, alpha);
+            specSum += radiance * atten * NoL * PI * spec;
         }
     }
 
     float3 color;
-    if ((spriteFlags & 2) != 0)             // unlit
+    float  outA = 1.0f;
+    if ((spriteFlags & 2) != 0)
     {
         color = albedo;
     }
-    else if (!usePbr)                       // sprites and anything without a material
+    else if (!usePbr)
     {
         color = albedo * (ambientColor.rgb + diffuseSum);
     }
     else
     {
-        float3 ambSpec = ambientColor.rgb * EnvBRDFApprox(f0, rough, NoV);
-        color = albedo * (1.0f - metallic) * (ambientColor.rgb + diffuseSum) + specSum + ambSpec;
+        // ambient reflection: the Reflection map (lat-long environment, blurred by roughness) or the flat ambient color
+        float3 envRefl = ambientColor.rgb;
+        if (HasMap(MAP_REFLECTION))
+        {
+            float3 R = reflect(-V, N);
+            float ca = cos(surfA.z), sa = sin(surfA.z);
+            R = float3(ca * R.x - sa * R.z, R.y, sa * R.x + ca * R.z);
+            float2 euv = float2(atan2(R.x, R.z) / TWO_PI + 0.5f, acos(clamp(R.y, -1.0f, 1.0f)) / PI);
+            const int rid = (int)(maps[MAP_REFLECTION].x + 0.5f);
+            uint tw, th, lv;
+            gTex[rid].GetDimensions(0, tw, th, lv);
+            float3 env = pow(saturate(gTex[rid].SampleLevel(sLinWrap, euv, rough * (float)(lv - 1)).rgb), 2.2f);
+            envRefl = env * maps[MAP_REFLECTION].y;
+        }
+        float3 ambSpec = envRefl * EnvBRDFApprox(f0, rough, NoV) * ao;
+        float3 diff = albedo * (1.0f - metallic) * (ambientColor.rgb * ao + diffuseSum);
+
+        float3 emissive = pow(saturate(pbrB.rgb), 2.2f) * pbrA.w;
+        if (HasMap(MAP_EMISSIVE))
+        {
+            float3 em = pow(saturate(FetchMap(MAP_EMISSIVE, mu).rgb), 2.2f);
+            float3 tint = (pbrB.r + pbrB.g + pbrB.b < 0.003f) ? float3(1, 1, 1) : pow(saturate(pbrB.rgb), 2.2f);
+            emissive = em * tint * pbrA.w * maps[MAP_EMISSIVE].y;
+        }
+
+        if (blend == 2) { diff *= opacity; emissive *= opacity; outA = opacity; }   // premultiplied: specular stays at full strength
+        color = diff + specSum + ambSpec + emissive;
     }
 
-    if (usePbr) color += pow(saturate(pbrB.rgb), 2.2f) * pbrA.w;           // emissive
-    if (objPad.x > 1.5f) color += float3(0.25f, 0.12f, 0.0f);              // selected-face glow, visible even when unlit
-    return float4(pow(saturate(color), 1.0f / 2.2f), input.color.a);
+    if (objPad.x > 1.5f) color += float3(0.25f, 0.12f, 0.0f);
+    return float4(pow(saturate(color), 1.0f / 2.2f), outA);
 }
 
 // ---------------- Icons ----------------

@@ -130,6 +130,16 @@ struct GhostSoundInfo
 typedef int(__cdecl* GhostFontProviderFn)(const char* utf8AbsPath);   // returns a font slot, 0 = failed
 struct GhostShadowTuning { int filter; float softness, bias, normalBias, distance; };
 
+struct GhostMapInfo { int textureId; float amount; int channel; int invert; };
+struct GhostSurfaceInfo
+{
+    int   twoSided;
+    float opacity, refractionIOR, reflectionRotDeg, anisotropy;
+    float sssR, sssG, sssB, sssAmount;
+    float mapTilingU, mapTilingV, mapOffsetU, mapOffsetV;
+    float wpoSway, wpoSpeed, wpoMid;
+};
+
 extern "C"
 {
     GHOST_API int  GhostEngine_Init(HWND hwnd, unsigned int width, unsigned int height);
@@ -262,6 +272,12 @@ extern "C"
 
     GHOST_API void GhostEngine_GetShadowTuning(GhostShadowTuning* out);
     GHOST_API void GhostEngine_SetShadowTuning(const GhostShadowTuning* in);
+
+    GHOST_API int  GhostEngine_GetMap(int objectId, int face, int slot, GhostMapInfo* out);        // face -1 = face 0
+    GHOST_API void GhostEngine_SetMap(int objectId, int face, int slot, const GhostMapInfo* in);   // face -1 = every face
+    GHOST_API int  GhostEngine_GetSurface(int objectId, int face, GhostSurfaceInfo* out);
+    GHOST_API void GhostEngine_SetSurface(int objectId, int face, const GhostSurfaceInfo* in);
+
 
     // ---- Models ----
 // Returns the new mesh id (>= 5), or -1 on failure (msg = the reason). On success msg holds a summary.

@@ -211,9 +211,143 @@ namespace GhostShell
 
     internal class AlphaModeConverter : FixedListConverter
     {
-        public static readonly string[] Names = { "Opaque", "Cutout (alpha test)" };
+        public static readonly string[] Names = { "Opaque", "Masked (alpha test)", "Translucent (blended)" };
         protected override string[] Items => Names;
     }
+    internal class MapChannelConverter : FixedListConverter
+    {
+        public static readonly string[] Names = { "R", "G", "B", "A", "Luminance" };
+        protected override string[] Items => Names;
+    }
+
+    // One texture map of the selected material slot: texture + amount + channel + invert
+    [TypeConverter(typeof(ExpandableObjectConverter))]
+    internal sealed class MapEdit
+    {
+        private readonly int _id, _slot;
+        public MapEdit(int id, int slot) { _id = id; _slot = slot; }
+
+        private delegate void MapChange(ref GhostMapInfo m);
+
+        private GhostMapInfo Read()
+        {
+            var m = new GhostMapInfo();
+            GhostEngine.GhostEngine_GetMap(_id, Math.Max(GhostEngine.GhostEngine_GetTargetFace(), 0), _slot, ref m);
+            return m;
+        }
+
+        private void Change(MapChange c)               // edits the Target Face, or every slot when it is "All Faces"
+        {
+            int face = GhostEngine.GhostEngine_GetTargetFace();
+            int count = GhostEngine.GhostEngine_GetFaceCount(_id);
+            int from = face < 0 ? 0 : face, to = face < 0 ? count - 1 : face;
+            for (int f = from; f <= to; f++)
+            {
+                var m = new GhostMapInfo();
+                if (GhostEngine.GhostEngine_GetMap(_id, f, _slot, ref m) == 0) continue;
+                c(ref m);
+                GhostEngine.GhostEngine_SetMap(_id, f, _slot, ref m);
+            }
+        }
+
+        [DisplayName("Texture"), TypeConverter(typeof(TextureChoiceConverter))]
+        public string Texture
+        {
+            get => GhostTextures.DisplayName(Read().textureId);
+            set
+            {
+                int tex = (value == GhostTextures.ImportLabel) ? GhostTextures.ImportFromDisk() : GhostTextures.IdFromDisplay(value);
+                if (tex < 0) return;
+                Change((ref GhostMapInfo m) => m.textureId = tex);
+            }
+        }
+
+        [DisplayName("Amount (strength / blend)")]
+        public float Amount { get => Read().amount; set => Change((ref GhostMapInfo m) => m.amount = value); }
+
+        [DisplayName("Channel"), TypeConverter(typeof(MapChannelConverter))]
+        public string Channel
+        {
+            get => MapChannelConverter.Names[Math.Clamp(Read().channel, 0, 4)];
+            set { int i = Array.IndexOf(MapChannelConverter.Names, value); if (i >= 0) Change((ref GhostMapInfo m) => m.channel = i); }
+        }
+
+        [DisplayName("Invert (Normal map: flip green)")]
+        public bool Invert { get => Read().invert != 0; set => Change((ref GhostMapInfo m) => m.invert = value ? 1 : 0); }
+
+        public override string ToString() { var m = Read(); return m.textureId == 0 ? "None" : $"{GhostTextures.DisplayName(m.textureId)}  x{m.amount:0.##}"; }
+    }
+
+    // Surface values that aren't a texture
+    [TypeConverter(typeof(ExpandableObjectConverter))]
+    internal sealed class SurfaceEdit
+    {
+        private readonly int _id;
+        private delegate void SurfChange(ref GhostSurfaceInfo s);
+
+        public SurfaceEdit(int id)
+        {
+            _id = id;
+            MapTiling = new Vec2Edit(() => { var s = Read(); return (s.mapTilingU, s.mapTilingV); },
+                (u, v) => Change((ref GhostSurfaceInfo s) => { s.mapTilingU = u; s.mapTilingV = v; }));
+            MapOffset = new Vec2Edit(() => { var s = Read(); return (s.mapOffsetU, s.mapOffsetV); },
+                (u, v) => Change((ref GhostSurfaceInfo s) => { s.mapOffsetU = u; s.mapOffsetV = v; }));
+        }
+
+        private GhostSurfaceInfo Read()
+        {
+            var s = new GhostSurfaceInfo();
+            GhostEngine.GhostEngine_GetSurface(_id, Math.Max(GhostEngine.GhostEngine_GetTargetFace(), 0), ref s);
+            return s;
+        }
+
+        private void Change(SurfChange c)
+        {
+            int face = GhostEngine.GhostEngine_GetTargetFace();
+            int count = GhostEngine.GhostEngine_GetFaceCount(_id);
+            int from = face < 0 ? 0 : face, to = face < 0 ? count - 1 : face;
+            for (int f = from; f <= to; f++)
+            {
+                var s = new GhostSurfaceInfo();
+                if (GhostEngine.GhostEngine_GetSurface(_id, f, ref s) == 0) continue;
+                c(ref s);
+                GhostEngine.GhostEngine_SetSurface(_id, f, ref s);
+            }
+        }
+
+        [DisplayName("Two Sided")]
+        public bool TwoSided { get => Read().twoSided != 0; set => Change((ref GhostSurfaceInfo s) => s.twoSided = value ? 1 : 0); }
+        [DisplayName("Opacity (Translucent mode)")]
+        public float Opacity { get => Read().opacity; set => Change((ref GhostSurfaceInfo s) => s.opacity = value); }
+        [DisplayName("Refraction IOR")]
+        public float RefractionIOR { get => Read().refractionIOR; set => Change((ref GhostSurfaceInfo s) => s.refractionIOR = value); }
+        [DisplayName("Reflection Rotation (deg)")]
+        public float ReflectionRotation { get => Read().reflectionRotDeg; set => Change((ref GhostSurfaceInfo s) => s.reflectionRotDeg = value); }
+        [DisplayName("Anisotropy (-0.95 to 0.95)")]
+        public float Anisotropy { get => Read().anisotropy; set => Change((ref GhostSurfaceInfo s) => s.anisotropy = value); }
+        [DisplayName("Subsurface Color")]
+        public Color SubsurfaceColor
+        {
+            get { var s = Read(); return GhostColorUtil.ToColor(s.sssR, s.sssG, s.sssB); }
+            set => Change((ref GhostSurfaceInfo s) => { s.sssR = value.R / 255f; s.sssG = value.G / 255f; s.sssB = value.B / 255f; });
+        }
+        [DisplayName("Subsurface Amount (skin, 0-1)")]
+        public float SubsurfaceAmount { get => Read().sssAmount; set => Change((ref GhostSurfaceInfo s) => s.sssAmount = value); }
+        [DisplayName("Map Tiling (all extra maps)")] public Vec2Edit MapTiling { get; }
+        [DisplayName("Map Offset (all extra maps)")] public Vec2Edit MapOffset { get; }
+        [DisplayName("WPO Sway (wind, units)")]
+        public float WpoSway { get => Read().wpoSway; set => Change((ref GhostSurfaceInfo s) => s.wpoSway = value); }
+        [DisplayName("WPO Sway Speed")]
+        public float WpoSpeed { get => Read().wpoSpeed; set => Change((ref GhostSurfaceInfo s) => s.wpoSpeed = value); }
+        [DisplayName("WPO Mid Level (0-1)")]
+        public float WpoMid { get => Read().wpoMid; set => Change((ref GhostSurfaceInfo s) => s.wpoMid = value); }
+
+        public override string ToString() => "(opacity, IOR, subsurface, WPO ...)";
+    }
+
+
+
+
     internal class AlphaSourceConverter : FixedListConverter
     {
         public static readonly string[] Names = { "Texture Alpha", "Brightness (dark = clear)", "Inverted Brightness (light = clear)" };
@@ -693,7 +827,7 @@ namespace GhostShell
     internal class ObjectProxy
     {
         private readonly int _id;
-
+        private readonly MapEdit[] _maps = new MapEdit[13];
         public ObjectProxy(int id)
         {
             _id = id;
@@ -723,6 +857,8 @@ namespace GhostShell
 (x, y, z) => { var g = GetG(); g.crx = x; g.cry = y; g.crz = z; SetG(g); });
             Dimensions = new DimEdit(id);
             Behavior = new BehaviorEdit(id);
+            for (int k = 0; k < 13; k++) _maps[k] = new MapEdit(id, k);
+            SurfaceExtras = new SurfaceEdit(id);
         }
 
         private GhostObjectInfo Get() { var i = new GhostObjectInfo(); GhostEngine.GhostEngine_GetObject(_id, ref i); return i; }
@@ -972,6 +1108,23 @@ namespace GhostShell
             get => ReadMat().emissiveStrength;
             set => EditMat((ref GhostMaterialInfo m) => m.emissiveStrength = value);
         }
+
+        [Category("Surface (PBR)"), DisplayName("Normal Map")] public MapEdit NormalMap => _maps[0];
+        [Category("Surface (PBR)"), DisplayName("Specular Map")] public MapEdit SpecularMap => _maps[1];
+        [Category("Surface (PBR)"), DisplayName("Metallic Map")] public MapEdit MetallicMap => _maps[2];
+        [Category("Surface (PBR)"), DisplayName("Roughness Map")] public MapEdit RoughnessMap => _maps[3];
+        [Category("Surface (PBR)"), DisplayName("Ambient Occlusion")] public MapEdit AmbientOcclusionMap => _maps[4];
+        [Category("Surface (PBR)"), DisplayName("Emissive Map")] public MapEdit EmissiveMap => _maps[5];
+        [Category("Surface (PBR)"), DisplayName("Opacity Map")] public MapEdit OpacityMap => _maps[6];
+        [Category("Surface (PBR)"), DisplayName("Opacity Mask")] public MapEdit OpacityMaskMap => _maps[7];
+        [Category("Surface (PBR)"), DisplayName("Tangent Map")] public MapEdit TangentMap => _maps[8];
+        [Category("Surface (PBR)"), DisplayName("World Position Offset")] public MapEdit WpoMap => _maps[9];
+        [Category("Surface (PBR)"), DisplayName("Refraction Map")] public MapEdit RefractionMap => _maps[10];
+        [Category("Surface (PBR)"), DisplayName("Reflection Map (environment)")] public MapEdit ReflectionMap => _maps[11];
+        [Category("Surface (PBR)"), DisplayName("Custom Data (subsurface mask)")] public MapEdit CustomDataMap => _maps[12];
+        [Category("Surface (PBR)"), DisplayName("Advanced Surface")] public SurfaceEdit SurfaceExtras { get; }
+
+
         // ---- Shadows ----
         [Category("Shadows"), DisplayName("Cast Shadows")]
         [TypeConverter(typeof(ShadowCasterConverter))]

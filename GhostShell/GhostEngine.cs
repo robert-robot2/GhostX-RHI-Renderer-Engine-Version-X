@@ -138,6 +138,18 @@ namespace GhostShell
         public float softness, bias, normalBias, distance;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GhostMapInfo { public int textureId; public float amount; public int channel; public int invert; }
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GhostSurfaceInfo
+    {
+        public int twoSided;
+        public float opacity, refractionIOR, reflectionRotDeg, anisotropy;
+        public float sssR, sssG, sssB, sssAmount;
+        public float mapTilingU, mapTilingV, mapOffsetU, mapOffsetV;
+        public float wpoSway, wpoSpeed, wpoMid;
+    }
+
 
     internal static class GhostEngine
     {
@@ -383,6 +395,15 @@ namespace GhostShell
         public static extern void GhostEngine_GetShadowTuning(out GhostShadowTuning t);
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern void GhostEngine_SetShadowTuning(ref GhostShadowTuning t);
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetMap(int objectId, int face, int slot, ref GhostMapInfo m);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetMap(int objectId, int face, int slot, ref GhostMapInfo m);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetSurface(int objectId, int face, ref GhostSurfaceInfo s);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetSurface(int objectId, int face, ref GhostSurfaceInfo s);
 
 
         // ---- Models ----

@@ -29,10 +29,17 @@ struct GhostObjectCB            // matches cbuffer MVPBuffer (VS) and ObjectBuff
     float     uvParams[4];      // tilingU, tilingV, offsetU, offsetV
     float     mapParams[4];     // mode, rotation (radians), wrap, filter
     float     sky[64];          // sky pass parameters (16 float4); zero for every other draw
-    float     pbr[8];           // ...existing...
-    float     alphaP[4];        // [0] alpha mode, [1] alpha source, [2] cutoff
+    float     pbr[8];
+    float     alphaP[4];                  // x blend mode, y alpha source, z cutoff
+    float     mapUV[4];                   // extra maps: tiling u,v / offset u,v
+    float     maps[GHOST_MAP_COUNT][4];   // per map: x texture id (0 none), y amount, z channel, w invert
+    float     surfA[4];                   // x two sided, y IOR, z reflection rotation (rad), w anisotropy
+    float     surfB[4];                   // subsurface rgb, w amount
+    float     wpoP[4];                    // x sway, y speed, z mid level, w time (s)
+    float     opacityP[4];                // x opacity
 };
-static_assert(sizeof(GhostObjectCB) == 560, "GhostObjectCB layout must match the HLSL cbuffer");
+static_assert(sizeof(GhostObjectCB) == 848, "GhostObjectCB layout must match the HLSL cbuffer");
+
 constexpr unsigned int GHOST_SHADOW_SIZE = 1024;     // each shadow map is 1024 x 1024
 constexpr unsigned int GHOST_SHADOW_SLICES = 16;       // a directional light uses 1, a point or rect light 6
 
@@ -63,12 +70,14 @@ constexpr unsigned long long GHOST_SCENE_CB_SIZE = (sizeof(GhostSceneCB) + 255) 
 
 
 constexpr unsigned int       GHOST_MAX_OBJECTS = 2048;          // was 1024: draw slots
-constexpr unsigned long long GHOST_OBJECT_CB_STRIDE = 768;     // room for the Section B material block
+constexpr unsigned long long GHOST_OBJECT_CB_STRIDE = 1024;
 static_assert(sizeof(GhostObjectCB) <= GHOST_OBJECT_CB_STRIDE, "GhostObjectCB too large");
 
 constexpr unsigned int       GHOST_MAX_TEXTURES = 256;
 constexpr unsigned int GHOST_MAX_SHADOW_CASTERS = 512;          // was 256: this is also the object limit
 constexpr unsigned int GHOST_SHADOW_SRV_INDEX = GHOST_MAX_TEXTURES + GHOST_MAX_SURFACES;   // last slot of the SRV heap
+
+constexpr unsigned int GHOST_DATA_SRV_BASE = GHOST_SHADOW_SRV_INDEX + 1;   // linear (UNORM) view of every texture, same order as the ids
 
 struct GhostMesh
 {
@@ -97,6 +106,7 @@ struct GhostPipeline
 {
     ComPtr<ID3D12RootSignature>  rootSignature;
     ComPtr<ID3D12PipelineState>  pso;
+    ComPtr<ID3D12PipelineState>  blendPso;      // translucent materials
     ComPtr<ID3D12PipelineState> iconPso;
     GhostMesh meshes[GHOST_MAX_MESHES];
 
@@ -189,7 +199,7 @@ int GhostCreateTexture(IGhostRHI* rhi, GhostPipeline* pipeline,
 
 // indexCount 0 = whole mesh; otherwise draws indices [firstIndex, firstIndex + indexCount)
 void GhostDrawMesh(IGhostRHI* rhi, GhostPipeline* pipeline, int meshId, unsigned int slot,
-    unsigned int textureIndex = 0, unsigned int firstIndex = 0, unsigned int indexCount = 0);
+    unsigned int textureIndex = 0, unsigned int firstIndex = 0, unsigned int indexCount = 0, bool translucent = false);
 
 void GhostDrawIcon(IGhostRHI* rhi, GhostPipeline* pipeline, unsigned int slot);
 

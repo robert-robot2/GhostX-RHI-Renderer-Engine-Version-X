@@ -1,4 +1,4 @@
-cbuffer MVPBuffer : register(b0)
+cbuffer MVPBuffer : register(b0)          // the full object layout (same as ObjectBuffer in GhostPS.hlsl)
 {
     row_major float4x4 model;
     row_major float4x4 view;
@@ -6,7 +6,32 @@ cbuffer MVPBuffer : register(b0)
     float4 baseColor;
     float  useVertexColor;
     float3 padObj;
+    float4 uvParams;
+    float4 mapParams;
+    float4 sky[16];
+    float4 pbrA;
+    float4 pbrB;
+    float4 alphaP;
+    float4 mapUV;
+    float4 maps[13];
+    float4 surfA;
+    float4 surfB;
+    float4 wpoP;
+    float4 opacityP;
 };
+
+Texture2D    gTex[256] : register(t0, space1);
+SamplerState sLinWrap : register(s0);
+
+float PickChannel(float4 t, float ch)
+{
+    int c = (int)(ch + 0.5f);
+    if (c == 0) return t.r;
+    if (c == 1) return t.g;
+    if (c == 2) return t.b;
+    if (c == 3) return t.a;
+    return dot(t.rgb, float3(0.299f, 0.587f, 0.114f));
+}
 
 struct VSInput
 {
@@ -32,12 +57,30 @@ PSInput VSMain(VSInput input)
     PSInput output;
 
     float4 worldPos = mul(model, float4(input.pos, 1.0f));
+
+    // ---- World Position Offset: map displacement along the normal, plus wind sway weighted by the map ----
+    if (pbrB.w > 0.5f && (maps[9].x > 0.5f || wpoP.x != 0.0f))
+    {
+        float mask = 1.0f, disp = 0.0f;
+        if (maps[9].x > 0.5f)
+        {
+            float2 wuv = input.uv * mapUV.xy + mapUV.zw;
+            float v = PickChannel(gTex[(int)(maps[9].x + 0.5f)].SampleLevel(sLinWrap, wuv, 0), maps[9].z);
+            if (maps[9].w > 0.5f) v = 1.0f - v;
+            mask = v;
+            disp = (v - wpoP.z) * maps[9].y;
+        }
+        float3 nW = normalize(mul(model, float4(input.normal, 0.0f)).xyz);
+        worldPos.xyz += nW * disp;
+        float ph = wpoP.w * wpoP.y;
+        worldPos.x += sin(ph + worldPos.y * 2.0f + worldPos.z * 1.3f) * wpoP.x * mask;
+        worldPos.z += cos(ph * 0.83f + worldPos.y * 1.7f + worldPos.x * 1.1f) * wpoP.x * mask;
+    }
+
     float4 viewPos = mul(view, worldPos);
     output.pos = mul(proj, viewPos);
     output.worldPos = worldPos.xyz;
     output.worldNormal = mul(model, float4(input.normal, 0.0f)).xyz;
-    // Object-local position scaled by the object's scale, so planar/box projections keep a
-// constant texel size when you scale the object
     float3 sc = float3(length(float3(model[0][0], model[1][0], model[2][0])),
         length(float3(model[0][1], model[1][1], model[2][1])),
         length(float3(model[0][2], model[1][2], model[2][2])));
@@ -47,9 +90,7 @@ PSInput VSMain(VSInput input)
     if (padObj.x > 0.5f)
         output.color.rgb = lerp(output.color.rgb, float3(1.0f, 0.6f, 0.1f),
             padObj.x > 1.5f ? 0.6f : 0.35f);
-    // Pass UV through for 1.5
     output.uv = input.uv;
-
     return output;
 }
 

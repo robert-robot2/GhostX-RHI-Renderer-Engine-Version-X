@@ -1233,6 +1233,7 @@ static void RenderShadowPass(GhostSceneCB& cb, const GhostVec3& eye, const Ghost
 static GhostViewSettings g_viewCfg = { 1, 0, 1, 1,   0, 7, 1,   0, 0,   1.0f,   20,   0, 0, 2, 2 };
 static GhostOverlay      g_ov;
 static float             g_fps = 0.0f;
+static float g_timeSec = 0.0f;       // drives WPO sway
 
 static const float kAxisCol[3][4] = { { 0.92f, 0.30f, 0.30f, 1.0f },{ 0.50f, 0.85f, 0.30f, 1.0f },{ 0.30f, 0.55f, 0.95f, 1.0f } };
 static const float kUnitMul[5] = { 1000.0f, 100.0f, 1.0f, 39.3701f, 3.28084f };      // 1 engine unit = 1 metre
@@ -1992,6 +1993,26 @@ static void DrawViewportOverlay(const GhostMat4& view, const GhostMat4& proj, co
     GhostDrawOverlay(g_rhi, g_pipeline, g_ov.text, 1, g_font.textureId);
 }
 
+static void FillMaterialCB(GhostObjectCB& cb, const GhostMaterial& m)
+{
+    const float d2r = GHOST_PI / 180.0f;
+    cb.alphaP[0] = (float)m.alphaMode; cb.alphaP[1] = (float)m.alphaSource; cb.alphaP[2] = m.alphaCutoff;
+    cb.mapUV[0] = m.mapTiling[0]; cb.mapUV[1] = m.mapTiling[1]; cb.mapUV[2] = m.mapOffset[0]; cb.mapUV[3] = m.mapOffset[1];
+    for (int k = 0; k < GHOST_MAP_COUNT; k++)
+    {
+        const GhostMapParams& p = m.maps[k];
+        const bool ok = p.textureId > 0 && p.textureId < (int)g_scene.textures.size() && p.textureId < (int)GHOST_MAX_TEXTURES;
+        cb.maps[k][0] = ok ? (float)p.textureId : 0.0f;
+        cb.maps[k][1] = p.amount; cb.maps[k][2] = (float)p.channel; cb.maps[k][3] = (float)p.invert;
+    }
+    cb.surfA[0] = (float)m.twoSided; cb.surfA[1] = m.refractionIOR; cb.surfA[2] = m.reflectionRotDeg * d2r; cb.surfA[3] = m.anisotropy;
+    cb.surfB[0] = m.sssColor[0]; cb.surfB[1] = m.sssColor[1]; cb.surfB[2] = m.sssColor[2]; cb.surfB[3] = m.sssAmount;
+    cb.wpoP[0] = m.wpoSway; cb.wpoP[1] = m.wpoSpeed; cb.wpoP[2] = m.wpoMid; cb.wpoP[3] = g_timeSec;
+    cb.opacityP[0] = m.opacity;
+}
+
+struct TransDraw { int meshId; unsigned int slot, tex, first, count; float dist2; };
+static std::vector<TransDraw> g_translucent;
 
 // ============================================================
 //  One viewport = one surface + one camera. The GPU is idle between viewports
@@ -2115,6 +2136,7 @@ static void RenderViewport(int vp)
         }
         break;                                       // one sky per scene
     }
+    g_translucent.clear();
     for (const GhostObject& o : g_scene.objects)
     {
         if (!o.visible && g_playState != GhostPlayState::Editing) continue;   // hidden in game
@@ -2178,17 +2200,25 @@ static void RenderViewport(int vp)
             cb.pbr[0] = m.metallic;  cb.pbr[1] = m.roughness;  cb.pbr[2] = m.specular;  cb.pbr[3] = m.emissiveStrength;
             cb.pbr[4] = m.emissive[0];  cb.pbr[5] = m.emissive[1];  cb.pbr[6] = m.emissive[2];
             cb.pbr[7] = 1.0f;                                  // this draw uses PBR
-            cb.alphaP[0] = (float)m.alphaMode;
-            cb.alphaP[1] = (float)m.alphaSource;
-            cb.alphaP[2] = m.alphaCutoff;
+            FillMaterialCB(cb, m);
             GhostUpdateObjectCB(g_pipeline, slot, &cb);
-            GhostDrawMesh(g_rhi, g_pipeline, o.meshId, slot, (unsigned int)m.textureId,
-                a.firstIndex, b.firstIndex + b.indexCount - a.firstIndex);
+            if (m.alphaMode == 2)                                  // translucent: drawn after all opaque work, back to front
+            {
+                const GhostVec3 dv = o.position - eye;
+                g_translucent.push_back({ o.meshId, slot, (unsigned int)m.textureId, a.firstIndex,
+                                          b.firstIndex + b.indexCount - a.firstIndex, dv.Dot(dv) });
+            }
+            else
+                GhostDrawMesh(g_rhi, g_pipeline, o.meshId, slot, (unsigned int)m.textureId,
+                    a.firstIndex, b.firstIndex + b.indexCount - a.firstIndex);
             slot++;
             f = g;
         }
     }
-
+    std::stable_sort(g_translucent.begin(), g_translucent.end(),
+        [](const TransDraw& a, const TransDraw& b) { return a.dist2 > b.dist2; });
+    for (const TransDraw& t : g_translucent)
+        GhostDrawMesh(g_rhi, g_pipeline, t.meshId, t.slot, t.tex, t.first, t.count, true);
     // ---- Icons: main view only ----
     if (overlays)
     {
@@ -2433,6 +2463,8 @@ void GhostEngine_Tick()
     QueryPerformanceCounter(&curr);
     float dt = (float)(curr.QuadPart - g_prev.QuadPart) / (float)g_freq.QuadPart;
     g_prev = curr;
+    g_timeSec = fmodf(g_timeSec + (dt > 0.25f ? 0.25f : dt), 3600.0f);
+
     if (dt > 1e-5f)
     {
         const float inst = 1.0f / dt;
@@ -2676,29 +2708,106 @@ void GhostEngine_SetMaterial(int objectId, int face, const GhostMaterialInfo* in
 
     auto nz = [](float v) { return fabsf(v) < 0.001f ? (v < 0.0f ? -0.001f : 0.001f) : v; };
     auto c01 = [](float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); };
+    const int tex = (in->textureId >= 0 && in->textureId < (int)g_scene.textures.size()) ? in->textureId : 0;
 
-    GhostMaterial m;
-    m.textureId = (in->textureId >= 0 && in->textureId < (int)g_scene.textures.size()) ? in->textureId : 0;
-    m.mapMode = in->mapMode < 0 ? 0 : (in->mapMode > 7 ? 7 : in->mapMode);
-    m.wrap = in->wrap ? 1 : 0;
-    m.filter = in->filter ? 1 : 0;
-    m.tiling[0] = nz(in->tilingU); m.tiling[1] = nz(in->tilingV);
-    m.offset[0] = in->offsetU;     m.offset[1] = in->offsetV;
-    m.rotationDeg = in->rotationDeg;
-    m.tint[0] = c01(in->r); m.tint[1] = c01(in->g); m.tint[2] = c01(in->b);
-    m.metallic = c01(in->metallic);
-    m.roughness = in->roughness < 0.02f ? 0.02f : (in->roughness > 1.0f ? 1.0f : in->roughness);
-    m.specular = c01(in->specular);
-    m.emissive[0] = c01(in->emR); m.emissive[1] = c01(in->emG); m.emissive[2] = c01(in->emB);
-    m.emissiveStrength = in->emissiveStrength < 0.0f ? 0.0f : (in->emissiveStrength > 20.0f ? 20.0f : in->emissiveStrength);
-    m.alphaMode = in->alphaMode ? 1 : 0;
-    m.alphaSource = in->alphaSource < 0 ? 0 : (in->alphaSource > 2 ? 2 : in->alphaSource);
-    m.alphaCutoff = c01(in->alphaCutoff);
     const int from = face < 0 ? 0 : face;
     const int to = face < 0 ? count - 1 : face;
-    for (int f = from; f <= to; f++) o->faces[f] = m;
-    if (o->meshId == GHOST_MESH_QUAD) o->sprite.textureId = m.textureId;
+    for (int f = from; f <= to; f++)
+    {
+        GhostMaterial m = o->faces[f];                  // keep the maps and advanced surface values
+        m.textureId = tex;
+        m.mapMode = in->mapMode < 0 ? 0 : (in->mapMode > 7 ? 7 : in->mapMode);
+        m.wrap = in->wrap ? 1 : 0;
+        m.filter = in->filter ? 1 : 0;
+        m.tiling[0] = nz(in->tilingU); m.tiling[1] = nz(in->tilingV);
+        m.offset[0] = in->offsetU;     m.offset[1] = in->offsetV;
+        m.rotationDeg = in->rotationDeg;
+        m.tint[0] = c01(in->r); m.tint[1] = c01(in->g); m.tint[2] = c01(in->b);
+        m.metallic = c01(in->metallic);
+        m.roughness = in->roughness < 0.02f ? 0.02f : (in->roughness > 1.0f ? 1.0f : in->roughness);
+        m.specular = c01(in->specular);
+        m.emissive[0] = c01(in->emR); m.emissive[1] = c01(in->emG); m.emissive[2] = c01(in->emB);
+        m.emissiveStrength = in->emissiveStrength < 0.0f ? 0.0f : (in->emissiveStrength > 20.0f ? 20.0f : in->emissiveStrength);
+        m.alphaMode = in->alphaMode < 0 ? 0 : (in->alphaMode > 2 ? 2 : in->alphaMode);
+        m.alphaSource = in->alphaSource < 0 ? 0 : (in->alphaSource > 2 ? 2 : in->alphaSource);
+        m.alphaCutoff = c01(in->alphaCutoff);
+        o->faces[f] = m;
+    }
+    if (o->meshId == GHOST_MESH_QUAD) o->sprite.textureId = tex;
 }
+
+static const float kMapMax[GHOST_MAP_COUNT] = { 4, 1, 1, 1, 1, 20, 1, 1, 1, 5, 1, 10, 1 };
+
+int GhostEngine_GetMap(int objectId, int face, int slot, GhostMapInfo* out)
+{
+    GhostObject* o = FindObject(objectId);
+    if (!o || !out || slot < 0 || slot >= GHOST_MAP_COUNT) return 0;
+    if (face < 0) face = 0;
+    if (face >= GhostMesh_FaceCount(o->meshId)) return 0;
+    const GhostMapParams& p = o->faces[face].maps[slot];
+    *out = { p.textureId, p.amount, p.channel, p.invert };
+    return 1;
+}
+
+void GhostEngine_SetMap(int objectId, int face, int slot, const GhostMapInfo* in)
+{
+    GhostObject* o = FindObject(objectId);
+    if (!o || !in || slot < 0 || slot >= GHOST_MAP_COUNT) return;
+    const int count = GhostMesh_FaceCount(o->meshId);
+    if (face >= count) return;
+
+    const float mx = kMapMax[slot], mn = (slot == GHOST_MAP_WPO) ? -mx : 0.0f;
+    GhostMapParams p;
+    p.textureId = (in->textureId >= 0 && in->textureId < (int)g_scene.textures.size()) ? in->textureId : 0;
+    p.amount = in->amount != in->amount ? 0.0f : (in->amount < mn ? mn : (in->amount > mx ? mx : in->amount));
+    p.channel = in->channel < 0 ? 0 : (in->channel > 4 ? 4 : in->channel);
+    p.invert = in->invert ? 1 : 0;
+    const int from = face < 0 ? 0 : face, to = face < 0 ? count - 1 : face;
+    for (int f = from; f <= to; f++) o->faces[f].maps[slot] = p;
+}
+
+int GhostEngine_GetSurface(int objectId, int face, GhostSurfaceInfo* out)
+{
+    GhostObject* o = FindObject(objectId);
+    if (!o || !out) return 0;
+    if (face < 0) face = 0;
+    if (face >= GhostMesh_FaceCount(o->meshId)) return 0;
+    const GhostMaterial& m = o->faces[face];
+    *out = { m.twoSided, m.opacity, m.refractionIOR, m.reflectionRotDeg, m.anisotropy,
+             m.sssColor[0], m.sssColor[1], m.sssColor[2], m.sssAmount,
+             m.mapTiling[0], m.mapTiling[1], m.mapOffset[0], m.mapOffset[1],
+             m.wpoSway, m.wpoSpeed, m.wpoMid };
+    return 1;
+}
+
+void GhostEngine_SetSurface(int objectId, int face, const GhostSurfaceInfo* in)
+{
+    GhostObject* o = FindObject(objectId);
+    if (!o || !in) return;
+    const int count = GhostMesh_FaceCount(o->meshId);
+    if (face >= count) return;
+    auto cf = [](float v, float lo, float hi) { return v != v ? lo : (v < lo ? lo : (v > hi ? hi : v)); };
+    auto nz = [](float v) { return fabsf(v) < 0.001f ? (v < 0.0f ? -0.001f : 0.001f) : v; };
+
+    const int from = face < 0 ? 0 : face, to = face < 0 ? count - 1 : face;
+    for (int f = from; f <= to; f++)
+    {
+        GhostMaterial& m = o->faces[f];
+        m.twoSided = in->twoSided ? 1 : 0;
+        m.opacity = cf(in->opacity, 0.0f, 1.0f);
+        m.refractionIOR = cf(in->refractionIOR, 1.0f, 3.0f);
+        m.reflectionRotDeg = cf(in->reflectionRotDeg, -720.0f, 720.0f);
+        m.anisotropy = cf(in->anisotropy, -0.95f, 0.95f);
+        m.sssColor[0] = cf(in->sssR, 0.0f, 1.0f); m.sssColor[1] = cf(in->sssG, 0.0f, 1.0f); m.sssColor[2] = cf(in->sssB, 0.0f, 1.0f);
+        m.sssAmount = cf(in->sssAmount, 0.0f, 1.0f);
+        m.mapTiling[0] = nz(cf(in->mapTilingU, -1000.0f, 1000.0f)); m.mapTiling[1] = nz(cf(in->mapTilingV, -1000.0f, 1000.0f));
+        m.mapOffset[0] = cf(in->mapOffsetU, -1000.0f, 1000.0f);     m.mapOffset[1] = cf(in->mapOffsetV, -1000.0f, 1000.0f);
+        m.wpoSway = cf(in->wpoSway, -5.0f, 5.0f);
+        m.wpoSpeed = cf(in->wpoSpeed, 0.0f, 20.0f);
+        m.wpoMid = cf(in->wpoMid, 0.0f, 1.0f);
+    }
+}
+
 
 int GhostEngine_GetTargetFace() { return CurrentFace(); }
 

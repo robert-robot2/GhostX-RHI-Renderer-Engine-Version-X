@@ -210,14 +210,14 @@ GhostResult GhostTAA_Init(IGhostRHI* rhi, GhostTAA& t)
     // ---- shaders (compiled from the embedded string) ----
     ComPtr<ID3DBlob> vs, ps, err;
     const size_t len = strlen(kTaaHLSL);
-    if (FAILED(D3DCompile(kTaaHLSL, len, "GhostTAA", nullptr, nullptr, "TaaVS", "vs_5_0",
+    if (FAILED(D3DCompile(kTaaHLSL, len, "GhostTAA", nullptr, nullptr, "TaaVS", "vs_5_1",
         D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &vs, &err)))
     {
         if (err) OutputDebugStringA((char*)err->GetBufferPointer());
         return GHOST_FAIL;
     }
     err.Reset();
-    if (FAILED(D3DCompile(kTaaHLSL, len, "GhostTAA", nullptr, nullptr, "TaaPS", "ps_5_0",
+    if (FAILED(D3DCompile(kTaaHLSL, len, "GhostTAA", nullptr, nullptr, "TaaPS", "ps_5_1",
         D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &ps, &err)))
     {
         if (err) OutputDebugStringA((char*)err->GetBufferPointer());
