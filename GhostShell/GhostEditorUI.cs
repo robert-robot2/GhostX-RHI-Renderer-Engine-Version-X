@@ -2407,7 +2407,9 @@ namespace GhostShell
                 var l = new GhostLightInfo();
                 if (GhostEngine.GhostEngine_GetObject(id, ref o) != 0)
                 {
-                    proxy = o.meshId == 4 ? new SpriteProxy(id) : new ObjectProxy(id);
+                    proxy = o.meshId == 4 ? new SpriteProxy(id)
+       : GhostEngine.GhostEngine_IsMeshSkinned(o.meshId) != 0 ? new ModelProxy(id)
+       : new ObjectProxy(id);
                 }
                 else if (GhostEngine.GhostEngine_GetLight(id, ref l) != 0)
                 {

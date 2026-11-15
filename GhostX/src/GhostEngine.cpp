@@ -13,6 +13,8 @@
 #include "../include/GhostMods.h"
 #include "../include/GhostAnim.h"
 #include "../include/GhostModelImport.h"
+#include "../include/GhostSkin.h"
+#include <memory>
 #include "../include/GhostOverlay.h"
 #include "../include/GhostMSAA.h"
 #include "../include/GhostTAA.h"
@@ -76,6 +78,7 @@ static GhostVec3  g_dragPlanePoint;
 static GhostObject* FindObject(int id);
 static int          CurrentFace();
 static void UpdateSprites(float dt);
+static void UpdateAnimators(float dt);
 static void SpriteDrawInfo(const GhostObject& o, int& tex, int& cols, int& rows, int& frame);
 static int PickObjectAt(int sx, int sy);
 struct EngineViewport { bool alive = false; bool visible = true; int cameraId = 0; };
@@ -105,6 +108,51 @@ static float                    g_uiRefW = 1920.0f;       // reference width of 
 static std::string g_projectRoot;
 static float g_skyScroll[2] = { 0.0f, 0.0f };      // day / night layer scroll in degrees (play only)
 static std::vector<GhostAnimAsset> g_anims;                    // id = index, never removed
+
+// ---- Animated models (3D skeletal animation) ----
+static std::map<int, std::shared_ptr<GhostSkinData>> g_skinByMesh;      // mesh id -> skeleton + skin weights
+struct SkelClipEntry { std::shared_ptr<GhostSkelClip> clip; std::filesystem::file_time_type mtime; };
+static std::map<std::string, SkelClipEntry> g_skelClips;               // absolute FBX path -> clip (null = failed to load)
+struct SkinInst
+{
+    int   slot = -1, meshId = -1;                  // slot = animated vertex buffer in the pipeline
+    std::vector<GhostMeshVertex> verts;            // uv / colour from the static mesh, position + normal rewritten each frame
+    int   lastAnim = -2, lastClip = -2;            // what the buffer currently shows
+    float lastTime = -1.0f;
+    bool  seen = false;
+};
+static std::map<int, SkinInst> g_skinInst;       // key = object id
+static bool g_skinSlotUsed[GHOST_MAX_SKINS] = {};
+static std::vector<float> g_boneScratch;
+
+static void FreeSkinInstance(int objectId)
+{
+    auto it = g_skinInst.find(objectId);
+    if (it == g_skinInst.end()) return;
+    if (it->second.slot >= 0)
+    {
+        GhostReleaseSkinMesh(g_pipeline, it->second.slot);
+        g_skinSlotUsed[it->second.slot] = false;
+    }
+    g_skinInst.erase(it);
+}
+
+static void ReleaseSkinInstancesOfMesh(int meshId)
+{
+    std::vector<int> ids;
+    for (auto& kv : g_skinInst) if (kv.second.meshId == meshId) ids.push_back(kv.first);
+    for (int id : ids) FreeSkinInstance(id);
+}
+
+// The mesh slot to draw an object with: its animated vertex buffer when it has one
+static int DrawMeshOf(const GhostObject& o)
+{
+    auto it = g_skinInst.find(o.id);
+    if (it == g_skinInst.end() || it->second.slot < 0 || it->second.meshId != o.meshId) return o.meshId;
+    return GHOST_MAX_MESHES + it->second.slot;
+}
+
+
 static std::string g_pendingScene;       // set by LoadScene(): the switch happens after the current step
 static std::string g_scenePath;          // the scene file that is open (or being played)
 static std::string g_playBackupPath;
@@ -1219,7 +1267,7 @@ static void RenderShadowPass(GhostSceneCB& cb, const GhostVec3& eye, const Ghost
     {
         GhostShadowSlice(g_rhi, g_pipeline, j.slice, j.vp, j.posFar, j.mode);
         for (const Caster& c : casters)
-            if (ShadowEligible(*c.o, *j.light)) GhostShadowDraw(g_rhi, g_pipeline, c.o->meshId, c.slot, c.tex);
+            if (ShadowEligible(*c.o, *j.light)) GhostShadowDraw(g_rhi, g_pipeline, DrawMeshOf(*c.o), c.slot, c.tex);
     }
     GhostShadowEnd(g_rhi, g_pipeline, rw, rh);
 }
@@ -2205,11 +2253,11 @@ static void RenderViewport(int vp)
             if (m.alphaMode == 2)                                  // translucent: drawn after all opaque work, back to front
             {
                 const GhostVec3 dv = o.position - eye;
-                g_translucent.push_back({ o.meshId, slot, (unsigned int)m.textureId, a.firstIndex,
+                g_translucent.push_back({ DrawMeshOf(o), slot, (unsigned int)m.textureId, a.firstIndex,
                                           b.firstIndex + b.indexCount - a.firstIndex, dv.Dot(dv) });
             }
             else
-                GhostDrawMesh(g_rhi, g_pipeline, o.meshId, slot, (unsigned int)m.textureId,
+                GhostDrawMesh(g_rhi, g_pipeline, DrawMeshOf(o), slot, (unsigned int)m.textureId,
                     a.firstIndex, b.firstIndex + b.indexCount - a.firstIndex);
             slot++;
             f = g;
@@ -2616,6 +2664,7 @@ void GhostEngine_Tick()
     }
     UpdateOrbitCameras(dt, g_playState != GhostPlayState::Editing);
     UpdateSprites(dt); // animation clips run in the editor and while playing
+    UpdateAnimators(dt);
     GhostAudio_Update(dt);
 
     if (g_playState == GhostPlayState::Editing)
@@ -3589,6 +3638,13 @@ static void ReloadAnims()
         if (GhostAnim_Load(n, g_projectRoot, a.path, LoadSceneTexture, err, warn)) { n.path = a.path; a = std::move(n); }
         else OutputDebugStringA(("[GhostX] Animation reload failed: " + err + "\n").c_str());
     }
+    // 3D clips: drop the cached FBX clips that changed on disk (the rest stay loaded)
+    for (auto it = g_skelClips.begin(); it != g_skelClips.end(); )
+    {
+        std::error_code ec;
+        const auto mt = std::filesystem::last_write_time(std::filesystem::path(GhostUtf8ToWide(it->first)), ec);
+        if (ec || mt != it->second.mtime) it = g_skelClips.erase(it); else ++it;
+    }
 }
 
 // Replace the existing SpriteDrawInfo function in GhostEngine.cpp with this:
@@ -3650,6 +3706,101 @@ static void UpdateSprites(float dt)
     }
 }
 
+// ---- 3D clips ----
+static std::shared_ptr<GhostSkelClip> GetSkelClip(const std::string& stored)
+{
+    if (stored.empty()) return nullptr;
+    const std::string abs = StoredToAbs(stored);
+    auto it = g_skelClips.find(abs);
+    if (it != g_skelClips.end()) return it->second.clip;
+
+    SkelClipEntry e;
+    auto c = std::make_shared<GhostSkelClip>();
+    std::string err;
+    std::error_code ec;
+    e.mtime = std::filesystem::last_write_time(std::filesystem::path(GhostUtf8ToWide(abs)), ec);
+    if (GhostSkelClip_Load(abs, *c, err)) e.clip = c;
+    else OutputDebugStringA(("[GhostX] 3D animation load failed: " + abs + "\n" + err + "\n").c_str());
+    g_skelClips[abs] = e;                       // a failed load is remembered too, so it isn't retried every frame
+    return e.clip;
+}
+
+// The clip a model plays when none is chosen: Idle, else the first one
+static int DefaultClipIndex(const GhostAnimAsset& a)
+{
+    int ci = GhostAnim_FindClip(a, "Idle");
+    if (ci < 0)
+        for (const auto& kv : a.states)
+            if (_stricmp(kv.first.c_str(), "Idle") == 0) { ci = GhostAnim_FindClip(a, kv.second.c_str()); break; }
+    return ci < 0 ? 0 : ci;
+}
+
+static void UpdateAnimators(float dt)
+{
+    if (!g_rhi || !g_pipeline) return;
+    const bool paused = g_playState == GhostPlayState::Paused;
+    for (auto& kv : g_skinInst) kv.second.seen = false;
+
+    for (GhostObject& o : g_scene.objects)
+    {
+        GhostAnimator& an = o.animator;
+        if (an.anim.empty() || o.meshId == GHOST_MESH_QUAD) continue;
+        auto skIt = g_skinByMesh.find(o.meshId);
+        if (skIt == g_skinByMesh.end()) continue;
+        const GhostSkinData& sk = *skIt->second;
+
+        if (!an.animResolved) { an.animResolved = true; an.animId = LoadAnimFile(an.anim); }
+        if (an.animId < 0 || an.animId >= (int)g_anims.size()) continue;
+        const GhostAnimAsset& a = g_anims[(size_t)an.animId];
+        if (a.clips.empty()) continue;
+        int ci = an.clip.empty() ? -1 : GhostAnim_FindClip(a, an.clip.c_str());
+        if (ci < 0) ci = DefaultClipIndex(a);
+        const GhostClip& c = a.clips[(size_t)ci];
+        if (!c.skeletal) continue;
+        std::shared_ptr<GhostSkelClip> sc = GetSkelClip(c.model);
+        if (!sc) continue;
+
+        if (!paused && an.playing) an.time += dt * an.speed;
+        const float dur = sc->duration;
+        if (dur > 0.0f) { if (c.loop) an.time = fmodf(an.time, dur); else if (an.time > dur) an.time = dur; }
+        else an.time = 0.0f;
+
+        SkinInst& si = g_skinInst[o.id];
+        if (si.slot < 0 || si.meshId != o.meshId)
+        {
+            if (si.slot >= 0) { GhostReleaseSkinMesh(g_pipeline, si.slot); g_skinSlotUsed[si.slot] = false; }
+            int slot = -1;
+            for (int s2 = 0; s2 < (int)GHOST_MAX_SKINS; s2++) if (!g_skinSlotUsed[s2]) { slot = s2; break; }
+            const GhostMesh& gm = g_pipeline->meshes[o.meshId];
+            if (slot < 0 || gm.cpuVerts.size() != sk.verts.size() ||
+                GhostCreateSkinMesh(g_rhi, g_pipeline, slot, o.meshId, (unsigned int)sk.verts.size()) != GHOST_OK)
+            {
+                g_skinInst.erase(o.id);                 // too many animated models, or the skeleton doesn't match the mesh
+                continue;
+            }
+            g_skinSlotUsed[slot] = true;
+            si = SkinInst();
+            si.slot = slot;
+            si.meshId = o.meshId;
+            si.verts.resize(sk.verts.size());
+            memcpy(si.verts.data(), gm.cpuVerts.data(), sk.verts.size() * sizeof(GhostMeshVertex));
+        }
+        si.seen = true;
+        if (si.lastAnim == an.animId && si.lastClip == ci && fabsf(si.lastTime - an.time) < 1e-5f) continue;   // nothing moved
+        si.lastAnim = an.animId; si.lastClip = ci; si.lastTime = an.time;
+
+        GhostSkin_Pose(sk, sc.get(), an.time, g_boneScratch);
+        GhostSkin_Apply(sk, g_boneScratch, reinterpret_cast<float*>(si.verts.data()));
+        if (void* dst = GhostSkinMapped(g_pipeline, si.slot))
+            memcpy(dst, si.verts.data(), si.verts.size() * sizeof(GhostMeshVertex));
+    }
+
+    std::vector<int> dead;                                    // objects that no longer animate (or were deleted)
+    for (auto& kv : g_skinInst) if (!kv.second.seen) dead.push_back(kv.first);
+    for (int id : dead) FreeSkinInstance(id);
+}
+
+
 static GhostObject* FindSprite(int id)
 {
     GhostObject* o = FindObject(id);
@@ -3665,8 +3816,58 @@ static int SetSpriteAnimImpl(GhostSprite& s, const std::string& path)
     return (path.empty() || s.animId >= 0) ? 1 : 0;
 }
 
+// ---- 3D models driven through the Sprite* calls (the game code stays the same) ----
+static GhostObject* AnimModelOf(int id)                         // an object that plays 3D clips, or null
+{
+    GhostObject* o = FindObject(id);
+    return (o && o->meshId != GHOST_MESH_QUAD && g_skinByMesh.find(o->meshId) != g_skinByMesh.end()) ? o : nullptr;
+}
+
+static void ResolveAnimator(GhostAnimator& an)
+{
+    if (an.animResolved) return;
+    an.animResolved = true;
+    an.animId = an.anim.empty() ? -1 : LoadAnimFile(an.anim);
+}
+
+static bool HasSkeletalClips(int animId)
+{
+    if (animId < 0 || animId >= (int)g_anims.size()) return false;
+    for (const GhostClip& c : g_anims[(size_t)animId].clips) if (c.skeletal) return true;
+    return false;
+}
+
+// 1 = the clip is (now) playing, 0 = no such 3D clip. Asking for the clip that already plays does not restart it.
+static int ModelSetClip(GhostObject& o, const char* name)
+{
+    GhostAnimator& an = o.animator;
+    ResolveAnimator(an);
+    if (!HasSkeletalClips(an.animId)) return 0;
+    const GhostAnimAsset& a = g_anims[(size_t)an.animId];
+    std::string want = name ? name : "";
+    if (!want.empty())
+    {
+        const int ci = GhostAnim_FindClip(a, want.c_str());
+        if (ci < 0 || !a.clips[(size_t)ci].skeletal) return 0;
+        want = a.clips[(size_t)ci].name;                         // canonical spelling
+    }
+    if (an.clip == want) return 1;
+    an.clip = want;
+    an.time = 0.0f;
+    return 1;
+}
+
+static int Api_IsModel(int id)
+{
+    GhostObject* o = FindObject(id);
+    const GhostMeshInfo* mi = o ? GhostMesh_Info(o->meshId) : nullptr;
+    return (mi && !mi->builtin) ? 1 : 0;
+}
+
+
 static int Api_SpriteSetClip(int id, const char* name)
 {
+    if (GhostObject* m = AnimModelOf(id)) return name ? ModelSetClip(*m, name) : 0;
     GhostObject* o = FindSprite(id);
     if (!o || !name) return 0;
     GhostSprite& s = o->sprite;
@@ -3685,12 +3886,47 @@ static int Api_SpriteSetClip(int id, const char* name)
     return 1;
 }
 
-static int Api_SpriteSetFlip(int id, int flip) { GhostObject* o = FindSprite(id); if (!o) return 0; o->sprite.flipX = (flip != 0); return 1; }
+static int Api_SpriteSetFlip(int id, int flip)
+{
+    if (AnimModelOf(id)) return 1;                               // models face by rotation, not by flipping
+    GhostObject* o = FindSprite(id); if (!o) return 0; o->sprite.flipX = (flip != 0); return 1;
+}
 static int Api_SpriteSetFrame(int id, int f) { GhostObject* o = FindSprite(id); if (!o) return 0; o->sprite.frame = f < 0 ? 0 : (f > 4095 ? 4095 : f); return 1; }
-static int Api_SpriteSetAnim(int id, const char* p) { GhostObject* o = FindSprite(id); return o ? SetSpriteAnimImpl(o->sprite, p ? p : "") : 0; }
-static int Api_SpriteSetSpeed(int id, float v) { GhostObject* o = FindSprite(id); if (!o) return 0; o->sprite.animSpeed = v < 0.0f ? 0.0f : (v > 10.0f ? 10.0f : v); return 1; }
+static int Api_SpriteSetAnim(int id, const char* p)
+{
+    if (GhostObject* m = AnimModelOf(id))
+    {
+        GhostAnimator& an = m->animator;
+        const std::string path = p ? p : "";
+        if (path.empty()) return 0;                              // game code never clears a model's animation
+        if (_stricmp(path.c_str(), an.anim.c_str()) == 0) return 1;   // already the current one
+        const int aid = LoadAnimFile(path);
+        if (!HasSkeletalClips(aid)) return 0;                    // a sprite-sheet file: ignore it, keep what plays now
+        an.anim = path; an.animId = aid; an.animResolved = true;
+        an.clip.clear(); an.time = 0.0f;
+        return 1;
+    }
+    GhostObject* o = FindSprite(id);
+    return o ? SetSpriteAnimImpl(o->sprite, p ? p : "") : 0;
+}
+static int Api_SpriteSetSpeed(int id, float v)
+{
+    if (GhostObject* m = AnimModelOf(id)) { m->animator.speed = v != v ? 1.0f : (v < 0.0f ? 0.0f : (v > 10.0f ? 10.0f : v)); return 1; }
+    GhostObject* o = FindSprite(id); if (!o) return 0; o->sprite.animSpeed = v < 0.0f ? 0.0f : (v > 10.0f ? 10.0f : v); return 1;
+}
 static int Api_SpriteSetState(int id, const char* state)
 {
+    if (GhostObject* m = AnimModelOf(id))
+    {
+        if (!state) return 0;
+        GhostAnimator& an = m->animator;
+        ResolveAnimator(an);
+        std::string clip = state;
+        if (an.animId >= 0 && an.animId < (int)g_anims.size())
+            for (const auto& kv : g_anims[(size_t)an.animId].states)   // the States table: state name -> clip
+                if (_stricmp(kv.first.c_str(), state) == 0) { if (!kv.second.empty()) clip = kv.second; break; }
+        return ModelSetClip(*m, clip.c_str());
+    }
     GhostObject* o = FindSprite(id);
     if (!o || !state) return 0;
     std::string clip = state;
@@ -3849,6 +4085,7 @@ static void BuildGameApi()
     a.GetCollider = Api_GetCollider;
     a.SetResolution = Api_SetResolution;  a.GetResolution = Api_GetResolution;  a.GetResolutionList = Api_GetResolutionList;
     a.SetFullscreen = Api_SetFullscreen;  a.GetFullscreen = Api_GetFullscreen;  a.SetScaleFilter = Api_SetScaleFilter;
+    a.IsModel = Api_IsModel;
 }
 
 // Runs between steps (never inside game code). The editor's own scene stays safe in g_playBackup.
@@ -4579,6 +4816,27 @@ static std::string ModelFilePath(const std::string& name)
     return GhostPath_Normalize(g_projectRoot + "\\Content\\Models\\" + name + ".ghostmesh");
 }
 
+static std::string SkinPathFor(const std::string& meshFile)          // Foo.ghostmesh -> Foo.ghostskin
+{
+    std::filesystem::path p(GhostUtf8ToWide(meshFile));
+    p.replace_extension(L".ghostskin");
+    return GhostWideToUtf8(p.wstring());
+}
+
+// Loads the .ghostskin that sits next to a .ghostmesh, if there is one
+static void LoadSkinSibling(int meshId, const std::string& meshFile, std::string& warn)
+{
+    const std::string sp = SkinPathFor(meshFile);
+    if (!std::filesystem::exists(std::filesystem::path(GhostUtf8ToWide(sp)))) return;
+    auto sk = std::make_shared<GhostSkinData>();
+    std::string e;
+    if (!GhostSkinFile_Load(sp, *sk, e)) { warn += "Skeleton: " + e + "\n"; return; }
+    const GhostMeshInfo* mi = GhostMesh_Info(meshId);
+    if (!mi || sk->verts.size() != mi->vertexCount) { warn += "The skeleton file doesn't match the mesh. Re-import the model.\n"; return; }
+    g_skinByMesh[meshId] = sk;
+}
+
+
 // A name nothing else is using: not in the registry, and (when saving to the project) no existing file
 static std::string UniqueModelName(std::string base, bool checkFile)
 {
@@ -4726,7 +4984,7 @@ static GhostMeshInfo BuildMeshInfo(const GhostModelResult& r, const std::string&
     mi.importScale = r.opts.scale;
     mi.importFit = r.opts.fitSize;
     mi.importUp = r.opts.upAxis;
-    mi.importFlags = (r.opts.flipWinding ? 1 : 0) | (r.opts.importMaterials ? 0 : 2);
+    mi.importFlags = (r.opts.flipWinding ? 1 : 0) | (r.opts.importMaterials ? 0 : 2) | (r.opts.keepSkin ? 4 : 0);
     for (const GhostModelSub& s : r.subs) mi.faces.push_back(MakeFace(s, warn));
     return mi;
 }
@@ -4754,6 +5012,7 @@ static int RegisterModel(const GhostModelResult& r, const std::string& name, con
     {
         err = "The mesh registry is out of sync."; return -1;
     }
+    if (r.skin) g_skinByMesh[id] = r.skin;
     return id;
 }
 
@@ -4776,6 +5035,7 @@ static int LoadModelFile(const std::string& absFile, std::string& err)
     r.name = name;
     std::string warn;
     const int id = RegisterModel(r, name, source, abs, err, warn);
+    if (id >= 0) LoadSkinSibling(id, abs, warn);
     if (id >= 0 && !warn.empty()) g_modelWarn += "Model \"" + name + "\":\n" + warn;
     return id;
 }
@@ -4793,7 +5053,7 @@ int GhostEngine_ImportModel(const char* path, float scale, float fitSize, int up
     opt.upAxis = upAxis < 0 ? 0 : (upAxis > 2 ? 2 : upAxis);
     opt.flipWinding = (flags & 1) != 0;
     opt.importMaterials = (flags & 2) == 0;
-
+    opt.keepSkin = (flags & 4) != 0;
     GhostModelResult r;
     std::string err;
     if (!GhostModel_Load(path, opt, r, err)) { CopyMsg(err, msg, msgSize); return -1; }
@@ -4810,8 +5070,17 @@ int GhostEngine_ImportModel(const char* path, float scale, float fitSize, int up
     {
         const std::string target = ModelFilePath(name);
         std::string serr;
-        if (GhostMeshFile_Save(target, r, src, serr)) file = target;
-        else saveWarn = "Could not save the converted mesh: " + serr + "\nThe model works in this session only.";
+        if (GhostMeshFile_Save(target, r, src, serr))
+        {
+            file = target;
+            if (r.skin)
+            {
+                std::string kerr;
+                if (!GhostSkinFile_Save(SkinPathFor(target), *r.skin, kerr))
+                    saveWarn += "Could not save the skeleton: " + kerr + "\nThe animations work in this session only.\n";
+            }
+        }
+        else saveWarn += "Could not save the converted mesh: " + serr + "\nThe model works in this session only.";
     }
 
     std::string regWarn;
@@ -4894,6 +5163,7 @@ int GhostEngine_ReimportModel(int meshId, int useStored, float scale, float fitS
         opt.upAxis = cur.importUp;
         opt.flipWinding = (cur.importFlags & 1) != 0;
         opt.importMaterials = (cur.importFlags & 2) == 0;
+        opt.keepSkin = (cur.importFlags & 4) != 0;
     }
     else
     {
@@ -4902,6 +5172,7 @@ int GhostEngine_ReimportModel(int meshId, int useStored, float scale, float fitS
         opt.upAxis = upAxis < 0 ? 0 : (upAxis > 2 ? 2 : upAxis);
         opt.flipWinding = (flags & 1) != 0;
         opt.importMaterials = (flags & 2) == 0;
+        opt.keepSkin = (flags & 4) != 0;
     }
 
     GhostModelResult r;
@@ -4931,6 +5202,13 @@ int GhostEngine_ReimportModel(int meshId, int useStored, float scale, float fitS
     const GhostMeshInfo old = cur;
     std::string regWarn;
     cur = BuildMeshInfo(r, name, old.source, file, regWarn);
+    ReleaseSkinInstancesOfMesh(meshId);
+    if (r.skin)
+    {
+        g_skinByMesh[meshId] = r.skin;
+        if (!file.empty()) { std::string kerr; GhostSkinFile_Save(SkinPathFor(file), *r.skin, kerr); }
+    }
+    else g_skinByMesh.erase(meshId);
     for (GhostObject& o : g_scene.objects)
         if (o.meshId == meshId && o.missingMesh.empty() && o.missingMeshFile.empty()) RemapObjectToMesh(o, old, cur);
     g_scene.selectedFace = -1;
@@ -5218,4 +5496,71 @@ void GhostEngine_SetSceneAudio(int which, const char* utf8)
     std::string s = utf8 ? utf8 : "";
     if (s.size() > 47) s.resize(47);
     (which == 0 ? g_scene.music : g_scene.ambience) = s;               // the scene hash notices, so the title gets its *
+}
+
+
+// ============================================================
+//  Exported: animated models
+// ============================================================
+int GhostEngine_IsMeshSkinned(int meshId) { return g_skinByMesh.find(meshId) != g_skinByMesh.end() ? 1 : 0; }
+
+static GhostObject* FindAnimatedModel(int id)
+{
+    GhostObject* o = FindObject(id);
+    return (o && g_skinByMesh.find(o->meshId) != g_skinByMesh.end()) ? o : nullptr;
+}
+
+int GhostEngine_GetAnimatorText(int id, int which, char* buf, int size)
+{
+    if (!buf || size <= 0) return 0;
+    buf[0] = 0;
+    GhostObject* o = FindAnimatedModel(id);
+    if (!o) return 0;
+    GhostAnimator& an = o->animator;
+    std::string t;
+    if (which == 0) t = an.anim;
+    else if (which == 1) t = an.clip;
+    else
+    {
+        if (!an.animResolved) { an.animResolved = true; an.animId = an.anim.empty() ? -1 : LoadAnimFile(an.anim); }
+        if (an.animId >= 0 && an.animId < (int)g_anims.size())
+            for (const GhostClip& c : g_anims[(size_t)an.animId].clips) { if (!t.empty()) t += "|"; t += c.name; }
+    }
+    CopyMsg(t, buf, size);
+    return 1;
+}
+
+void GhostEngine_SetAnimatorText(int id, int which, const char* text)
+{
+    GhostObject* o = FindAnimatedModel(id);
+    if (!o) return;
+    GhostAnimator& an = o->animator;
+    const std::string t = text ? text : "";
+    if (which == 0)
+    {
+        an.anim = t;
+        an.clip.clear();                      // back to the default clip (Idle)
+        an.time = 0.0f;
+        an.animResolved = true;
+        an.animId = t.empty() ? -1 : LoadAnimFile(t);
+    }
+    else if (which == 1) { an.clip = t; an.time = 0.0f; }
+}
+
+int GhostEngine_GetAnimator(int id, int* playing, float* speed, float* time)
+{
+    GhostObject* o = FindAnimatedModel(id);
+    if (!o) return 0;
+    if (playing) *playing = o->animator.playing ? 1 : 0;
+    if (speed) *speed = o->animator.speed;
+    if (time) *time = o->animator.time;
+    return 1;
+}
+
+void GhostEngine_SetAnimator(int id, int playing, float speed)
+{
+    GhostObject* o = FindAnimatedModel(id);
+    if (!o) return;
+    o->animator.playing = (playing != 0);
+    o->animator.speed = speed != speed ? 1.0f : (speed < 0.0f ? 0.0f : (speed > 10.0f ? 10.0f : speed));
 }

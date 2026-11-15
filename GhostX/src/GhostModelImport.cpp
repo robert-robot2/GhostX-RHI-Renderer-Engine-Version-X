@@ -17,6 +17,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <fstream>
+#include <memory>
 
 static bool MetaInt(const aiMetadata* md, const char* key, int& out)
 {
@@ -161,6 +162,85 @@ static void Convert(bool zUp, float x, float y, float z, float& ox, float& oy, f
     else { ox = x; oy = y; oz = -z; }    // Y-up: mirror Z
 }
 
+// ---------------- animated models: skeleton helpers ----------------
+static void FlattenNodes(const aiNode* n, int parent, GhostSkinData& sk, std::vector<const aiNode*>& list)
+{
+    const int idx = (int)sk.nodeName.size();
+    sk.nodeName.push_back(n->mName.C_Str());
+    sk.nodeParent.push_back(parent);
+    aiVector3D sc(1, 1, 1), pos(0, 0, 0);
+    aiQuaternion rot;
+    n->mTransformation.Decompose(sc, rot, pos);
+    sk.nodeT.push_back(pos.x); sk.nodeT.push_back(pos.y); sk.nodeT.push_back(pos.z);
+    sk.nodeR.push_back(rot.x); sk.nodeR.push_back(rot.y); sk.nodeR.push_back(rot.z); sk.nodeR.push_back(rot.w);
+    sk.nodeS.push_back(sc.x);  sk.nodeS.push_back(sc.y);  sk.nodeS.push_back(sc.z);
+    list.push_back(n);
+    for (unsigned int i = 0; i < n->mNumChildren; i++) FlattenNodes(n->mChildren[i], idx, sk, list);
+}
+
+// Appends one entry per vertex of `m` (same order the mesh vertices are written in)
+static void AppendSkin(GhostSkinData& sk, const aiMesh* m, int meshNode, const std::map<std::string, int>& nodeIndex)
+{
+    const unsigned int n = m->mNumVertices;
+    const size_t first = sk.verts.size();
+    sk.verts.resize(first + n);
+    for (unsigned int i = 0; i < n; i++)
+    {
+        GhostSkinVert& v = sk.verts[first + i];
+        memset(&v, 0, sizeof v);
+        v.p[0] = m->mVertices[i].x; v.p[1] = m->mVertices[i].y; v.p[2] = m->mVertices[i].z;
+        if (m->HasNormals()) { v.n[0] = m->mNormals[i].x; v.n[1] = m->mNormals[i].y; v.n[2] = m->mNormals[i].z; }
+        else { v.n[0] = 0.0f; v.n[1] = 1.0f; v.n[2] = 0.0f; }
+    }
+
+    for (unsigned int b = 0; b < m->mNumBones; b++)
+    {
+        const aiBone* bn = m->mBones[b];
+        auto it = nodeIndex.find(bn->mName.C_Str());
+        if (it == nodeIndex.end() || sk.boneNode.size() >= 65000) continue;
+        const int boneIdx = (int)sk.boneNode.size();
+        sk.boneNode.push_back(it->second);
+        const aiMatrix4x4& o = bn->mOffsetMatrix;
+        const float f[16] = { o.a1, o.a2, o.a3, o.a4,  o.b1, o.b2, o.b3, o.b4,  o.c1, o.c2, o.c3, o.c4,  o.d1, o.d2, o.d3, o.d4 };
+        sk.boneOffset.insert(sk.boneOffset.end(), f, f + 16);
+
+        for (unsigned int k = 0; k < bn->mNumWeights; k++)
+        {
+            const aiVertexWeight& vw = bn->mWeights[k];
+            if (vw.mVertexId >= n || vw.mWeight <= 0.0f) continue;
+            GhostSkinVert& v = sk.verts[first + vw.mVertexId];
+            int slot = -1;
+            for (int q = 0; q < 4; q++) if (v.w[q] == 0.0f) { slot = q; break; }
+            if (slot < 0)                                           // more than 4 influences: replace the smallest
+            {
+                float smallest = vw.mWeight;
+                for (int q = 0; q < 4; q++) if (v.w[q] < smallest) { smallest = v.w[q]; slot = q; }
+            }
+            if (slot >= 0) { v.j[slot] = (unsigned short)boneIdx; v.w[slot] = vw.mWeight; }
+        }
+    }
+
+    // normalise the weights. A vertex with no influence rides on the mesh's own node (rigid part)
+    int rigid = -1;
+    for (unsigned int i = 0; i < n; i++)
+    {
+        GhostSkinVert& v = sk.verts[first + i];
+        const float sum = v.w[0] + v.w[1] + v.w[2] + v.w[3];
+        if (sum <= 1e-6f)
+        {
+            if (rigid < 0)
+            {
+                rigid = (int)sk.boneNode.size();
+                sk.boneNode.push_back(meshNode);
+                const float id[16] = { 1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1 };
+                sk.boneOffset.insert(sk.boneOffset.end(), id, id + 16);
+            }
+            v.j[0] = (unsigned short)rigid; v.w[0] = 1.0f;
+        }
+        else for (int q = 0; q < 4; q++) v.w[q] /= sum;
+    }
+}
+
 bool GhostModel_Load(const std::string& path, const GhostModelOptions& opt, GhostModelResult& out, std::string& err)
 {
     out = GhostModelResult();
@@ -177,9 +257,45 @@ bool GhostModel_Load(const std::string& path, const GhostModelOptions& opt, Ghos
         aiProcess_FindInvalidData;
 
     const aiScene* scene = nullptr;
-    try { scene = imp.ReadFile(path.c_str(), flags); }
+    bool skinned = false;                                                       // NEW
+    try
+    {
+        if (opt.keepSkin)                                                       // NEW: read without baking, so bones survive
+        {
+            scene = imp.ReadFile(path.c_str(), (flags & ~(unsigned int)aiProcess_PreTransformVertices) | aiProcess_LimitBoneWeights);
+            if (scene)
+                for (unsigned int i = 0; i < scene->mNumMeshes && !skinned; i++)
+                    if (scene->mMeshes[i] && scene->mMeshes[i]->mNumBones > 0) skinned = true;
+            if (scene && !skinned)
+            {
+                out.warn += "No skeleton was found in this file, so it was imported as a normal static model.\n";
+                scene = nullptr;                                                // re-read below the normal way
+            }
+        }
+        if (!scene) scene = imp.ReadFile(path.c_str(), flags);
+    }
     catch (const std::exception& e) { err = std::string("The importer crashed on this file:\n") + e.what(); return false; }
     if (!scene) { err = std::string("Could not read the model:\n") + imp.GetErrorString(); return false; }
+
+    // ---- NEW: skeleton ----
+    std::shared_ptr<GhostSkinData> sk;
+    std::vector<const aiNode*> nodeList;
+    std::map<std::string, int> nodeIndex;
+    std::map<const aiMesh*, int> meshNode;
+    if (skinned)
+    {
+        sk = std::make_shared<GhostSkinData>();
+        FlattenNodes(scene->mRootNode, -1, *sk, nodeList);
+        for (size_t i = 0; i < nodeList.size(); i++)
+        {
+            nodeIndex.emplace(sk->nodeName[i], (int)i);                         // the first node with a name wins
+            for (unsigned int k = 0; k < nodeList[i]->mNumMeshes; k++)
+            {
+                const unsigned int mi = nodeList[i]->mMeshes[k];
+                if (mi < scene->mNumMeshes) meshNode.emplace(scene->mMeshes[mi], (int)i);
+            }
+        }
+    }
 
     // ---- group triangle meshes by material ----
     std::map<unsigned int, std::vector<const aiMesh*>> groups;
@@ -247,6 +363,12 @@ bool GhostModel_Load(const std::string& path, const GhostModelOptions& opt, Ghos
                 V.push_back(v);
             }
 
+            if (skinned)                                                        // NEW: skin entries, same order as the vertices
+            {
+                auto mnode = meshNode.find(m);
+                AppendSkin(*sk, m, mnode != meshNode.end() ? mnode->second : 0, nodeIndex);
+            }
+
             for (unsigned int f = 0; f < m->mNumFaces; f++)
             {
                 const aiFace& face = m->mFaces[f];
@@ -281,6 +403,25 @@ bool GhostModel_Load(const std::string& path, const GhostModelOptions& opt, Ghos
     }
     if (V.empty() || I.size() < 3 || out.subs.empty()) { err = "The file has no usable triangles."; return false; }
 
+    // ---- NEW: the mesh becomes the skinned rest pose, so bounds, scale and the static copy all match the animation ----
+    if (skinned)
+    {
+        static_assert(sizeof(GhostMeshVertex) == 12 * sizeof(float), "GhostMeshVertex must be 12 floats");
+        if (sk->verts.size() != V.size()) { err = "Internal error: the skin data does not match the mesh."; return false; }
+        sk->zUp = zUp;
+        sk->scale = 1.0f;
+        GhostSkin_Finish(*sk);
+        std::vector<float> bm;
+        GhostSkin_Pose(*sk, nullptr, 0.0f, bm);
+        GhostSkin_Apply(*sk, bm, reinterpret_cast<float*>(V.data()));
+        for (int k = 0; k < 3; k++) { mn[k] = 1e30f; mx[k] = -1e30f; }
+        for (const GhostMeshVertex& v : V)
+        {
+            const float p[3] = { v.x, v.y, v.z };
+            for (int k = 0; k < 3; k++) { if (p[k] < mn[k]) mn[k] = p[k]; if (p[k] > mx[k]) mx[k] = p[k]; }
+        }
+    }
+
     // ---- more material slots than an object can hold: the tail shares the last slot ----
     if ((int)out.subs.size() > GHOST_MODEL_MAX_SLOTS)
     {
@@ -304,6 +445,7 @@ bool GhostModel_Load(const std::string& path, const GhostModelOptions& opt, Ghos
     s *= (opt.scale > 0.0f) ? opt.scale : 1.0f;
     for (GhostMeshVertex& v : V) { v.x *= s; v.y *= s; v.z *= s; }
     for (int k = 0; k < 3; k++) { out.bmin[k] = mn[k] * s; out.bmax[k] = mx[k] * s; }
+    if (skinned) { sk->scale = s; out.skin = sk; }                              // NEW
     out.opts = opt;
     out.triangleCount = (unsigned int)(I.size() / 3);
     out.name = GhostWideToUtf8(std::filesystem::path(GhostUtf8ToWide(path)).stem().wstring());
@@ -317,9 +459,11 @@ bool GhostModel_Load(const std::string& path, const GhostModelOptions& opt, Ghos
         out.triangleCount, (unsigned int)V.size(), (unsigned int)out.subs.size(), out.subs.size() == 1 ? "" : "s",
         ext[0] * s, ext[1] * s, ext[2] * s, s, upText);
     out.info = buf;
+    if (skinned)                                                                // NEW
+        out.info += "\nAnimated model: " + std::to_string(sk->NodeCount()) + " nodes, " + std::to_string(sk->BoneCount()) +
+        " bones. Assign a .ghostanim with 3D clips to play it.";
     return true;
 }
-
 // ============================================================
 //  .ghostmesh  (all values little-endian)
 //  "GMSH", version, vertexCount, indexCount, subCount, bmin[3], bmax[3],
@@ -355,7 +499,7 @@ bool GhostMeshFile_Save(const std::string& path, const GhostModelResult& r, cons
             F(r.opts.scale);
             F(r.opts.fitSize);
             U((unsigned int)r.opts.upAxis);
-            U((r.opts.flipWinding ? 1u : 0u) | (r.opts.importMaterials ? 0u : 2u));
+            U((r.opts.flipWinding ? 1u : 0u) | (r.opts.importMaterials ? 0u : 2u) | (r.opts.keepSkin ? 4u : 0u));
             S(r.name);
             S(source);
             for (const GhostModelSub& s : r.subs)
@@ -429,6 +573,7 @@ bool GhostMeshFile_Load(const std::string& path, GhostModelResult& out, std::str
             out.opts.upAxis = up > 2 ? 0 : (int)up;
             out.opts.flipWinding = (flags & 1) != 0;
             out.opts.importMaterials = (flags & 2) == 0;
+            out.opts.keepSkin = (flags & 4) != 0;
         }
         if (!S(out.name) || !S(source)) { err = bad + "a name is unreadable."; return false; }
 

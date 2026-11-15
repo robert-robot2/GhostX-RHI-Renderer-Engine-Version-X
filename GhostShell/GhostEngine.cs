@@ -512,5 +512,17 @@ namespace GhostShell
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern void GhostEngine_SetFontProvider(GhostFontProviderFn fn);
 
+        // ---- Animated models ----
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_IsMeshSkinned(int meshId);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetAnimatorText(int objectId, int which, [Out] byte[] buf, int bufSize);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetAnimatorText(int objectId, int which, [MarshalAs(UnmanagedType.LPUTF8Str)] string text);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetAnimator(int objectId, out int playing, out float speed, out float time);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetAnimator(int objectId, int playing, float speed);
+
     }
 }

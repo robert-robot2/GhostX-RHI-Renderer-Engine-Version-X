@@ -256,6 +256,21 @@ struct GhostSprite
     float animTime = 0.0f;
     int   curFrame = 0;
 };
+
+// 3D skeletal animation state of an imported model (the 3D twin of GhostSprite's animation fields)
+struct GhostAnimator
+{
+    std::string anim;              // stored path of a .ghostanim ("" = none)
+    std::string clip;              // current clip ("" = Idle, or the first clip)
+    bool  playing = true;
+    float speed = 1.0f;
+
+    // runtime only (not saved, not hashed)
+    int   animId = -1;
+    bool  animResolved = false;
+    float time = 0.0f;
+};
+
 struct GhostObject
 {
     int       id = 0;
@@ -273,6 +288,7 @@ struct GhostObject
     GhostVec3   colliderRotation = { 0, 0, 0 }; // degrees, around the collider center (Ry * Rx * Rz, like objects)
     bool        visible = true;               // false = hidden while playing
     GhostSprite sprite;                       // only used when meshId == GHOST_MESH_QUAD
+    GhostAnimator animator;                   // only used by models imported with "Animated character"
     int  shadowMode = 1;                      // 0 = off, 1 = casts from every light, 2 = casts only from shadowLightId
     int  shadowLightId = 0;
     bool receiveShadows = true;

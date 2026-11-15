@@ -304,7 +304,7 @@ static void Camera_Update(float dt)
     float yaw = S.camYaw * d2r, pitch = g_camPitch * d2r;
     float fx = cosf(pitch) * sinf(yaw), fy = sinf(pitch), fz = cosf(pitch) * cosf(yaw);
     float want[3] = { p[0] - fx * Cfg::CamDistance,
-                      p[1] + Cfg::CamTargetHeight - fy * Cfg::CamDistance,
+                      p[1] + (g_playerModel ? Cfg::ModelCamHeight : Cfg::CamTargetHeight) - fy * Cfg::CamDistance,
                       p[2] - fz * Cfg::CamDistance };
 
     if (S.camSnap) { memcpy(S.camPos, want, sizeof want); S.camSnap = false; }
@@ -418,6 +418,7 @@ GHOST_GAME_EXPORT int GhostGame_Init(const GhostGameAPI* api)
     g_camPitch = Cfg::CamPitch; g_camFocus = false;
     g_musicState = -1;
     Carry_Load();
+    g_started = true;   // TEMP: skip the menus while testing the 3D player
     S.level = FindLevelIndex();
     S.tutorial = IsTutorialScene();
     S.lastLevel = !S.tutorial && (S.level < 0 || S.level >= kLevelCount - 1);

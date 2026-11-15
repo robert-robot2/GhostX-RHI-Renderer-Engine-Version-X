@@ -61,7 +61,15 @@ bool GhostAnim_Load(GhostAnimAsset& a, const std::string& root, const std::strin
                 if (c.fps < 0.1f)   c.fps = 0.1f;
                 if (c.fps > 120.0f) c.fps = 120.0f;
                 c.loop = jc.value("loop", true);
-
+                // 3D clips: an FBX instead of a sprite sheet
+                c.skeletal = (jc.value("kind", std::string("sprite")) == "skeletal");
+                c.model = jc.value("model", std::string());
+                if (c.skeletal)
+                {
+                    if (c.model.empty()) { warn += "Skipped 3D clip \"" + c.name + "\": it has no FBX file.\n"; continue; }
+                    n.clips.push_back(std::move(c));
+                    continue;
+                }
                 // Per-clip texture / grid
                 c.texture = jc.value("texture", std::string());
                 c.source = (jc.value("source", std::string("sheet")) == "single") ? 0 : 1;

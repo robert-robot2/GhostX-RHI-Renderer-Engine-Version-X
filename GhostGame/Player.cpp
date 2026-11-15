@@ -7,8 +7,13 @@ static float g_coyote, g_jumpBuf;
 static bool  g_grounded;
 static float g_baseScale[3] = { 1, 1, 1 };
 float g_faceDir = 1.0f;
+bool  g_playerModel = false;       // the Player is an imported 3D model (not a Sprite Actor)
+static float g_modelYaw = 0.0f;    // the yaw the model is turned to right now (degrees)
+
 float g_moveYawDeg = 0.0f;
 bool  g_haveMoveYaw = false;
+
+
 static float Approach(float v, float target, float maxStep)
 {
     float d = target - v;
@@ -17,7 +22,29 @@ static float Approach(float v, float target, float maxStep)
     return v + d;
 }
 
-void Player_Init() { G->GetScale(S.player, g_baseScale); }
+// Turns a model toward the world direction it moves (it keeps its facing while standing still)
+void Model_Face(int id, float wx, float wz, float dt)
+{
+    if (wx * wx + wz * wz < 0.25f) return;
+    const float target = atan2f(-wx, -wz) * 57.2957795f + Cfg::ModelYawOffset;   // an imported model's front is -Z
+    float d = fmodf(target - g_modelYaw, 360.0f);
+    if (d > 180.0f) d -= 360.0f;
+    if (d < -180.0f) d += 360.0f;
+    const float step = Cfg::ModelTurnSpeed * dt;
+    g_modelYaw += (fabsf(d) <= step) ? d : (d > 0.0f ? step : -step);
+    float r[3] = { 0, 0, 0 };
+    G->GetRotation(id, r);
+    r[1] = g_modelYaw;
+    G->SetRotation(id, r);
+}
+
+void Player_Init()
+{
+    G->GetScale(S.player, g_baseScale);
+    g_playerModel = G->IsModel && G->IsModel(S.player) != 0;
+    float r[3] = { 0, 0, 0 };
+    if (G->GetRotation(S.player, r)) g_modelYaw = r[1];        // start from the way she was placed
+}
 
 static const char* kPowerAnim[3] = { "Content/Animations/MarioSmall.ghostanim",
                                      "Content/Animations/MarioBig.ghostanim",
@@ -112,11 +139,12 @@ static void SetPower(Body& b, int level)
     const int old = PowerLevel();
     if (old == level) return;
     Skid_End();
-    const float kx = Cfg::PowerScaleX[level] / Cfg::PowerScaleX[old];
-    const float ky = Cfg::PowerScaleY[level] / Cfg::PowerScaleY[old];
+    const float* psx = g_playerModel ? Cfg::ModelPowerScale : Cfg::PowerScaleX;
+    const float* psy = g_playerModel ? Cfg::ModelPowerScale : Cfg::PowerScaleY;
+    const float kx = psx[level] / psx[old];
+    const float ky = psy[level] / psy[old];
     S.big = level >= 1; S.fire = level == 2;
-    const float s[3] = { g_baseScale[0] * Cfg::PowerScaleX[level], g_baseScale[1] * Cfg::PowerScaleY[level],
-                         g_baseScale[2] * Cfg::PowerScaleX[level] };
+    const float s[3] = { g_baseScale[0] * psx[level], g_baseScale[1] * psy[level], g_baseScale[2] * psx[level] };
     G->SetScale(S.player, s);
     G->SpriteSetAnim(S.player, PowerAnim(level));
     b.pos[1] += b.half[1] * (ky - 1.0f) + (ky > 1.0f ? Cfg::GrowPop : 0.0f);
@@ -219,7 +247,7 @@ void Player_Die()
     Sfx("death");
 
     const float at[3] = { pos[0], startFeet + g_baseScale[1] * 0.5f, pos[2] };
-    S.deathActor = G->Spawn(GHOST_API_MESH_QUAD, at);
+    S.deathActor = g_playerModel ? 0 : G->Spawn(GHOST_API_MESH_QUAD, at);   // a model plays its own Death clip instead
     if (S.deathActor)
     {
         G->SetScale(S.deathActor, g_baseScale);                  // always the small size
@@ -334,6 +362,7 @@ static void Shells_Update(const Body& b)
         float mp[3];
         if (G->GetPosition(S.player, mp))
         {
+            if (g_playerModel) mp[1] = b.pos[1];                 // a model's origin is at its feet: hold the shell at body height
             mp[0] += fx * 0.8f;
             mp[2] += fz * 0.8f;
             G->SetPosition(S.heldShell, mp);
@@ -590,7 +619,7 @@ void Player_Update(float dt)
             if (screenVx > 0.2f)  g_faceDir = 1.0f;
             if (screenVx < -0.2f) g_faceDir = -1.0f;
         }
-
+        if (g_playerModel) Model_Face(S.player, g_vel[0], g_vel[2], dt);
         const float planar = sqrtf(g_vel[0] * g_vel[0] + g_vel[2] * g_vel[2]);
         const bool shift = Bind_Down(ACT_SPRINT);
         const bool crouch = G->KeyDown(VK_DOWN) || Bind_Down(ACT_BACK);
@@ -602,7 +631,14 @@ void Player_Update(float dt)
         else if (crouch)          Sprite_Play(S.player, "Crouch", "Idle");
         else                      Sprite_Play(S.player, "Idle", nullptr);
 
-        G->SpriteSetSpeed(S.player, (g_grounded && !g_skidding && planar > 0.4f && Bind_Down(ACT_SPRINT)) ? 1.6f : 1.0f);
+        float animSpeed = 1.0f;
+        if (g_playerModel)
+        {
+            if (Cfg::ModelStrideSpeed > 0.0f && g_grounded && !g_skidding && planar > 0.4f)
+                animSpeed = fminf(fmaxf(planar / Cfg::ModelStrideSpeed, 0.6f), 2.0f);
+        }
+        else if (g_grounded && !g_skidding && planar > 0.4f && Bind_Down(ACT_SPRINT)) animSpeed = 1.6f;
+        G->SpriteSetSpeed(S.player, animSpeed);
         if (S.hurt > 0.0f) S.hurt -= dt;
     }
 

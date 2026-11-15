@@ -33,12 +33,18 @@ namespace GhostShell
 
         [Browsable(false), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
         public AnimDoc? Doc { get => _doc; set { _doc = value; Invalidate(); } }
+
         [Browsable(false), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
         public Bitmap? Sheet { get => _sheet; set { _sheet = value; Invalidate(); } }
+
         [Browsable(false), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
         public AnimClipDoc? Clip { get => _clip; set { _clip = value; Invalidate(); } }
+
         [Browsable(false), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
         public int PlayFrame { get => _playFrame; set { _playFrame = value; Invalidate(); } }
+
+        [Browsable(false), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+        public string Hint { get; set; } = "Choose an image (Browse...) to start";
 
         public AnimSheetCanvas()
         {
@@ -83,7 +89,7 @@ namespace GhostShell
             {
                 using var f = new Font("Segoe UI", 11f);
                 using var b = new SolidBrush(Color.FromArgb(0x99, 0x99, 0xA0));
-                const string hint = "Choose an image (Browse...) to start";
+                string hint = Hint;
                 SizeF sz = g.MeasureString(hint, f);
                 g.DrawString(hint, f, b, (Width - sz.Width) / 2f, (Height - sz.Height) / 2f);
                 return;
@@ -254,7 +260,7 @@ namespace GhostShell
             {
                 using var f = new Font("Segoe UI", 9.5f);
                 using var b = new SolidBrush(Color.FromArgb(0x99, 0x99, 0xA0));
-                g.DrawString(_clip == null ? "No clip selected" : "Clip has no frames", f, b, 10f, 10f);
+                g.DrawString(_clip == null ? "No clip selected" : (_clip.Kind == 1 ? "3D clip: watch it on the model in the viewport" : "Clip has no frames"), f, b, 10f, 10f);
                 return;
             }
 
@@ -316,6 +322,12 @@ namespace GhostShell
         private readonly TextBox _name = new();
         private readonly NumericUpDown _fps = new();
         private readonly CheckBox _loop = new(), _flip = new();
+
+        private readonly ComboBox _kind = new();
+        private readonly TextBox _model = new();
+        private Panel _imgProps = null!, _modelProps = null!;
+        private Label _framesLabel = null!;
+        private FlowLayoutPanel _frameBtns = null!;
 
         private readonly Label _title = new(), _status = new();
         private readonly ListBox _clips = new(), _frames = new();
@@ -470,10 +482,14 @@ namespace GhostShell
             bar.Controls.Add(Btn("Open...", OpenDialog, "Open a .ghostanim file"));
             bar.Controls.Add(Btn("Save", () => Save(), "Save (Ctrl+S)"));
             bar.Controls.Add(Btn("Save As...", () => SaveAs(), "Save under a new name"));
-            bar.Controls.Add(Btn("Assign To Selected Sprite", AssignToSelected,
-                "Puts this animation on the Sprite Actor selected in the scene"));
-            bar.Controls.Add(Btn("Add Standard Clips", AddStandardClips,
-                "Adds empty Idle, Walk, Jump, Fall, Hurt and Die clips"));
+            bar.Controls.Add(Btn("Assign To Selected", AssignToSelected,
+                "Puts this animation on the selected Sprite Actor or animated model"));
+            bar.Controls.Add(Btn("Add Standard Clips", () => AddStandardClips(false),
+        "Adds empty Idle, Walk, Jump, Fall, Hurt and Die sprite clips"));
+            bar.Controls.Add(Btn("Add Standard 3D Clips", () => AddStandardClips(true),
+                "Adds empty 3D clips named Idle, Walk, Jump... then pick an FBX for each"));
+            bar.Controls.Add(Btn("Add 3D Clips From FBX...", AddFbxClips,
+                "Pick several animation FBX files: one clip is made for each file, named after the file"));
             bar.Controls.Add(Btn("States...", EditStates,
                 "Choose which clip plays for Idle, Walk, Run, Jump, Fall..."));
             _title.AutoSize = true;
@@ -536,7 +552,7 @@ namespace GhostShell
             pbar.Controls.Add(_flip);
 
             // Clip metadata: Name / FPS / Loop
-            var props = new Panel { Dock = DockStyle.Top, Height = 78, BackColor = Bg };
+            var props = new Panel { Dock = DockStyle.Top, Height = 108, BackColor = Bg };
             props.Controls.Add(Lbl("Name", 8, 12));
             _name.Location = new Point(60, 8); _name.Width = 235;
             _name.BackColor = Bg2; _name.ForeColor = Fg;
@@ -549,9 +565,15 @@ namespace GhostShell
             _loop.Text = "Loop"; _loop.ForeColor = Fg;
             _loop.AutoSize = true; _loop.Location = new Point(150, 44);
             props.Controls.Add(_loop);
-
+            props.Controls.Add(Lbl("Type", 8, 80));
+            _kind.Location = new Point(60, 76); _kind.Width = 235;
+            _kind.DropDownStyle = ComboBoxStyle.DropDownList; _kind.FlatStyle = FlatStyle.Flat;
+            _kind.BackColor = Bg2; _kind.ForeColor = Fg;
+            _kind.Items.AddRange(new object[] { "Sprite Sheet (2D)", "3D Model Animation (FBX)" });
+            props.Controls.Add(_kind);
             // Per-clip image / grid settings
             var imgProps = new Panel { Dock = DockStyle.Top, Height = 162, BackColor = Bg };
+            _imgProps = imgProps;
             var imgLabel = new Label
             {
                 Text = "Clip Texture",
@@ -605,6 +627,34 @@ namespace GhostShell
             imgProps.AutoSize = true;
             imgProps.AutoSizeMode = AutoSizeMode.GrowAndShrink;
 
+            // 3D clip settings (replaces the texture panel when the clip type is 3D)
+            var modelProps = new Panel { Dock = DockStyle.Top, Height = 140, BackColor = Bg, Visible = false };
+            modelProps.Controls.Add(new Label { Text = "3D Animation", ForeColor = Accent, Location = new Point(8, 6), AutoSize = true });
+            modelProps.Controls.Add(Lbl("FBX", 8, 36));
+            _model.Location = new Point(50, 32); _model.Width = 156; _model.ReadOnly = true;
+            _model.BackColor = Bg2; _model.ForeColor = Fg; _model.BorderStyle = BorderStyle.FixedSingle;
+            modelProps.Controls.Add(_model);
+            var browseFbx = new Button
+            {
+                Text = "Browse...",
+                Location = new Point(212, 30),
+                Size = new Size(84, 26),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Bg2,
+                ForeColor = Fg,
+            };
+            browseFbx.FlatAppearance.BorderColor = Color.FromArgb(0x3A, 0x3A, 0x40);
+            browseFbx.Click += (s, e) => BrowseFbx();
+            modelProps.Controls.Add(browseFbx);
+            modelProps.Controls.Add(new Label
+            {
+                Text = "Mixamo: download the clip as FBX, Without Skin\n(In Place for Walk and Run). Then Assign this\nanimation to your model and it plays there.",
+                ForeColor = Color.Gray,
+                Location = new Point(8, 68),
+                Size = new Size(290, 60),
+            });
+            _modelProps = modelProps;
+
             // Frames list
             var framesLabel = new Label
             {
@@ -637,9 +687,10 @@ namespace GhostShell
             frameBtns.Controls.Add(Btn("Clear", ClearFrames, "Remove all frames"));
 
             right.Controls.Add(_frames);
-            right.Controls.Add(frameBtns);
-            right.Controls.Add(framesLabel);
+            right.Controls.Add(_frameBtns = frameBtns);
+            right.Controls.Add(_framesLabel = framesLabel);
             right.Controls.Add(imgProps);
+            right.Controls.Add(modelProps);          // NEW: goes right after imgProps
             right.Controls.Add(props);
             right.Controls.Add(pbar);
             right.Controls.Add(_preview);
@@ -759,6 +810,15 @@ namespace GhostShell
                 _syncing = true; _name.Text = _clip.Name; _syncing = false;
                 RefreshClipLabel(); Touch();
             };
+
+            _kind.SelectedIndexChanged += (s, e) =>
+            {
+                if (_syncing || _clip == null) return;
+                _clip.Kind = _kind.SelectedIndex == 1 ? 1 : 0;
+                ApplyKindUI(); RefreshClipLabel(); SyncSettings();
+                _canvas.Invalidate(); _preview.Invalidate(); Touch();
+            };
+
             _fps.ValueChanged += (s, e) =>
             {
                 if (_syncing || _clip == null) return;
@@ -878,11 +938,14 @@ namespace GhostShell
             _name.Text = c?.Name ?? "";
             _fps.Value = (decimal)Math.Clamp(c?.Fps ?? 8f, 0.1f, 120f);
             _loop.Checked = c?.Loop ?? true;
+            _kind.Enabled = hasClip;
+            _kind.SelectedIndex = c?.Kind == 1 ? 1 : 0;
             _syncing = false;
 
             // Reload the bitmap for this clip's texture
             ReloadBitmap();
             SyncSettings();
+            ApplyKindUI();
 
             _canvas.Clip = c;
             _preview.Clip = c;
@@ -916,9 +979,9 @@ namespace GhostShell
 
         private void UpdateStatus()
         {
-            int empty = _doc.Clips.Count(c => c.Frames.Count == 0);
+            int empty = _doc.Clips.Count(c => c.Kind == 1 ? c.Model.Length == 0 : c.Frames.Count == 0);
             string warn = empty > 0
-                ? $"{empty} clip{(empty == 1 ? "" : "s")} with no frames will be ignored by the game."
+                ? $"{empty} clip{(empty == 1 ? "" : "s")} ... with no frames or FBX will be ignored by the game."
                 : "";
             _status.Text = _note.Length > 0 && warn.Length > 0
                 ? _note + "     " + warn : _note + warn;
@@ -973,6 +1036,8 @@ namespace GhostShell
                 Source = _clip.Source,
                 Cols = _clip.Cols,
                 Rows = _clip.Rows,
+                Kind = _clip.Kind,
+                Model = _clip.Model,
             };
             _doc.Clips.Insert(_doc.Clips.IndexOf(_clip) + 1, c);
             RefreshClips(c);
@@ -999,16 +1064,15 @@ namespace GhostShell
             Touch();
         }
 
-        private void AddStandardClips()
+        private void AddStandardClips(bool skeletal)
         {
             AnimClipDoc? first = null;
             int added = 0;
             foreach (var (name, fps, loop) in AnimDoc.Standard)
             {
                 if (_doc.Clips.Count >= AnimDoc.MaxClips) break;
-                if (_doc.Clips.Any(c => string.Equals(c.Name, name,
-                        StringComparison.OrdinalIgnoreCase))) continue;
-                var c = new AnimClipDoc { Name = name, Fps = fps, Loop = loop };
+                if (_doc.Clips.Any(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase))) continue;
+                var c = new AnimClipDoc { Name = name, Fps = fps, Loop = loop, Kind = skeletal ? 1 : 0 };
                 _doc.Clips.Add(c);
                 first ??= c;
                 added++;
@@ -1016,8 +1080,100 @@ namespace GhostShell
             RefreshClips(first ?? _clip);
             Touch();
             SetNote(added > 0
-                ? $"Added {added} clip{(added == 1 ? "" : "s")}. Select one, then click frames."
+                ? $"Added {added} clip{(added == 1 ? "" : "s")}. Select one, then {(skeletal ? "Browse to its FBX" : "click frames")}."
                 : "Those clips already exist.");
+        }
+
+        // Shows the controls that belong to the selected clip's type
+        private void ApplyKindUI()
+        {
+            bool skel = _clip != null && _clip.Kind == 1;
+            _imgProps.Visible = !skel;
+            _modelProps.Visible = skel;
+            _framesLabel.Visible = !skel;
+            _frames.Visible = !skel;
+            _frameBtns.Visible = !skel;
+            _fps.Enabled = _clip != null && !skel;
+            _model.Text = _clip?.Model ?? "";
+            _canvas.Hint = skel ? "3D clip: there is nothing to cut up here.\nThe FBX plays on the model you assign this animation to."
+                                : "Choose an image (Browse...) to start";
+            _canvas.Invalidate();
+        }
+
+        private static string CopyFbxIntoProject(string file)
+        {
+            string? content = GhostProject.ContentDir;
+            string? anims = content == null ? null : Path.Combine(content, "Animations");
+            if (anims != null) Directory.CreateDirectory(anims);
+            return GhostProject.EnsureInContent(file, anims);
+        }
+
+        private void BrowseFbx()
+        {
+            if (_clip == null) return;
+            using var dlg = new OpenFileDialog
+            {
+                Title = "Choose the animation FBX",
+                Filter = "FBX animation (*.fbx)|*.fbx|All files (*.*)|*.*",
+            };
+            string? content = GhostProject.ContentDir;
+            if (content != null && Directory.Exists(Path.Combine(content, "Animations")))
+                dlg.InitialDirectory = Path.Combine(content, "Animations");
+            if (dlg.ShowDialog(FindForm()) != DialogResult.OK) return;
+            try
+            {
+                _clip.Model = StoredPath(CopyFbxIntoProject(dlg.FileName));
+                _model.Text = _clip.Model;
+                RefreshClipLabel();
+                Touch();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(FindForm(), ex.Message, "FBX", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        // One 3D clip per FBX file, named after the file (Idle.fbx -> Idle)
+        private void AddFbxClips()
+        {
+            using var dlg = new OpenFileDialog
+            {
+                Title = "Choose the animation FBX files",
+                Filter = "FBX animation (*.fbx)|*.fbx|All files (*.*)|*.*",
+                Multiselect = true,
+            };
+            if (dlg.ShowDialog(FindForm()) != DialogResult.OK) return;
+
+            AnimClipDoc? first = null;
+            int added = 0;
+            foreach (string f in dlg.FileNames)
+            {
+                if (_doc.Clips.Count >= AnimDoc.MaxClips) break;
+                string stored;
+                try { stored = StoredPath(CopyFbxIntoProject(f)); }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(FindForm(), Path.GetFileName(f) + ": " + ex.Message, "FBX",
+                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    continue;
+                }
+                string stem = Path.GetFileNameWithoutExtension(f);
+                var std = AnimDoc.Standard.FirstOrDefault(x => string.Equals(x.Name, stem, StringComparison.OrdinalIgnoreCase));
+                var c = new AnimClipDoc
+                {
+                    Name = _doc.UniqueClipName(null, stem),
+                    Kind = 1,
+                    Model = stored,
+                    Loop = std.Name != null ? std.Loop : true,
+                };
+                _doc.Clips.Add(c);
+                first ??= c;
+                added++;
+            }
+            RefreshClips(first ?? _clip);
+            Touch();
+            SetNote(added > 0 ? $"Added {added} 3D clip{(added == 1 ? "" : "s")}. Rename them to Idle, Walk, Jump... so the states line up."
+                              : "No clips were added.");
         }
 
         // ============================================================
@@ -1263,23 +1419,24 @@ namespace GhostShell
         {
             int sel = GhostEngine.GhostEngine_GetSelected();
             var o = new GhostObjectInfo();
-            if (sel == 0 ||
-                GhostEngine.GhostEngine_GetObject(sel, ref o) == 0 ||
-                o.meshId != 4)
+            bool isObj = sel != 0 && GhostEngine.GhostEngine_GetObject(sel, ref o) != 0;
+            bool isSprite = isObj && o.meshId == 4;
+            bool isModel = isObj && !isSprite && GhostEngine.GhostEngine_IsMeshSkinned(o.meshId) != 0;
+            if (!isSprite && !isModel)
             {
                 MessageBox.Show(FindForm(),
-                    "Select a Sprite Actor in the scene first " +
-                    "(Palette > Sprites > Sprite Actor).",
-                    "Assign animation",
-                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    "Select a Sprite Actor, or a model that was imported with \"Animated character\" ticked, in the scene first.",
+                    "Assign animation", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
             if (_path == null || IsDirty)
                 if (!Save()) return;
 
-            GhostEngine.GhostEngine_SetSpriteText(sel, 0, StoredPath(_path!));
+            if (isModel) GhostEngine.GhostEngine_SetAnimatorText(sel, 0, StoredPath(_path!));
+            else GhostEngine.GhostEngine_SetSpriteText(sel, 0, StoredPath(_path!));
             GhostAssets.SyncFromEngine();
             SetNote($"Assigned {Path.GetFileName(_path)} to {GhostNames.Of(sel)}.");
         }
+
     }
 }

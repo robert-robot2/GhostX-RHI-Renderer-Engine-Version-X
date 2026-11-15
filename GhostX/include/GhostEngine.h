@@ -374,4 +374,12 @@ extern "C"
     GHOST_API int  GhostEngine_RegisterFont(int textureId, int atlasW, int atlasH, float cellW, float cellH,
         float pad, float lineHeight, const float* advances);          // returns slot >= 1, 0 = failed
     GHOST_API void GhostEngine_SetFontProvider(GhostFontProviderFn fn);
+
+    // ---- Animated models (3D skeletal animation) ----
+    GHOST_API int  GhostEngine_IsMeshSkinned(int meshId);        // 1 if the model was imported with "Animated character"
+    // which: 0 animation file (.ghostanim), 1 clip, 2 (get only) clip names joined with '|'
+    GHOST_API int  GhostEngine_GetAnimatorText(int objectId, int which, char* buf, int bufSize);
+    GHOST_API void GhostEngine_SetAnimatorText(int objectId, int which, const char* utf8);
+    GHOST_API int  GhostEngine_GetAnimator(int objectId, int* playing, float* speed, float* time);
+    GHOST_API void GhostEngine_SetAnimator(int objectId, int playing, float speed);
 }

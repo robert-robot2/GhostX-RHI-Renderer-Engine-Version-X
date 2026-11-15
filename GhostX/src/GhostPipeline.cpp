@@ -649,6 +649,45 @@ GhostResult GhostUploadMeshData(IGhostRHI* rhi, GhostPipeline* p, int meshId,
     return GHOST_OK;
 }
 
+GhostResult GhostCreateSkinMesh(IGhostRHI* rhi, GhostPipeline* p, int slot, int srcMeshId, unsigned int vertexCount)
+{
+    if (slot < 0 || slot >= (int)GHOST_MAX_SKINS || srcMeshId < GHOST_MESH_COUNT || srcMeshId >= GHOST_MAX_MESHES || vertexCount == 0)
+        return GHOST_FAIL;
+    const GhostMesh& src = p->meshes[srcMeshId];
+    if (!src.ib) return GHOST_FAIL;
+
+    GhostReleaseSkinMesh(p, slot);
+    GhostMesh& m = p->meshes[GHOST_MAX_MESHES + slot];
+    const unsigned long long vbSize = (unsigned long long)vertexCount * sizeof(GhostVertex);
+    if (vbSize > 0xFFFFFFFFull) return GHOST_FAIL;
+
+    if (CreateUploadBuffer(rhi->GetDevice(), vbSize, &m.vb) != GHOST_OK) return GHOST_FAIL;
+    D3D12_RANGE rr = { 0, 0 };
+    void* ptr = nullptr;
+    m.vb->Map(0, &rr, &ptr);
+    p->skinMapped[slot] = ptr;
+    m.vbView = { m.vb->GetGPUVirtualAddress(), (UINT)vbSize, sizeof(GhostVertex) };
+    m.ib = src.ib;                         // same triangles as the static mesh
+    m.ibView = src.ibView;
+    m.indexCount = src.indexCount;
+    return GHOST_OK;
+}
+
+void* GhostSkinMapped(GhostPipeline* p, int slot)
+{
+    return (slot >= 0 && slot < (int)GHOST_MAX_SKINS) ? p->skinMapped[slot] : nullptr;
+}
+
+void GhostReleaseSkinMesh(GhostPipeline* p, int slot)
+{
+    if (!p || slot < 0 || slot >= (int)GHOST_MAX_SKINS) return;
+    GhostMesh& m = p->meshes[GHOST_MAX_MESHES + slot];
+    if (p->skinMapped[slot] && m.vb) m.vb->Unmap(0, nullptr);
+    p->skinMapped[slot] = nullptr;
+    m = GhostMesh();
+}
+
+
 // ============================================================
 //  Internal helpers  (no RHI dependency — take raw device)
 // ============================================================
@@ -1559,26 +1598,17 @@ void GhostDrawIcon(IGhostRHI* rhi, GhostPipeline* p, unsigned int slot)
 void GhostDrawMesh(IGhostRHI* rhi, GhostPipeline* p, int meshId, unsigned int slot,
     unsigned int textureIndex, unsigned int firstIndex, unsigned int indexCount, bool translucent)
 {
-
-    // double check this for 11.a
-
-    if (meshId < 0 || meshId >= GHOST_MAX_MESHES || slot >= GHOST_MAX_OBJECTS) return;
+       
+    if (meshId < 0 || meshId >= (int)(GHOST_MAX_MESHES + GHOST_MAX_SKINS) || slot >= GHOST_MAX_OBJECTS) return;
     const GhostMesh& m = p->meshes[meshId];
     if (!m.vb) return;
 
-
-
-
     auto* cmd = rhi->GetCmdList();
-
     ID3D12DescriptorHeap* heaps[] = { p->cbvHeap.Get() };
-
-
     cmd->SetDescriptorHeaps(1, heaps);
     cmd->SetPipelineState((translucent && p->blendPso) ? p->blendPso.Get() : p->pso.Get());
     cmd->SetGraphicsRootSignature(p->rootSignature.Get());
     BindShadowTable(cmd, p);
-
 
     cmd->SetGraphicsRootConstantBufferView(
         0, p->constantBuffer->GetGPUVirtualAddress() + slot * GHOST_OBJECT_CB_STRIDE);
@@ -1640,6 +1670,7 @@ void GhostPipelineDestroy(GhostPipeline* pipeline)
         pipeline->ovVB->Unmap(0, nullptr);
     if (pipeline->blitCBMapped)
         pipeline->blitCB->Unmap(0, nullptr);
+    for (unsigned int i = 0; i < GHOST_MAX_SKINS; i++) GhostReleaseSkinMesh(pipeline, (int)i);
     delete pipeline;
 }
 
@@ -1936,7 +1967,7 @@ void GhostShadowSlice(IGhostRHI* rhi, GhostPipeline* p, int slice, const float* 
 
 void GhostShadowDraw(IGhostRHI* rhi, GhostPipeline* p, int meshId, unsigned int slot, unsigned int texIndex)
 {
-    if (meshId < 0 || meshId >= GHOST_MAX_MESHES || slot >= GHOST_MAX_SHADOW_CASTERS) return;
+    if (meshId < 0 || meshId >= (int)(GHOST_MAX_MESHES + GHOST_MAX_SKINS) || slot >= GHOST_MAX_SHADOW_CASTERS) return;
     const GhostMesh& m = p->meshes[meshId];
     if (!m.vb) return;
 
@@ -2164,6 +2195,7 @@ GhostResult GhostRebuildScenePSOs(IGhostRHI* rhi, GhostPipeline* p, unsigned int
     p->overlayTopPso = nOvTop;
     p->overlayDepthPso = nOvDepth;
     p->skyPso = nSky;
+    p->blendPso = nBlend;
     p->sampleCount = sampleCount;
     return GHOST_OK;
 }

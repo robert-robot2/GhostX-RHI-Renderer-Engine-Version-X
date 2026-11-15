@@ -21,8 +21,12 @@ namespace GhostShell
         public int Cols = 1;
         public int Rows = 1;
 
-        public override string ToString() =>
-            $"{Name}   ({Frames.Count} frames, {Fps:0.#} fps{(Loop ? "" : ", plays once")})";
+        public int Kind = 0;          // 0 = sprite sheet, 1 = 3D model animation (FBX)
+        public string Model = "";     // Kind 1: stored path of the FBX
+
+        public override string ToString() => Kind == 1
+            ? $"{Name}   (3D: {(Model.Length == 0 ? "no FBX yet" : Path.GetFileName(Model))}{(Loop ? "" : ", plays once")})"
+            : $"{Name}   ({Frames.Count} frames, {Fps:0.#} fps{(Loop ? "" : ", plays once")})";
     }
 
     internal sealed class AnimDoc
@@ -116,6 +120,8 @@ namespace GhostShell
                         Source = Str(jc, "source", "sheet") == "single" ? 0 : 1,
                         Cols = Math.Clamp(Int(jc, "columns", 1), 1, MaxGrid),
                         Rows = Math.Clamp(Int(jc, "rows", 1), 1, MaxGrid),
+                        Kind = Str(jc, "kind", "sprite") == "skeletal" ? 1 : 0,
+                        Model = Str(jc, "model", ""),
                     };
                     if (c.Source == 0) { c.Cols = 1; c.Rows = 1; }
 
@@ -166,6 +172,8 @@ namespace GhostShell
                     ["frames"] = frames,
                     ["fps"] = Math.Round((double)c.Fps, 3),
                     ["loop"] = c.Loop,
+                    ["kind"] = c.Kind == 1 ? "skeletal" : "sprite",
+                    ["model"] = c.Model,
                 });
             }
             var o = new JsonObject

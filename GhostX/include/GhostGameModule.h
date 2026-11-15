@@ -1,6 +1,7 @@
 #pragma once
 #include "GhostGameAPI.h"
 #include <string>
+// GhostGameModule.h
 
 enum class GhostModuleResult { NotFound, Loaded, Error };
 

@@ -751,7 +751,9 @@ void Fireball_Spawn(float dx, float dy, float dz)
     dx /= l; dy /= l; dz /= l;
 
     float pos[3];
-    G->GetPosition(S.player, pos);
+    Body pb;
+    if (g_playerModel && LoadBody(S.player, pb)) memcpy(pos, pb.pos, sizeof pos);   // a model's origin is at its feet
+    else G->GetPosition(S.player, pos);
     pos[0] += dx * 0.8f;
     pos[1] += dy * 0.8f + (dy == 0.0f ? 0.3f : 0.0f);   // flat shots leave from chest height
     pos[2] += dz * 0.8f;

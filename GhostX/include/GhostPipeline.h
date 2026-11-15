@@ -74,6 +74,7 @@ constexpr unsigned long long GHOST_OBJECT_CB_STRIDE = 1024;
 static_assert(sizeof(GhostObjectCB) <= GHOST_OBJECT_CB_STRIDE, "GhostObjectCB too large");
 
 constexpr unsigned int       GHOST_MAX_TEXTURES = 256;
+constexpr unsigned int       GHOST_MAX_SKINS = 16;              // animated models drawn at once
 constexpr unsigned int GHOST_MAX_SHADOW_CASTERS = 512;          // was 256: this is also the object limit
 constexpr unsigned int GHOST_SHADOW_SRV_INDEX = GHOST_MAX_TEXTURES + GHOST_MAX_SURFACES;   // last slot of the SRV heap
 
@@ -108,7 +109,8 @@ struct GhostPipeline
     ComPtr<ID3D12PipelineState>  pso;
     ComPtr<ID3D12PipelineState>  blendPso;      // translucent materials
     ComPtr<ID3D12PipelineState> iconPso;
-    GhostMesh meshes[GHOST_MAX_MESHES];
+    GhostMesh meshes[GHOST_MAX_MESHES + GHOST_MAX_SKINS];   // slots from GHOST_MAX_MESHES up are animated vertex buffers
+    void* skinMapped[GHOST_MAX_SKINS] = {};
 
     // ---- Constant Buffer ----
     ComPtr<ID3D12Resource>       constantBuffer;
@@ -185,6 +187,12 @@ GhostResult GhostUploadMeshData(IGhostRHI* rhi, GhostPipeline* pipeline, int mes
     const void* vertices, unsigned int vertexCount, const unsigned int* indices, unsigned int indexCount);
 
 GhostResult GhostUploadMeshes(IGhostRHI* rhi, GhostPipeline* pipeline);
+
+// Animated models: a CPU-writable vertex buffer that shares the static mesh's index buffer.
+// Draw it with meshId = GHOST_MAX_MESHES + slot.
+GhostResult GhostCreateSkinMesh(IGhostRHI* rhi, GhostPipeline* pipeline, int slot, int srcMeshId, unsigned int vertexCount);
+void* GhostSkinMapped(GhostPipeline* pipeline, int slot);
+void        GhostReleaseSkinMesh(GhostPipeline* pipeline, int slot);
 
 // Rebuilds the PSOs that draw into the scene target (main, icon, UI, overlays, sky) at a new sample count.
 // Between frames only. On failure nothing is changed.

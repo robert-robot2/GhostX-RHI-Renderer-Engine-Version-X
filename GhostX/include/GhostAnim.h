@@ -19,6 +19,8 @@ struct GhostClip
     int              source = 1;   // 0 = single image, 1 = sprite sheet
     int              cols = 1;
     int              rows = 1;
+    bool             skeletal = false;   // true = a 3D clip: an FBX that plays on a skinned model
+    std::string      model;              // stored path of that FBX
 };
 
 struct GhostAnimAsset

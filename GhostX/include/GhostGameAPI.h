@@ -203,6 +203,10 @@ extern "C" {
         int   (*GetFullscreen)(void);
         void  (*SetScaleFilter)(int filter);                    // 0 linear, 1 point
 
+        // ---- 3D models ----
+        // The Sprite* calls above also drive an animated model (SpriteSetState / Clip / Anim / Speed).
+        int   (*IsModel)(int id);                               // 1 if the object is an imported 3D model (not a primitive or sprite)
+
     } GhostGameAPI;
 
     // A game module must export:

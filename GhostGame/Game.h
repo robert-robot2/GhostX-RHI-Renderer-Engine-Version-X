@@ -12,6 +12,9 @@ extern const GhostGameAPI* G;
 extern float g_faceDir;
 extern float g_moveYawDeg;      // world yaw Mario last moved toward
 extern bool  g_haveMoveYaw;
+extern bool  g_playerModel;     // the Player is an imported 3D model (not a Sprite Actor)
+void Model_Face(int id, float wx, float wz, float dt);   // turn a model toward world direction (wx, wz)
+
 // Plays a sound from the bank by name. Safe when the sound is disabled, missing, or audio is off.
 inline void Sfx(const char* name) { if (G && G->PlaySfx) G->PlaySfx(name); }
 void Shell_Kick(int id, float dx, float dz);   // start sliding along (dx, dz)
@@ -62,6 +65,12 @@ namespace Cfg
     constexpr float SkidFriction = 28.0f;   // braking, units/s^2 (GroundAccel is 60). Lower = longer slide
     constexpr float SkidOpposeCos = -0.6f;   // input must oppose velocity this much (-1 = exactly opposite)
     constexpr bool  SkidFlipSprite = false;   // true if your skid art is drawn facing the other way
+    // ---- 3D model player (Role = Player is an imported model instead of a Sprite Actor) ----
+    constexpr float ModelYawOffset = 0.0f;       // she walks backwards: 180. Sideways: 90 or -90
+    constexpr float ModelTurnSpeed = 720.0f;     // degrees per second she turns toward the way she moves
+    constexpr float ModelCamHeight = 1.1f;       // non-orbit camera aims this far above her feet (sprites use CamTargetHeight)
+    constexpr float ModelPowerScale[3] = { 1.0f, 1.5f, 1.5f };   // small, big, fire. Uniform: stretching a model looks wrong
+    constexpr float ModelStrideSpeed = 0.0f;     // 0 = off. Else the walk clip speeds up / slows down as (her speed / this)
 }
 
 enum { MODE_MENU = 0, MODE_PLAY, MODE_OVER, MODE_SELECT, MODE_OPTIONS };

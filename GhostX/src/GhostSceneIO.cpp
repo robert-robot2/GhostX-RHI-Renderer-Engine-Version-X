@@ -264,6 +264,9 @@ bool GhostScene_Save(const GhostScene& s, const std::string& root, const std::st
                 js["clip"] = sp.clip;
                 jo["sprite"] = js;
             }
+            if (!o.animator.anim.empty())
+                jo["animator"] = json{ { "anim", o.animator.anim },{ "clip", o.animator.clip },
+                                       { "playing", o.animator.playing },{ "speed", o.animator.speed } };
             json faces = json::array();
             const int n = GhostMesh_FaceCount(o.meshId);
             for (int f = 0; f < n; f++) faces.push_back(MatToJson(o.faces[f], saved));
@@ -572,6 +575,14 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
                     sp.anim = js.value("anim", std::string());
                     sp.clip = js.value("clip", std::string());
                 }
+                if (jo.contains("animator") && jo["animator"].is_object())
+                {
+                    const json& ja = jo["animator"];
+                    o.animator.anim = ja.value("anim", std::string());
+                    o.animator.clip = ja.value("clip", std::string());
+                    o.animator.playing = ja.value("playing", true);
+                    o.animator.speed = ja.value("speed", 1.0f);
+                }
                 if (jo.contains("faces") && jo["faces"].is_array())
                 {
                     const int n = GhostMesh_FaceCount(mesh);
@@ -753,6 +764,7 @@ unsigned int GhostScene_Hash(const GhostScene& s)
         F(o.timeOffset);
         I(o.pathMode); I(o.enemyPathMode); I(o.flying ? 1 : 0); I(o.enemyDeathEffect); I(o.breakEffect); I(o.contents); I(o.portalTrigger);
         I(o.powerType); I(o.itemMoves); I(o.coinCount);
+        S(o.animator.anim); S(o.animator.clip); I(o.animator.playing ? 1 : 0); F(o.animator.speed);
         const int n = GhostMesh_FaceCount(o.meshId);
         for (int f = 0; f < n; f++) mix(&o.faces[f], sizeof(GhostMaterial));
         if (o.meshId == GHOST_MESH_QUAD)

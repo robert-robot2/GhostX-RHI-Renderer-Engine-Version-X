@@ -1,6 +1,9 @@
 #pragma once
 #include <string>
 #include <vector>
+#include <memory>
+#include "GhostSkin.h"
+// GhostModelImport.h
 
 constexpr int          GHOST_MODEL_MAX_SLOTS = 32;          // must equal GHOST_MAX_FACES
 constexpr unsigned int GHOST_MODEL_MAX_TRIANGLES = 1000000;
@@ -16,6 +19,7 @@ struct GhostModelOptions
     int   upAxis = 0;              // 0 = auto (from the file), 1 = Y up, 2 = Z up
     bool  flipWinding = false;     // extra flip, for files whose faces come in inside-out
     bool  importMaterials = true;  // false: every slot gets the default grey
+    bool keepSkin = false;   // keep the skeleton and skin weights (animated character)
 };
 
 // One material slot's defaults (display colours, like the Material panel)
@@ -46,6 +50,7 @@ struct GhostModelResult
     unsigned int triangleCount = 0;
     GhostModelOptions opts;
     std::string  info, warn;
+    std::shared_ptr<GhostSkinData> skin;   // set when the model was imported as an animated character
 };
 
 // Result is in the engine's space: left-handed, Y up, +Z forward, clockwise front faces, V down.

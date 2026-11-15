@@ -19,13 +19,14 @@ namespace GhostShell
         private readonly ComboBox _up = new();
         private readonly CheckBox _flip = new(), _place = new();
         private readonly CheckBox _mats = new();
+        private readonly CheckBox _skin = new();
         public float Scale => (float)_scale.Value;
         public float FitSize => (float)_fit.Value;
         public int UpAxis => Math.Max(_up.SelectedIndex, 0);
         public bool FlipWinding => _flip.Checked;
         public bool PlaceInScene => _place.Visible && _place.Checked;
 
-        public int Flags => (_flip.Checked ? 1 : 0) | (_mats.Checked ? 0 : 2);
+        public int Flags => (_flip.Checked ? 1 : 0) | (_mats.Checked ? 0 : 2) | (_skin.Checked ? 4 : 0);
 
         // Fills the controls with the settings a model was imported with (used by Re-import with settings)
         public void Preset(float scale, float fit, int up, int flags)
@@ -35,6 +36,7 @@ namespace GhostShell
             _up.SelectedIndex = Math.Clamp(up, 0, 2);
             _flip.Checked = (flags & 1) != 0;
             _mats.Checked = (flags & 2) == 0;
+            _skin.Checked = (flags & 4) != 0;
         }
 
         public ModelImportDialog(string[] files, bool offerPlace)
@@ -43,7 +45,7 @@ namespace GhostShell
             FormBorderStyle = FormBorderStyle.FixedDialog;
             StartPosition = FormStartPosition.CenterParent;
             MaximizeBox = false; MinimizeBox = false; ShowInTaskbar = false;
-            ClientSize = new Size(470, 316);
+            ClientSize = new Size(470, 346);
             BackColor = Bg; ForeColor = Fg;
 
             string title = files.Length == 1 ? Path.GetFileName(files[0]) : $"{files.Length} files (the same settings apply to each)";
@@ -76,9 +78,13 @@ namespace GhostShell
             _mats.Location = new Point(16, 214); _mats.AutoSize = true; _mats.ForeColor = Fg; _mats.Checked = true;
             Controls.Add(_mats);
 
+            _skin.Text = "Animated character (keep the skeleton so it can play animations)";
+            _skin.Location = new Point(16, 242); _skin.AutoSize = true; _skin.ForeColor = Fg;
+            Controls.Add(_skin);
+
             Controls.Add(new Label
             {
-                Location = new Point(16, 244),
+                Location = new Point(16, 274),
                 Size = new Size(438, 20),
                 ForeColor = Color.Gray,
                 Text = "Fit is applied first, then Scale. Tip: Fit = 2 gives a predictable size.",
@@ -87,7 +93,7 @@ namespace GhostShell
             var ok = new Button
             {
                 Text = "Import",
-                Location = new Point(244, 278),
+                Location = new Point(244, 308),
                 Size = new Size(84, 28),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Bg2,
@@ -97,7 +103,7 @@ namespace GhostShell
             var cancel = new Button
             {
                 Text = "Cancel",
-                Location = new Point(372, 244),
+                Location = new Point(372, 308),
                 Size = new Size(84, 28),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Bg2,
