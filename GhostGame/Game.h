@@ -17,6 +17,12 @@ void Model_Face(int id, float wx, float wz, float dt);   // turn a model toward 
 
 // Plays a sound from the bank by name. Safe when the sound is disabled, missing, or audio is off.
 inline void Sfx(const char* name) { if (G && G->PlaySfx) G->PlaySfx(name); }
+// Seconds a model's clip lasts. Falls back to `fallback` when it can't be read (no such clip, not a model, old engine).
+inline float ClipSeconds(int id, const char* clip, float fallback)
+{
+    const float t = (G && G->ModelClipLength) ? G->ModelClipLength(id, clip) : 0.0f;
+    return t > 0.05f ? t : fallback;
+}
 void Shell_Kick(int id, float dx, float dz);   // start sliding along (dx, dz)
 void Shell_Hold(int id);                       // Mario picks it up
 bool Shell_Ready(int id);                      // is a loose, stationary shell past its grace time
@@ -71,6 +77,16 @@ namespace Cfg
     constexpr float ModelCamHeight = 1.1f;       // non-orbit camera aims this far above her feet (sprites use CamTargetHeight)
     constexpr float ModelPowerScale[3] = { 1.0f, 1.5f, 1.5f };   // small, big, fire. Uniform: stretching a model looks wrong
     constexpr float ModelStrideSpeed = 0.0f;     // 0 = off. Else the walk clip speeds up / slows down as (her speed / this)
+    // ---- 3D player attack (the Attack clip) ----
+    constexpr float ModelAttackTime = 0.9f;      // seconds. Set it to about the length of the Attack clip
+    constexpr float ModelAttackHitAt = 0.9f;     // the swing connects this far through the Attack clip (0 = start, 1 = end)
+    constexpr float ModelAttackReach = 1.4f;     // how far in front of her it reaches
+    constexpr bool  ModelMeleeDamage = true;     // false = the Attack clip is animation only
+    // ---- 3D enemies ----
+    constexpr float EnemyAttackRange = 1.6f;     // an enemy swings when Mario is this close (units, flat distance)
+    constexpr float EnemyAttackTime = 0.9f;      // seconds. About the length of its Attack clip
+    constexpr float EnemyAttackCooldown = 1.5f;  // seconds between swings
+    constexpr float ModelEnemyDieTime = 1.2f;    // how long a 3D enemy's Die clip plays before it disappears
 }
 
 enum { MODE_MENU = 0, MODE_PLAY, MODE_OVER, MODE_SELECT, MODE_OPTIONS };

@@ -4,7 +4,7 @@
 //Entities.cpp
 
 struct Saved { int id; float pos[3], scale[3], color[3]; char tag[32]; int visible; int tex; };
-struct Enemy { int id; float a[3], b[3]; float speed, pause, wait; int mode; int dir; float vy; bool alive, done, grounded, wingless; float dieTimer; };
+struct Enemy { int id; float a[3], b[3]; float speed, pause, wait; int mode; int dir; float vy; bool alive, done, grounded, wingless; float dieTimer; float attack, atkCool; };
 
 static std::vector<Saved> g_saved;
 static std::vector<int>   g_coins, g_enemyIds, g_blocks;
@@ -388,7 +388,7 @@ void Enemy_Kill(int id, bool stomp)
                 }
                 else
                 {
-                    if (Sprite_Play(id, "Die", "Hurt")) e.dieTimer = 0.5f;
+                    if (Sprite_Play(id, "Die", "Hurt")) e.dieTimer = (G->IsModel && G->IsModel(id)) ? Cfg::ModelEnemyDieTime : 0.5f;
                     else G->SetVisible(id, 0);
                 }
             }
@@ -1266,7 +1266,7 @@ void Entities_Update(float dt)
         }
         Body b;
         if (!LoadBody(e.id, b)) continue;
-
+        const bool isModel = G->IsModel && G->IsModel(e.id) != 0;
         GhostObjectProps epr = {};
         const bool isFlying = G->GetObjectProps(e.id, &epr) && (epr.flying == 1 || (epr.flying == 2 && !e.wingless));
         if (!isFlying)
@@ -1276,7 +1276,29 @@ void Entities_Update(float dt)
         }
 
         if (e.wait > 0.0f) e.wait -= dt;
-        const bool walking = e.mode != 3 && !e.done && e.wait <= 0.0f;     // mode 3 = stand still
+
+        // 3D enemies swing at Mario when he comes close. The swing is the "Attack" clip; touching still hurts as before.
+        float atkDx = 0.0f, atkDz = 0.0f;
+        if (isModel)
+        {
+            if (e.atkCool > 0.0f) e.atkCool -= dt;
+            if (e.attack > 0.0f) e.attack -= dt;
+            if (havePlayerBody && S.deathTimer <= 0.0f)
+            {
+                atkDx = pbody.pos[0] - b.pos[0];
+                atkDz = pbody.pos[2] - b.pos[2];
+                const float r2 = Cfg::EnemyAttackRange * Cfg::EnemyAttackRange;
+                if (e.attack <= 0.0f && e.atkCool <= 0.0f && e.grounded &&
+                    atkDx * atkDx + atkDz * atkDz < r2 && fabsf(pbody.pos[1] - b.pos[1]) < 1.5f)
+                {
+                    const float len = ClipSeconds(e.id, "Attack", Cfg::EnemyAttackTime);
+                    e.attack = len;
+                    e.atkCool = len + Cfg::EnemyAttackCooldown;
+                }
+            }
+        }
+        const bool attacking = isModel && e.attack > 0.0f;
+        const bool walking = e.mode != 3 && !e.done && e.wait <= 0.0f && !attacking;     // mode 3 = stand still
 
         float vx = 0.0f, vz = 0.0f;
         bool arrive = false;
@@ -1319,8 +1341,16 @@ void Entities_Update(float dt)
         }
 
         const float yaw = S.camYaw * 0.0174532925f;
-        Sprite_FaceScreen(e.id, vx * cosf(yaw) - vz * sinf(yaw));          // same formula the Player uses
-        if (!(e.wingless && Sprite_Play(e.id, walking ? "WalkGround" : "IdleGround", nullptr)))
+        Sprite_FaceScreen(e.id, vx* cosf(yaw) - vz * sinf(yaw));          // same formula the Player uses
+        if (isModel)
+        {
+            if (attacking) Model_Face(e.id, atkDx, atkDz, dt);            // swing toward Mario
+            else           Model_Face(e.id, vx, vz, dt);                  // otherwise face the way it walks
+            if (attacking && Sprite_Play(e.id, "Attack", nullptr)) {}
+            else if (!e.grounded && !isFlying && Sprite_Play(e.id, "Jump", nullptr)) {}
+            else Sprite_Play(e.id, walking ? "Walk" : "Idle", "Idle");
+        }
+        else if (!(e.wingless && Sprite_Play(e.id, walking ? "WalkGround" : "IdleGround", nullptr)))
             Sprite_Play(e.id, walking ? "Walk" : "Idle", "Idle");
         StoreBody(b);
     }

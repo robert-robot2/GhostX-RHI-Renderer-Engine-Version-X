@@ -3787,6 +3787,13 @@ static void UpdateAnimators(float dt)
         }
         si.seen = true;
         if (si.lastAnim == an.animId && si.lastClip == ci && fabsf(si.lastTime - an.time) < 1e-5f) continue;   // nothing moved
+        if (si.lastAnim != an.animId || si.lastClip != ci)                      // a new clip started: say how well it fits
+        {
+            char msg[256];
+            snprintf(msg, sizeof msg, "[GhostX] 3D clip \"%s\": %d of %d tracks match the skeleton, %.2f s\n",
+                c.name.c_str(), GhostSkin_CountMatches(sk, *sc), (int)sc->tracks.size(), sc->duration);
+            OutputDebugStringA(msg);
+        }
         si.lastAnim = an.animId; si.lastClip = ci; si.lastTime = an.time;
 
         GhostSkin_Pose(sk, sc.get(), an.time, g_boneScratch);
@@ -3863,7 +3870,23 @@ static int Api_IsModel(int id)
     const GhostMeshInfo* mi = o ? GhostMesh_Info(o->meshId) : nullptr;
     return (mi && !mi->builtin) ? 1 : 0;
 }
-
+// Seconds a model's 3D clip lasts. Accepts a state name too (the States table). 0 = unknown.
+static float Api_ModelClipLength(int id, const char* clip)
+{
+    GhostObject* m = AnimModelOf(id);
+    if (!m || !clip) return 0.0f;
+    GhostAnimator& an = m->animator;
+    ResolveAnimator(an);
+    if (an.animId < 0 || an.animId >= (int)g_anims.size()) return 0.0f;
+    const GhostAnimAsset& a = g_anims[(size_t)an.animId];
+    std::string name = clip;
+    for (const auto& kv : a.states)
+        if (_stricmp(kv.first.c_str(), clip) == 0) { if (!kv.second.empty()) name = kv.second; break; }
+    const int ci = GhostAnim_FindClip(a, name.c_str());
+    if (ci < 0 || !a.clips[(size_t)ci].skeletal) return 0.0f;
+    std::shared_ptr<GhostSkelClip> sc = GetSkelClip(a.clips[(size_t)ci].model);
+    return sc ? sc->duration : 0.0f;
+}
 
 static int Api_SpriteSetClip(int id, const char* name)
 {
@@ -4086,6 +4109,7 @@ static void BuildGameApi()
     a.SetResolution = Api_SetResolution;  a.GetResolution = Api_GetResolution;  a.GetResolutionList = Api_GetResolutionList;
     a.SetFullscreen = Api_SetFullscreen;  a.GetFullscreen = Api_GetFullscreen;  a.SetScaleFilter = Api_SetScaleFilter;
     a.IsModel = Api_IsModel;
+    a.ModelClipLength = Api_ModelClipLength;
 }
 
 // Runs between steps (never inside game code). The editor's own scene stays safe in g_playBackup.

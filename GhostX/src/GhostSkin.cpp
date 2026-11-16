@@ -85,14 +85,38 @@ static void SampleQuat(const std::vector<float>& tt, const std::vector<float>& v
     for (int k = 0; k < 4; k++) o[k] = a[k] * s0 + b[k] * s1;
     NormQ(o);
 }
+static std::string ShortName(const std::string& n)
+{
+    const size_t p = n.find(':');
+    return p == std::string::npos ? n : n.substr(p + 1);
+}
 
+static int FindNode(const GhostSkinData& s, const std::string& name)
+{
+    auto it = s.nodeMap.find(name);
+    if (it != s.nodeMap.end()) return it->second;
+    it = s.nodeShort.find(ShortName(name));                      // same bone, different prefix
+    return it != s.nodeShort.end() ? it->second : -1;
+}
 // ============================================================
 //  Skeleton
 // ============================================================
 void GhostSkin_Finish(GhostSkinData& s)
 {
     s.nodeMap.clear();
-    for (int i = 0; i < s.NodeCount(); i++) s.nodeMap.emplace(s.nodeName[(size_t)i], i);
+    s.nodeShort.clear();
+    for (int i = 0; i < s.NodeCount(); i++)
+    {
+        s.nodeMap.emplace(s.nodeName[(size_t)i], i);
+        s.nodeShort.emplace(ShortName(s.nodeName[(size_t)i]), i);
+    }
+}
+
+int GhostSkin_CountMatches(const GhostSkinData& s, const GhostSkelClip& clip)
+{
+    int n = 0;
+    for (const GhostSkelTrack& tr : clip.tracks) if (FindNode(s, tr.node) >= 0) n++;
+    return n;
 }
 
 void GhostSkin_Pose(const GhostSkinData& s, const GhostSkelClip* clip, float time, std::vector<float>& boneMats)
@@ -105,9 +129,9 @@ void GhostSkin_Pose(const GhostSkinData& s, const GhostSkelClip* clip, float tim
     if (clip)
         for (const GhostSkelTrack& tr : clip->tracks)
         {
-            auto it = s.nodeMap.find(tr.node);
-            if (it == s.nodeMap.end()) continue;                    // a node this model doesn't have
-            const size_t i = (size_t)it->second;
+            const int ni = FindNode(s, tr.node);
+            if (ni < 0) continue;                                   // a node this model doesn't have
+            const size_t i = (size_t)ni;
             SampleVec3(tr.pt, tr.pv, time, &T[i * 3]);
             SampleQuat(tr.rt, tr.rv, time, &R[i * 4]);
             SampleVec3(tr.st, tr.sv, time, &S[i * 3]);

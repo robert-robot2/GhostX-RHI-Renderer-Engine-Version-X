@@ -206,6 +206,7 @@ extern "C" {
         // ---- 3D models ----
         // The Sprite* calls above also drive an animated model (SpriteSetState / Clip / Anim / Speed).
         int   (*IsModel)(int id);                               // 1 if the object is an imported 3D model (not a primitive or sprite)
+        float (*ModelClipLength)(int id, const char* clip);     // seconds a model's 3D clip lasts (0 = not a model, or no such clip)
 
     } GhostGameAPI;
 

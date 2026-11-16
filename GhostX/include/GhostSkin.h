@@ -30,6 +30,7 @@ struct GhostSkinData
     float scale = 1.0f;                             // the import's final scale (fit * scale)
 
     std::unordered_map<std::string, int> nodeMap;   // name -> node (built by GhostSkin_Finish)
+    std::unordered_map<std::string, int> nodeShort; // name without its "prefix:" (so mixamorig: and mixamorig1: both match)
 
     int NodeCount() const { return (int)nodeName.size(); }
     int BoneCount() const { return (int)boneNode.size(); }
@@ -55,7 +56,7 @@ bool GhostSkelClip_Load(const std::string& utf8Path, GhostSkelClip& out, std::st
 
 // Builds nodeMap. Call after filling a GhostSkinData.
 void GhostSkin_Finish(GhostSkinData& s);
-
+int  GhostSkin_CountMatches(const GhostSkinData& s, const GhostSkelClip& clip);   // how many of a clip's tracks fit this skeleton
 // Fills boneMats (16 floats per bone) for a clip at `time` seconds. clip = nullptr gives the rest pose.
 void GhostSkin_Pose(const GhostSkinData& s, const GhostSkelClip* clip, float time, std::vector<float>& boneMats);
 

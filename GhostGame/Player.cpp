@@ -7,9 +7,11 @@ static float g_coyote, g_jumpBuf;
 static bool  g_grounded;
 static float g_baseScale[3] = { 1, 1, 1 };
 float g_faceDir = 1.0f;
-bool  g_playerModel = false;       // the Player is an imported 3D model (not a Sprite Actor)
-static float g_modelYaw = 0.0f;    // the yaw the model is turned to right now (degrees)
 
+bool  g_playerModel = false;       // the Player is an imported 3D model (not a Sprite Actor)
+static float g_attackAnim = 0.0f;  // > 0 while the 3D player's Attack clip plays
+static bool  g_attackHit = false;  // the swing has already connected
+static float g_attackLen = 0.8f;   // seconds the current swing lasts (the real clip length)
 float g_moveYawDeg = 0.0f;
 bool  g_haveMoveYaw = false;
 
@@ -23,18 +25,18 @@ static float Approach(float v, float target, float maxStep)
 }
 
 // Turns a model toward the world direction it moves (it keeps its facing while standing still)
+// Turns a model toward the world direction (wx, wz) it moves. It keeps its facing while standing still.
 void Model_Face(int id, float wx, float wz, float dt)
 {
-    if (wx * wx + wz * wz < 0.25f) return;
+    if (wx * wx + wz * wz < 0.04f) return;
+    float r[3] = { 0, 0, 0 };
+    if (!G->GetRotation(id, r)) return;
     const float target = atan2f(-wx, -wz) * 57.2957795f + Cfg::ModelYawOffset;   // an imported model's front is -Z
-    float d = fmodf(target - g_modelYaw, 360.0f);
+    float d = fmodf(target - r[1], 360.0f);
     if (d > 180.0f) d -= 360.0f;
     if (d < -180.0f) d += 360.0f;
     const float step = Cfg::ModelTurnSpeed * dt;
-    g_modelYaw += (fabsf(d) <= step) ? d : (d > 0.0f ? step : -step);
-    float r[3] = { 0, 0, 0 };
-    G->GetRotation(id, r);
-    r[1] = g_modelYaw;
+    r[1] += (fabsf(d) <= step) ? d : (d > 0.0f ? step : -step);
     G->SetRotation(id, r);
 }
 
@@ -42,8 +44,6 @@ void Player_Init()
 {
     G->GetScale(S.player, g_baseScale);
     g_playerModel = G->IsModel && G->IsModel(S.player) != 0;
-    float r[3] = { 0, 0, 0 };
-    if (G->GetRotation(S.player, r)) g_modelYaw = r[1];        // start from the way she was placed
 }
 
 static const char* kPowerAnim[3] = { "Content/Animations/MarioSmall.ghostanim",
@@ -132,6 +132,7 @@ void Player_Reset()
     S.transformTimer = 0.0f;
     g_shrinking = false; 
     g_skidding = false; g_skidAnim = false;
+    g_attackAnim = 0.0f; g_attackHit = false;
 }
 
 static void SetPower(Body& b, int level)
@@ -401,6 +402,34 @@ static void Shells_Update(const Body& b)
     }
 }
 
+// The swing of the 3D player's Attack clip: defeats enemies in a box in front of her
+static void Melee_Hit(const Body& b)
+{
+    float r[3] = { 0, 0, 0 };
+    G->GetRotation(S.player, r);
+    const float yaw = (r[1] - Cfg::ModelYawOffset) * 0.0174532925f;
+    const float fx = -sinf(yaw), fz = -cosf(yaw);                 // the way she faces (front is -Z at yaw 0)
+
+    const float reach = Cfg::ModelAttackReach;
+    const float cx = b.pos[0] + fx * (b.half[0] + reach * 0.5f);
+    const float cz = b.pos[2] + fz * (b.half[2] + reach * 0.5f);
+    const float hw = reach * 0.5f + 0.3f;
+    const float mn[3] = { cx - hw, b.pos[1] - b.half[1], cz - hw };
+    const float mx[3] = { cx + hw, b.pos[1] + b.half[1], cz + hw };
+
+    int ids[16];
+    const int n = G->QueryBox(mn, mx, ids, 16);
+    int hits = 0;
+    for (int i = 0; i < n; i++)
+    {
+        char tag[32];
+        if (!G->GetTag(ids[i], tag, sizeof tag) || strcmp(tag, "Enemy") != 0) continue;
+        Enemy_Kill(ids[i]);
+        hits++;
+    }
+    if (hits) G->PadRumble(0.0f, 0.5f, 0.1f);
+}
+
 void Player_Update(float dt)
 {
     if (S.deathTimer > 0.0f) { Death_Update(dt); return; }
@@ -524,11 +553,30 @@ void Player_Update(float dt)
 
     if (S.attackCool > 0.0f) S.attackCool -= dt;
 
+    if (g_attackAnim > 0.0f)                                      // the 3D swing is running
+    {
+        g_attackAnim -= dt;
+        if (!g_attackHit && g_attackAnim <= g_attackLen * (1.0f - Cfg::ModelAttackHitAt))
+        {
+            g_attackHit = true;
+            if (Cfg::ModelMeleeDamage && PowerLevel() < 2) Melee_Hit(b);
+        }
+        if (g_attackAnim < 0.0f) g_attackAnim = 0.0f;
+    }
+
     if (Bind_Pressed(ACT_ATTACK) && S.attackCool <= 0.0f)
     {
         S.attackCool = 0.4f;
-        if (PowerLevel() == 0)      Sprite_Play(S.player, "SpinAttack", "Idle");
-        else if (PowerLevel() == 1) Sprite_Play(S.player, "Punch", "Idle");
+        if (g_playerModel)
+        {
+            g_attackLen = ClipSeconds(S.player, "Attack", Cfg::ModelAttackTime);   // the real length of her Attack clip
+            g_attackAnim = g_attackLen;
+            g_attackHit = false;
+            G->SpriteSetClip(S.player, "");                       // so the Attack clip always restarts from its first frame
+            S.attackCool = fmaxf(0.4f, g_attackLen);
+        }
+        if (PowerLevel() == 0) { if (!g_playerModel) Sprite_Play(S.player, "SpinAttack", "Idle"); }
+        else if (PowerLevel() == 1) { if (!g_playerModel) Sprite_Play(S.player, "Punch", "Idle"); }
         else if (PowerLevel() == 2)
         {
             const float up = (G->KeyDown(VK_UP) ? 1.0f : 0.0f) - (G->KeyDown(VK_DOWN) ? 1.0f : 0.0f);
@@ -624,8 +672,10 @@ void Player_Update(float dt)
         const bool shift = Bind_Down(ACT_SPRINT);
         const bool crouch = G->KeyDown(VK_DOWN) || Bind_Down(ACT_BACK);
         if (g_skidding && (!g_grounded || S.hurt > 0.0f)) Skid_End();
+
         if (S.hurt > 0.0f)        Sprite_Play(S.player, "Hurt", "Idle");
-        else if (!g_grounded)     Sprite_Play(S.player, g_vel[1] > 0.0f ? "Jump" : "Fall", "Jump");
+        else if (g_attackAnim > 0.0f && Sprite_Play(S.player, "Attack", nullptr)) {}   // 3D: swing in place (and in the air)
+        else if (!g_grounded)     Sprite_Play(S.player, g_vel[1] > 0.0f ? "Jump" : "Fall", "Jump");        
         else if (g_skidding)      Sprite_Play(S.player, "Skid", "Idle");
         else if (planar > 0.4f) { if (shift) Sprite_Play(S.player, "Run", "Walk"); else Sprite_Play(S.player, "Walk", "Idle"); }
         else if (crouch)          Sprite_Play(S.player, "Crouch", "Idle");
@@ -640,6 +690,7 @@ void Player_Update(float dt)
         else if (g_grounded && !g_skidding && planar > 0.4f && Bind_Down(ACT_SPRINT)) animSpeed = 1.6f;
         G->SpriteSetSpeed(S.player, animSpeed);
         if (S.hurt > 0.0f) S.hurt -= dt;
+      //  else if (g_attackAnim > 0.0f && Sprite_Play(S.player, "Attack", nullptr)) {}   // 3D: swing in place (and in the air)
     }
 
     if (S.starTime > 0.0f)
