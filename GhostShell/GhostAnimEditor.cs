@@ -1,6 +1,7 @@
 ﻿// GhostAnimEditor.cs — Animation Editor: per-clip texture, grid, clips, frames, live preview, files
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -10,7 +11,7 @@ using System.IO;
 using System.Linq;
 using System.Windows.Forms;
 using WeifenLuo.WinFormsUI.Docking;
-using System.ComponentModel;
+using static GhostShell.AnimDoc;
 
 namespace GhostShell
 {
@@ -306,6 +307,16 @@ namespace GhostShell
         private string _saved = "", _note = "";
         private Bitmap? _bmp;
         private AnimClipDoc? _clip;
+
+        private readonly GhostBlueprintCanvas _bp = new();
+        private readonly ListBox _palette = new();
+        private Panel _bpView = null!, _bpInspector = null!, _right = null!;
+        private Splitter _splitR = null!;
+        private Button _bBp = null!;
+        private bool _bpMode;
+        private AnimPreview3DWindow? _pv3d;
+        private int _testModel; private string? _testPath;
+        private readonly NumericUpDown _speedNum = new();
         private bool _syncing;
 
         private readonly AnimSheetCanvas _canvas = new();
@@ -492,6 +503,8 @@ namespace GhostShell
                 "Pick several animation FBX files: one clip is made for each file, named after the file"));
             bar.Controls.Add(Btn("States...", EditStates,
                 "Choose which clip plays for Idle, Walk, Run, Jump, Fall..."));
+            bar.Controls.Add(_bBp = Btn("Blueprint", ToggleBlueprint, "Switch between the clip editor and the animation blueprint"));
+            bar.Controls.Add(Btn("3D Preview...", Open3DPreview, "Opens the 640 x 480 model preview window"));
             _title.AutoSize = true;
             _title.ForeColor = Accent;
             _title.Margin = new Padding(8, 6, 0, 0);
@@ -535,6 +548,7 @@ namespace GhostShell
 
             // ---- right: preview + clip properties (name/fps/loop + image/cols/rows) + frames ----
             var right = new Panel { Dock = DockStyle.Right, Width = 310, BackColor = Bg };
+            _right = right;
             _preview.Dock = DockStyle.Top; _preview.Height = 230;
 
             var pbar = new FlowLayoutPanel
@@ -628,9 +642,14 @@ namespace GhostShell
             imgProps.AutoSizeMode = AutoSizeMode.GrowAndShrink;
 
             // 3D clip settings (replaces the texture panel when the clip type is 3D)
-            var modelProps = new Panel { Dock = DockStyle.Top, Height = 140, BackColor = Bg, Visible = false };
+            var modelProps = new Panel { Dock = DockStyle.Top, Height = 190, BackColor = Bg, Visible = false };
             modelProps.Controls.Add(new Label { Text = "3D Animation", ForeColor = Accent, Location = new Point(8, 6), AutoSize = true });
             modelProps.Controls.Add(Lbl("FBX", 8, 36));
+            modelProps.Controls.Add(Lbl("Speed", 8, 68));
+            Num(_speedNum, 60, 64, 70, 0, 8);
+            _speedNum.DecimalPlaces = 2; _speedNum.Increment = 0.05m; _speedNum.Minimum = 0.05m; _speedNum.Value = 1;
+            modelProps.Controls.Add(_speedNum);
+            modelProps.Controls.Add(Lbl("x playback speed (1 = as exported)", 138, 68));
             _model.Location = new Point(50, 32); _model.Width = 156; _model.ReadOnly = true;
             _model.BackColor = Bg2; _model.ForeColor = Fg; _model.BorderStyle = BorderStyle.FixedSingle;
             modelProps.Controls.Add(_model);
@@ -650,7 +669,7 @@ namespace GhostShell
             {
                 Text = "Mixamo: download the clip as FBX, Without Skin\n(In Place for Walk and Run). Then Assign this\nanimation to your model and it plays there.",
                 ForeColor = Color.Gray,
-                Location = new Point(8, 68),
+                Location = new Point(8, 100),
                 Size = new Size(290, 60),
             });
             _modelProps = modelProps;
@@ -697,12 +716,15 @@ namespace GhostShell
 
             var splitL = new Splitter { Dock = DockStyle.Left, Width = 5, BackColor = Bg2 };
             var splitR = new Splitter { Dock = DockStyle.Right, Width = 5, BackColor = Bg2 };
+            _splitR = splitR;
             _status.Dock = DockStyle.Bottom; _status.Height = 24; _status.ForeColor = Color.Gray;
             _status.TextAlign = ContentAlignment.MiddleLeft;
             _status.Padding = new Padding(6, 0, 0, 0);
             _canvas.Dock = DockStyle.Fill;
 
             Controls.Add(_canvas);
+            _bpView = BuildBlueprintView();
+            Controls.Add(_bpView);
             Controls.Add(_status);
             Controls.Add(splitR);
             Controls.Add(right);
@@ -711,12 +733,220 @@ namespace GhostShell
             Controls.Add(bar);
 
             WireEvents();
+            _bpView.Visible = false;
             SetDoc(new AnimDoc(), null);
         }
 
         // ============================================================
         //  Helpers
         // ============================================================
+
+        // ============================================================
+        //  Blueprint view
+        // ============================================================
+        private static readonly (string Text, GNodeType Type)[] PaletteItems =
+        {
+            ("Any State", GNodeType.Any), ("Blend (crossfade)", GNodeType.Blend), ("Squash & Stretch", GNodeType.Squash),
+            ("Speed Ramp", GNodeType.Speed), ("Play Sound", GNodeType.Sound), ("Rumble", GNodeType.Rumble),
+            ("Turn Smoothing (global)", GNodeType.Turn), ("Lean (global)", GNodeType.Lean),
+        };
+
+        private Panel BuildBlueprintView()
+        {
+            var view = new Panel { Dock = DockStyle.Fill, BackColor = Bg };
+
+            _bp.Dock = DockStyle.Fill;
+            _bp.ClipNames = () => _doc.Clips.Select(c => c.Name).ToList();
+            _bp.GraphChanged += () => { Touch(); _pv3d?.SetStates(_doc.Graph.StateNames()); };
+            _bp.SelectionChanged += BuildInspector;
+
+            _bpInspector = new Panel { Dock = DockStyle.Right, Width = 250, BackColor = Bg, AutoScroll = true };
+
+            var pal = new Panel { Dock = DockStyle.Left, Width = 150, BackColor = Bg };
+            _palette.Dock = DockStyle.Fill; _palette.BackColor = Bg2; _palette.ForeColor = Fg;
+            _palette.BorderStyle = BorderStyle.None;
+            foreach (var it in PaletteItems) _palette.Items.Add(it.Text);
+            _palette.DoubleClick += (s, e) =>
+            {
+                int i = _palette.SelectedIndex;
+                if (i >= 0) _bp.AddNode(PaletteItems[i].Type, new PointF(120 + 20 * i, 120 + 10 * i));
+            };
+            var palHead = new Label
+            {
+                Dock = DockStyle.Top,
+                Height = 62,
+                ForeColor = Accent,
+                Padding = new Padding(6, 4, 4, 0),
+                Text = "Drag onto the graph\n(or double-click).\nDrag clips from the Clips list."
+            };
+            pal.Controls.Add(_palette); pal.Controls.Add(palHead);
+
+            view.Controls.Add(_bp);
+            view.Controls.Add(_bpInspector);
+            view.Controls.Add(pal);
+
+            // drag sources: clips list and palette
+            DragSource(_clips, i => i >= 0 && _clips.Items[i] is AnimClipDoc c ? "ghostclip:" + c.Name : null);
+            DragSource(_palette, i => i >= 0 ? "ghostnode:" + (int)PaletteItems[i].Type : null);
+            return view;
+        }
+
+        private void DragSource(ListBox lb, Func<int, string?> payload)
+        {
+            Point down = Point.Empty; int idx = -1;
+            lb.MouseDown += (s, e) => { down = e.Location; idx = lb.IndexFromPoint(e.Location); };
+            lb.MouseMove += (s, e) =>
+            {
+                if (!_bpMode || e.Button != MouseButtons.Left || idx < 0) return;
+                if (Math.Abs(e.X - down.X) + Math.Abs(e.Y - down.Y) < 8) return;
+                string? p = payload(idx); int i = idx; idx = -1;
+                if (p != null) lb.DoDragDrop(p, DragDropEffects.Copy);
+            };
+        }
+
+        private void ToggleBlueprint()
+        {
+            _bpMode = !_bpMode;
+            _bpView.Visible = _bpMode;
+            _canvas.Visible = !_bpMode;
+            _right.Visible = !_bpMode;
+            _splitR.Visible = !_bpMode;
+            _bBp.Text = _bpMode ? "Clip Editor" : "Blueprint";
+            if (_bpMode) { _bp.FrameAll(); BuildInspector(_bp.Selected); _bp.Focus(); }
+            SetNote(_bpMode ? "Blueprint: drag from a right-hand pin to a left-hand pin to wire. Right-click the graph to add nodes. Delete removes." : "");
+        }
+
+        private void BuildInspector(GraphNodeDoc? n)
+        {
+            _bpInspector.SuspendLayout();
+            foreach (Control c in _bpInspector.Controls.Cast<Control>().ToList()) { _bpInspector.Controls.Remove(c); c.Dispose(); }
+            int y = 8;
+            void Changed() { _bp.Invalidate(); Touch(); _pv3d?.SetStates(_doc.Graph.StateNames()); }
+            void Head(string t) { _bpInspector.Controls.Add(new Label { Text = t, ForeColor = Accent, Location = new Point(8, y), AutoSize = true }); y += 26; }
+            void Note(string t, int h = 70) { _bpInspector.Controls.Add(new Label { Text = t, ForeColor = Color.Gray, Location = new Point(8, y), Size = new Size(228, h) }); y += h + 4; }
+            void Text(string label, string val, Action<string> set)
+            {
+                _bpInspector.Controls.Add(Lbl(label, 8, y + 3));
+                var tb = new TextBox { Location = new Point(80, y), Width = 156, Text = val, BackColor = Bg2, ForeColor = Fg, BorderStyle = BorderStyle.FixedSingle };
+                tb.TextChanged += (s, e) => { set(tb.Text.Trim()); Changed(); };
+                _bpInspector.Controls.Add(tb); y += 30;
+            }
+            void Number(string label, float val, float min, float max, decimal step, Action<float> set)
+            {
+                _bpInspector.Controls.Add(new Label { Text = label, Location = new Point(8, y), Size = new Size(228, 18), ForeColor = Fg });
+                var nu = new NumericUpDown
+                {
+                    Location = new Point(8, y + 18),
+                    Width = 100,
+                    DecimalPlaces = 2,
+                    Increment = step,
+                    Minimum = (decimal)min,
+                    Maximum = (decimal)max,
+                    BackColor = Bg2,
+                    ForeColor = Fg,
+                    BorderStyle = BorderStyle.FixedSingle
+                };
+                nu.Value = (decimal)Math.Clamp(val, min, max);
+                nu.ValueChanged += (s, e) => { set((float)nu.Value); Changed(); };
+                _bpInspector.Controls.Add(nu); y += 48;
+            }
+            void Combo(string label, string[] items, int idx, Action<int> set)
+            {
+                _bpInspector.Controls.Add(new Label { Text = label, Location = new Point(8, y), Size = new Size(228, 18), ForeColor = Fg });
+                var cb = new ComboBox { Location = new Point(8, y + 18), Width = 228, DropDownStyle = ComboBoxStyle.DropDownList, FlatStyle = FlatStyle.Flat, BackColor = Bg2, ForeColor = Fg };
+                cb.Items.AddRange(items); cb.SelectedIndex = Math.Clamp(idx, 0, items.Length - 1);
+                cb.SelectedIndexChanged += (s, e) => { set(cb.SelectedIndex); Changed(); };
+                _bpInspector.Controls.Add(cb); y += 48;
+            }
+
+            if (n == null)
+                Note("Nothing selected.\n\nRight-click the graph to add a node.\nDrag a clip from the Clips list to make a State.\nMiddle / right-drag pans, wheel zooms, F frames all.", 120);
+            else
+            {
+                Head(GhostBlueprintCanvas.TitleOf(n));
+                switch (n.Type)
+                {
+                    case GNodeType.Entry:
+                        Note("Wire this to the state that plays first.", 40); break;
+                    case GNodeType.Any:
+                        Note("Wire this through effect nodes to any state that can be entered from ANY other state (Jump, Hurt, Die...).", 90); break;
+                    case GNodeType.State:
+                        Text("State", n.Name, v => n.Name = v);
+                        Combo("Clip", new[] { "(same as state name)" }.Concat(_doc.Clips.Where(c => c.Kind == 1).Select(c => c.Name)).ToArray(),
+                            n.Clip.Length == 0 ? 0 : Math.Max(0, 1 + _doc.Clips.Where(c => c.Kind == 1).Select(c => c.Name).ToList().IndexOf(n.Clip)),
+                            i => n.Clip = i == 0 ? "" : _doc.Clips.Where(c => c.Kind == 1).Select(c => c.Name).ElementAt(i - 1));
+                        Note("The state name is what your game passes to SpriteSetState (Idle, Walk, Jump...).", 60); break;
+                    case GNodeType.Blend:
+                        Number("Duration (seconds)", n.P[0], 0, 2, 0.05m, v => n.P[0] = v);
+                        Combo("Curve", new[] { "Linear", "Ease in", "Ease out", "Smooth" }, n.Curve, i => n.Curve = i);
+                        Note("Crossfades the old pose into the new one. No Blend node on a wire = 0.12 s smooth.", 70); break;
+                    case GNodeType.Squash:
+                        Number("Amount (0.3 = 30%)", n.P[0], 0, 1, 0.05m, v => n.P[0] = v);
+                        Number("Duration (seconds)", n.P[1], 0.05f, 2, 0.05m, v => n.P[1] = v);
+                        Combo("Mode", new[] { "Stretch (take-off)", "Squash (landing)" }, n.P[2] > 0.5f ? 1 : 0, i => n.P[2] = i);
+                        break;
+                    case GNodeType.Speed:
+                        Number("Start speed", n.P[0], 0, 8, 0.1m, v => n.P[0] = v);
+                        Number("End speed", n.P[1], 0, 8, 0.1m, v => n.P[1] = v);
+                        Number("Ramp time (seconds)", n.P[2], 0.01f, 5, 0.05m, v => n.P[2] = v); break;
+                    case GNodeType.Sound:
+                        Text("Sound", n.Name, v => n.Name = v);
+                        Note("A sound name from the Audio Mixer (Sounds.ghostaudio). Plays once when this transition happens.", 70); break;
+                    case GNodeType.Rumble:
+                        Number("Strong motor (0-1)", n.P[0], 0, 1, 0.05m, v => n.P[0] = v);
+                        Number("Weak motor (0-1)", n.P[1], 0, 1, 0.05m, v => n.P[1] = v);
+                        Number("Seconds", n.P[2], 0.01f, 5, 0.05m, v => n.P[2] = v); break;
+                    case GNodeType.Turn:
+                        Number("Settle time (seconds)", n.P[0], 0.02f, 2, 0.05m, v => n.P[0] = v);
+                        Note("GLOBAL: leave this node unwired. When the game snaps the model's rotation (turn left/right), the visible model swings round smoothly instead.", 100); break;
+                    case GNodeType.Lean:
+                        Number("Max lean (degrees)", n.P[0], 0, 45, 1m, v => n.P[0] = v);
+                        Number("Strength", n.P[1], -2, 2, 0.05m, v => n.P[1] = v);
+                        Note("GLOBAL: leave unwired. Tilts the model into a turn. Use a negative strength if it leans the wrong way. Needs a Turn Smoothing node.", 100); break;
+                }
+            }
+            _bpInspector.ResumeLayout();
+        }
+
+        // ============================================================
+        //  3D preview window
+        // ============================================================
+        private void Open3DPreview()
+        {
+            if (_pv3d == null || _pv3d.IsDisposed)
+            {
+                _pv3d = new AnimPreview3DWindow(this) { Owner = FindForm() };
+                _pv3d.FormClosed += (s, e) => _pv3d = null;
+            }
+            _pv3d.Show();
+            _pv3d.BringToFront();
+            _pv3d.SetClip(_clip);
+            _pv3d.SetStates(_doc.Graph.StateNames());
+        }
+
+        // The preview window changed Loop / Speed on the selected clip
+        internal void ClipEditedExternally()
+        {
+            _syncing = true;
+            if (_clip != null) { _loop.Checked = _clip.Loop; _speedNum.Value = (decimal)Math.Clamp(_clip.Speed, 0.05f, 8f); }
+            _syncing = false;
+            RefreshClipLabel(); Touch();
+        }
+
+        // Called by the test buttons: save, put this animation on the model once, reset the state machine
+        internal bool PrepareTest(int modelId)
+        {
+            if (_path == null || IsDirty) if (!Save()) return false;
+            if (_testModel != modelId || _testPath != _path)
+            {
+                GhostEngine.GhostEngine_SetAnimatorText(modelId, 0, StoredPath(_path!));
+                GhostEngine.GhostEngine_AnimResetRuntime(modelId);
+                GhostAssets.SyncFromEngine();
+                _testModel = modelId; _testPath = _path;
+            }
+            return true;
+        }
+
         private Button Btn(string text, Action click, string tip)
         {
             var b = new Button
@@ -753,6 +983,7 @@ namespace GhostShell
         protected override void Dispose(bool disposing)
         {
             if (disposing) { _bmp?.Dispose(); _tip.Dispose(); }
+            _pv3d?.Close();
             base.Dispose(disposing);
         }
 
@@ -818,7 +1049,11 @@ namespace GhostShell
                 ApplyKindUI(); RefreshClipLabel(); SyncSettings();
                 _canvas.Invalidate(); _preview.Invalidate(); Touch();
             };
-
+            _speedNum.ValueChanged += (s, e) =>
+            {
+                if (_syncing || _clip == null) return;
+                _clip.Speed = (float)_speedNum.Value; Touch(); _pv3d?.ApplyClip();
+            };
             _fps.ValueChanged += (s, e) =>
             {
                 if (_syncing || _clip == null) return;
@@ -951,6 +1186,7 @@ namespace GhostShell
             _preview.Clip = c;
             _preview.Restart();
             RefreshFrames();
+            _pv3d?.SetClip(c);
         }
 
         private void RefreshFrames(int select = -1)
@@ -1009,6 +1245,9 @@ namespace GhostShell
             Touch();
         }
 
+
+
+
         // ============================================================
         //  Clips
         // ============================================================
@@ -1038,6 +1277,7 @@ namespace GhostShell
                 Rows = _clip.Rows,
                 Kind = _clip.Kind,
                 Model = _clip.Model,
+                Speed = _clip.Speed,
             };
             _doc.Clips.Insert(_doc.Clips.IndexOf(_clip) + 1, c);
             RefreshClips(c);
@@ -1098,6 +1338,8 @@ namespace GhostShell
             _canvas.Hint = skel ? "3D clip: there is nothing to cut up here.\nThe FBX plays on the model you assign this animation to."
                                 : "Choose an image (Browse...) to start";
             _canvas.Invalidate();
+            _syncing = true; _speedNum.Value = (decimal)Math.Clamp(_clip?.Speed ?? 1f, 0.05f, 8f); _syncing = false;
+            _speedNum.Enabled = skel;
         }
 
         private static string CopyFbxIntoProject(string file)
@@ -1126,6 +1368,7 @@ namespace GhostShell
                 _model.Text = _clip.Model;
                 RefreshClipLabel();
                 Touch();
+                _pv3d?.ApplyClip();
             }
             catch (Exception ex)
             {
@@ -1320,7 +1563,9 @@ namespace GhostShell
             _canvas.Sheet = null;
             _preview.Sheet = null;
             _canvas.Doc = d;
-          //  _preview.Doc = d;
+            _bp.Bind(d.Graph);
+            _pv3d?.SetStates(d.Graph.StateNames());
+            //  _preview.Doc = d;
             _saved = d.ToJson();
             RefreshClips(null);
             Touch();

@@ -5,7 +5,7 @@
 #include <fstream>
 #include <string.h>
 #include <math.h>
-
+#include <algorithm>
 // GhostAnim.cpp
 
 using json = nlohmann::json;
@@ -61,6 +61,10 @@ bool GhostAnim_Load(GhostAnimAsset& a, const std::string& root, const std::strin
                 if (c.fps < 0.1f)   c.fps = 0.1f;
                 if (c.fps > 120.0f) c.fps = 120.0f;
                 c.loop = jc.value("loop", true);
+                c.speed = jc.value("speed", 1.0f);
+                if (c.speed < 0.05f) c.speed = 0.05f;
+                if (c.speed > 8.0f)  c.speed = 8.0f;
+
                 // 3D clips: an FBX instead of a sprite sheet
                 c.skeletal = (jc.value("kind", std::string("sprite")) == "skeletal");
                 c.model = jc.value("model", std::string());
@@ -122,6 +126,31 @@ bool GhostAnim_Load(GhostAnimAsset& a, const std::string& root, const std::strin
             for (auto it = j["states"].begin(); it != j["states"].end(); ++it)
                 if (it.value().is_string() && n.states.size() < 64)
                     n.states.push_back({ it.key(), it.value().get<std::string>() });
+        if (j.contains("graph") && j["graph"].is_object())
+        {
+            const json& jg = j["graph"];
+            if (jg.contains("nodes") && jg["nodes"].is_array())
+                for (const json& jn : jg["nodes"])
+                {
+                    if (!jn.is_object() || n.graph.nodes.size() >= 128) continue;
+                    GhostGraphNode g;
+                    g.id = jn.value("id", 0);
+                    if (g.id <= 0) continue;
+                    g.type = Clampi(jn.value("type", 1), 0, GNODE_COUNT - 1);
+                    g.x = jn.value("x", 0.0f);  g.y = jn.value("y", 0.0f);
+                    g.name = jn.value("name", std::string());
+                    g.clip = jn.value("clip", std::string());
+                    g.curve = Clampi(jn.value("curve", 3), 0, 3);
+                    if (jn.contains("p") && jn["p"].is_array())
+                        for (size_t k = 0; k < 4 && k < jn["p"].size(); k++)
+                            if (jn["p"][k].is_number()) g.p[k] = jn["p"][k].get<float>();
+                    n.graph.nodes.push_back(g);
+                }
+            if (jg.contains("links") && jg["links"].is_array())
+                for (const json& jl : jg["links"])
+                    if (jl.is_object() && n.graph.links.size() < 256)
+                        n.graph.links.push_back({ jl.value("from", 0), jl.value("to", 0) });
+        }
 
         a = std::move(n);
         return true;
@@ -149,4 +178,65 @@ int GhostAnim_FrameAt(const GhostClip& c, float t)
     if (i < 0) i = 0;
     if (c.loop) i %= n; else if (i >= n) i = n - 1;
     return c.frames[(size_t)i];
+}
+
+static int NodeIndex(const GhostAnimGraph& g, int id)
+{
+    for (size_t i = 0; i < g.nodes.size(); i++) if (g.nodes[i].id == id) return (int)i;
+    return -1;
+}
+static int FindStateNode(const GhostAnimGraph& g, const std::string& name)
+{
+    for (size_t i = 0; i < g.nodes.size(); i++)
+        if (g.nodes[i].type == GNODE_STATE && _stricmp(g.nodes[i].name.c_str(), name.c_str()) == 0) return (int)i;
+    return -1;
+}
+
+bool GhostAnimGraph_Resolve(const GhostAnimGraph& g, const std::string& from, const std::string& to, GhostGraphPath& out)
+{
+    out = GhostGraphPath();
+    const int dst = FindStateNode(g, to);
+    if (dst < 0) return false;
+    out.target = dst;
+
+    std::vector<int> starts;                                  // the current state first, then every "Any State"
+    const int src = from.empty() ? -1 : FindStateNode(g, from);
+    if (src >= 0) starts.push_back(src);
+    for (size_t i = 0; i < g.nodes.size(); i++) if (g.nodes[i].type == GNODE_ANY) starts.push_back((int)i);
+
+    for (int s : starts)
+    {
+        if (s == dst) continue;
+        std::vector<int> prev(g.nodes.size(), -2), queue;
+        prev[(size_t)s] = -1; queue.push_back(s);
+        for (size_t h = 0; h < queue.size(); h++)
+        {
+            const int cur = queue[h];
+            for (const GhostGraphLink& l : g.links)
+            {
+                if (l.from != g.nodes[(size_t)cur].id) continue;
+                const int ni = NodeIndex(g, l.to);
+                if (ni < 0 || prev[(size_t)ni] != -2) continue;
+                prev[(size_t)ni] = cur;
+                if (ni == dst)
+                {
+                    for (int k = cur; k != s; k = prev[(size_t)k]) out.fx.push_back(k);
+                    std::reverse(out.fx.begin(), out.fx.end());
+                    return true;
+                }
+                const int t = g.nodes[(size_t)ni].type;      // only effect nodes are passed through
+                if (t != GNODE_STATE && t != GNODE_ENTRY && t != GNODE_ANY) queue.push_back(ni);
+            }
+        }
+    }
+    return true;                                              // no wire found: direct switch with the default blend
+}
+
+int GhostAnimGraph_EntryState(const GhostAnimGraph& g)
+{
+    for (const GhostGraphNode& n : g.nodes)
+        if (n.type == GNODE_ENTRY)
+            for (const GhostGraphLink& l : g.links)
+                if (l.from == n.id) { const int ni = NodeIndex(g, l.to); if (ni >= 0 && g.nodes[(size_t)ni].type == GNODE_STATE) return ni; }
+    return -1;
 }

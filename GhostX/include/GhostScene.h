@@ -269,6 +269,10 @@ struct GhostAnimator
     int   animId = -1;
     bool  animResolved = false;
     float time = 0.0f;
+    // runtime only: written by the animation blueprint each frame, read by GhostObjectModel
+    float     yawOffset = 0.0f;
+    float     leanDeg = 0.0f;
+    GhostVec3 scaleMul = { 1, 1, 1 };
 };
 
 struct GhostObject
@@ -506,10 +510,11 @@ inline float GhostBillboardYawDeg(const GhostVec3& pos, const GhostVec3& eye)
 inline GhostMat4 GhostObjectModel(const GhostObject& o, const float* yawDegOverride = nullptr)
 {
     const float d2r = GHOST_PI / 180.0f;
-    const float yaw = yawDegOverride ? *yawDegOverride : o.rotationDeg.y;
+    const float yaw = yawDegOverride ? *yawDegOverride : (o.rotationDeg.y + o.animator.yawOffset);
+    const GhostVec3 sm = o.animator.scaleMul;
     return GhostMat4::Translation(o.position.x, o.position.y, o.position.z)
         * GhostMat4::RotationY(yaw * d2r)
         * GhostMat4::RotationX(o.rotationDeg.x * d2r)
-        * GhostMat4::RotationZ(o.rotationDeg.z * d2r)
-        * GhostMat4::Scale(o.scale.x, o.scale.y, o.scale.z);
+        * GhostMat4::RotationZ((o.rotationDeg.z + o.animator.leanDeg) * d2r)
+        * GhostMat4::Scale(o.scale.x * sm.x, o.scale.y * sm.y, o.scale.z * sm.z);
 }

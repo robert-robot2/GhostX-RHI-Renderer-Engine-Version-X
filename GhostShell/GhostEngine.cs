@@ -524,5 +524,20 @@ namespace GhostShell
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern void GhostEngine_SetAnimator(int objectId, int playing, float speed);
 
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] 
+        public static extern int GhostEngine_CreatePreviewViewport(IntPtr hwnd, uint w, uint h);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern void GhostEngine_PreviewSetTarget(int vp, int objectId);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern void GhostEngine_PreviewOrbit(int vp, float dYaw, float dPitch, float zoomMul);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern void GhostEngine_PreviewResetCamera(int vp);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+        public static extern void GhostEngine_AnimPreview_Set(int objectId, [MarshalAs(UnmanagedType.LPUTF8Str)] string fbx, int loop, float speed, int playing);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern void GhostEngine_AnimPreview_Stop();
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern void GhostEngine_AnimPreview_Seek(float seconds);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern int GhostEngine_AnimPreview_Get(out float time, out float duration, out int matched, out int total);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_AnimRequestState(int objectId, [MarshalAs(UnmanagedType.LPUTF8Str)] string state);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern void GhostEngine_AnimResetRuntime(int objectId);
+
     }
 }

@@ -382,4 +382,16 @@ extern "C"
     GHOST_API void GhostEngine_SetAnimatorText(int objectId, int which, const char* utf8);
     GHOST_API int  GhostEngine_GetAnimator(int objectId, int* playing, float* speed, float* time);
     GHOST_API void GhostEngine_SetAnimator(int objectId, int playing, float speed);
+
+    // ---- Animation preview window + blueprint ----
+    GHOST_API int  GhostEngine_CreatePreviewViewport(HWND hwnd, unsigned int width, unsigned int height);
+    GHOST_API void GhostEngine_PreviewSetTarget(int vp, int objectId);
+    GHOST_API void GhostEngine_PreviewOrbit(int vp, float dYaw, float dPitch, float zoomMul);
+    GHOST_API void GhostEngine_PreviewResetCamera(int vp);
+    GHOST_API void GhostEngine_AnimPreview_Set(int objectId, const char* storedFbxPath, int loop, float speed, int playing);
+    GHOST_API void GhostEngine_AnimPreview_Stop();
+    GHOST_API void GhostEngine_AnimPreview_Seek(float seconds);
+    GHOST_API int  GhostEngine_AnimPreview_Get(float* time, float* duration, int* matched, int* total);
+    GHOST_API int  GhostEngine_AnimRequestState(int objectId, const char* state);
+    GHOST_API void GhostEngine_AnimResetRuntime(int objectId);
 }

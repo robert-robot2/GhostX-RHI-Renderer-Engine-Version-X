@@ -31,6 +31,7 @@
 #include <vector>
 #include <utility>
 #include <cctype>
+#include <functional>
 
 // ---- Engine state ----
 static IGhostRHI* g_rhi = nullptr;
@@ -81,7 +82,13 @@ static void UpdateSprites(float dt);
 static void UpdateAnimators(float dt);
 static void SpriteDrawInfo(const GhostObject& o, int& tex, int& cols, int& rows, int& frame);
 static int PickObjectAt(int sx, int sy);
-struct EngineViewport { bool alive = false; bool visible = true; int cameraId = 0; };
+struct EngineViewport
+{
+    bool alive = false; bool visible = true; int cameraId = 0;
+    bool  preview = false;                  // animation preview window: solo object + its own orbit camera
+    int   solo = 0;
+    float pYaw = 20.0f, pPitch = -8.0f, pZoom = 1.0f;
+};
 static EngineViewport g_vp[GHOST_MAX_SURFACES];
 static int            g_inputCameraId = 0;               // the camera WASD / right-mouse look drives
 static GhostVec3      g_mainEye = { 0, 0, 0 };           // main view position, for picking rays
@@ -173,6 +180,35 @@ static void PerformSceneSwitch();
 static float g_preBusVol[GHOST_BUS_COUNT] = {};
 static bool  g_preBusMute[GHOST_BUS_COUNT] = {};
 static bool  g_haveBusSnap = false;
+
+// ---- Animation preview (editor only, never saved with the scene) ----
+struct AnimPreviewState
+{
+    bool active = false, loop = true, playing = true;
+    int  objectId = 0, matched = 0, total = 0;
+    std::string path;
+    float speed = 1.0f, time = 0.0f, duration = 0.0f;
+};
+static AnimPreviewState g_prevstate;
+
+// ---- Blueprint runtime (per animated object, never saved) ----
+struct AnimFx { float t, dur, amt; };                 // squash / stretch pulse
+struct AnimRt
+{
+    bool  active = false, entryDone = false;          // active = the blueprint chose the current clip
+    std::string state, clip;
+    bool  blending = false;                           // crossfade from the previous clip
+    std::string fromPath; float fromTime = 0, fromSpeed = 1; bool fromLoop = true;
+    float bt = 0, bd = 0; int curve = 3;
+    float spFrom = 1, spTo = 1, spT = 0, spD = 0;     // speed ramp
+    std::vector<AnimFx> fx;
+    float visYaw = 0, lean = 0; bool haveYaw = false;
+};
+static std::map<int, AnimRt> g_animRt;
+static std::vector<GhostMeshVertex> g_blendScratch;
+static int ModelTransition(GhostObject& o, const std::string& state, const std::string& clip);
+
+
 
 // Plays the scene's Music / Ambience from Scene Settings (an empty or disabled entry stops that channel)
 static void PlaySceneAudio(float fade)
@@ -2062,6 +2098,49 @@ static void FillMaterialCB(GhostObjectCB& cb, const GhostMaterial& m)
 struct TransDraw { int meshId; unsigned int slot, tex, first, count; float dist2; };
 static std::vector<TransDraw> g_translucent;
 
+
+
+
+static bool BuildPreviewCamera(int vp, GhostCamera& c)
+{
+    GhostObject* o = FindObject(g_vp[vp].solo);
+    if (!o) return false;
+    const GhostVec3 mn = GhostMesh_Min(o->meshId), mx = GhostMesh_Max(o->meshId);
+    const GhostVec3 ctr(o->position.x + (mn.x + mx.x) * 0.5f * o->scale.x,
+        o->position.y + (mn.y + mx.y) * 0.5f * o->scale.y,
+        o->position.z + (mn.z + mx.z) * 0.5f * o->scale.z);
+    const float ex = fabsf((mx.x - mn.x) * o->scale.x), ey = fabsf((mx.y - mn.y) * o->scale.y), ez = fabsf((mx.z - mn.z) * o->scale.z);
+    const float radius = 0.5f * sqrtf(ex * ex + ey * ey + ez * ez);
+    const float dist = fmaxf(radius * 2.4f, 0.5f) * g_vp[vp].pZoom;
+    c = GhostCamera();
+    c.fovDeg = 35.0f; c.resW = 640; c.resH = 480;                 // the preview always renders at 640 x 480
+    c.yawDeg = g_vp[vp].pYaw; c.pitchDeg = g_vp[vp].pPitch;
+    c.position = ctr - AnglesToDir(c.yawDeg, c.pitchDeg) * dist;
+    return true;
+}
+
+// Studio lighting for the preview: no scene lights, no shadows
+static void BuildPreviewSceneCB(GhostSceneCB& out)
+{
+    out = {};
+    out.ambient[0] = out.ambient[1] = out.ambient[2] = 0.35f;
+    for (unsigned int i = 0; i < GHOST_MAX_LIGHTS; i++) out.lights[i].shadow[0] = -1.0f;
+    const float dir[2][3] = { { 0.40f, -0.60f, 0.70f },{ -0.74f, -0.25f, -0.62f } };
+    const float inten[2] = { 1.1f, 0.45f };
+    for (int i = 0; i < 2; i++)
+    {
+        GhostGPULight& g = out.lights[out.lightCount++];
+        g.dirType[0] = dir[i][0]; g.dirType[1] = dir[i][1]; g.dirType[2] = dir[i][2]; g.dirType[3] = 0.0f;
+        g.colorIntensity[0] = g.colorIntensity[1] = g.colorIntensity[2] = 1.0f; g.colorIntensity[3] = inten[i];
+    }
+    out.shadowGlobal[0] = 0.0f;
+}
+
+
+
+
+
+
 // ============================================================
 //  One viewport = one surface + one camera. The GPU is idle between viewports
 //  (EndFrame waits), so the constant buffer slots are simply reused.
@@ -2069,7 +2148,12 @@ static std::vector<TransDraw> g_translucent;
 static void RenderViewport(int vp)
 {
     GhostCamera* cam = ViewportCamera(vp);
+    static GhostCamera s_previewCam;
+    const bool preview = g_vp[vp].preview;
+    if (preview) cam = BuildPreviewCamera(vp, s_previewCam) ? &s_previewCam : nullptr;
     if (!cam || !g_vp[vp].visible) return;
+
+
     if (!g_rhi->SetCurrentSurface(vp)) return;
 
     const unsigned int w = g_rhi->GetSurfaceWidth();
@@ -2079,6 +2163,7 @@ static void RenderViewport(int vp)
     const bool  mainView = (vp == 0);
     const bool overlays = mainView && g_playState == GhostPlayState::Editing;   // no icons or selection while playing
     const float d2r = GHOST_PI / 180.0f;
+    const GhostColor clr = preview ? GhostColor{ 0.15f, 0.16f, 0.19f, 1.0f } : g_clearColor;
     // ---- Render resolution: the global main-view setting wins on viewport 0, otherwise the camera's own ----
     int wantW = cam->resW, wantH = cam->resH;
     if (mainView && g_video.resW > 0 && g_video.resH > 0) { wantW = g_video.resW; wantH = g_video.resH; }
@@ -2107,7 +2192,7 @@ static void RenderViewport(int vp)
     if (msaa) { if (GhostMSAA_Ensure(g_rhi, g_msaa, vp, rw, rh) != GHOST_OK) return; }
     else      GhostMSAA_Release(g_msaa, vp);
     // TAA targets follow the render size (freed again when TAA is off)
-    bool taa = g_taaOn && !msaa && g_taa.ready;
+    bool taa = g_taaOn && !msaa && g_taa.ready && !preview;
     if (taa && GhostTAA_Ensure(g_rhi, g_taa, vp, rw, rh) != GHOST_OK) taa = false;
     if (g_lastRW[vp] != rw || g_lastRH[vp] != rh)      // resolution changed: the old TAA history is the wrong size/content
     {
@@ -2150,18 +2235,18 @@ static void RenderViewport(int vp)
     {
         const GhostColor bars = { 0.06f, 0.06f, 0.07f, 1.0f };
         g_rhi->BeginFrame(&bars, dsv);                                      // window (the bars) + depth
-        GhostBeginOffscreen(g_rhi, g_pipeline, vp, &g_clearColor, rw, rh);  // scene goes into the offscreen image
+        GhostBeginOffscreen(g_rhi, g_pipeline, vp, &clr, rw, rh);  // scene goes into the offscreen image
     }
     else
     {
-        g_rhi->BeginFrame(&g_clearColor, dsv);
+        g_rhi->BeginFrame(&clr, dsv);
     }
 
-    if (msaa) GhostMSAA_Begin(g_rhi, g_pipeline, g_msaa, vp, &g_clearColor, rw, rh);   // from here every draw goes to the MSAA target
-    if (taa) GhostTAA_Begin(g_rhi, g_pipeline, g_taa, vp, &g_clearColor, rw, rh);   // scene, icons and overlays draw jittered
+    if (msaa) GhostMSAA_Begin(g_rhi, g_pipeline, g_msaa, vp, &clr, rw, rh);   // from here every draw goes to the MSAA target
+    if (taa) GhostTAA_Begin(g_rhi, g_pipeline, g_taa, vp, &clr, rw, rh);   // scene, icons and overlays draw jittered
     GhostSceneCB sceneCB;
-    BuildSceneCB(g_scene, sceneCB);
-    RenderShadowPass(sceneCB, eye, forward, rw, rh);
+    if (preview) BuildPreviewSceneCB(sceneCB);
+    else { BuildSceneCB(g_scene, sceneCB); RenderShadowPass(sceneCB, eye, forward, rw, rh); }
     GhostUpdateSceneCB(g_pipeline, &sceneCB);
 
     // ---- Draw scene objects (one draw per run of faces that share a material) ----
@@ -2169,7 +2254,7 @@ static void RenderViewport(int vp)
     unsigned int slot = 0;
     for (const GhostModEntity& m : g_scene.mods)
     {
-        if (m.typeId != GHOST_MOD_SKY) continue;
+        if (preview || m.typeId != GHOST_MOD_SKY) continue;
         GhostSkyDraw draws[3];
         const int n = GhostSky_Build(m, g_scene.textures, g_skyScroll[0], g_skyScroll[1], draws);
         for (int i = 0; i < n && slot < MAX_SCENE_OBJECTS; i++)
@@ -2187,6 +2272,7 @@ static void RenderViewport(int vp)
     g_translucent.clear();
     for (const GhostObject& o : g_scene.objects)
     {
+        if (preview && o.id != g_vp[vp].solo) continue;
         if (!o.visible && g_playState != GhostPlayState::Editing) continue;   // hidden in game
         const int       faceCount = GhostMesh_FaceCount(o.meshId);
         const GhostMat4 model = GhostObjectModel(o);
@@ -3168,8 +3254,10 @@ int GhostEngine_SaveScene(const char* path, char* msg, int msgSize)
 int GhostEngine_LoadScene(const char* path, char* msg, int msgSize)
 {
     if (!g_rhi || !g_pipeline || !path) { CopyMsg("The engine is not ready.", msg, msgSize); return 0; }
+  
     GhostEngine_Stop();
     g_modelWarn.clear();
+    g_animRt.clear();
     GhostScene backup = g_scene;
     std::string err, warn;
     bool ok = GhostScene_Load(g_scene, g_projectRoot, path, LoadSceneTexture,
@@ -3195,6 +3283,7 @@ int GhostEngine_LoadScene(const char* path, char* msg, int msgSize)
 void GhostEngine_ClearScene()
 {
     GhostEngine_Stop();
+    g_animRt.clear();
     g_scene.objects.clear(); g_scenePath.clear();
     g_scene.lights.clear();
     g_scene.cameras.clear(); g_scene.mods.clear();
@@ -3735,35 +3824,170 @@ static int DefaultClipIndex(const GhostAnimAsset& a)
     return ci < 0 ? 0 : ci;
 }
 
+
+static float Ease(int curve, float t)
+{
+    t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+    switch (curve) { case 1: return t * t; case 2: return 1.0f - (1.0f - t) * (1.0f - t); case 3: return t * t * (3.0f - 2.0f * t); default: return t; }
+}
+static float WrapDeg(float a) { while (a > 180.0f) a -= 360.0f; while (a < -180.0f) a += 360.0f; return a; }
+
+// dst = pose of the new clip, src = pose of the old clip. w 0 = old, 1 = new.
+static void BlendVerts(GhostMeshVertex* dst, const GhostMeshVertex* src, float w, size_t count)
+{
+    const size_t stride = sizeof(GhostMeshVertex) / sizeof(float);
+    float* d = reinterpret_cast<float*>(dst);
+    const float* s = reinterpret_cast<const float*>(src);
+    for (size_t i = 0; i < count; i++, d += stride, s += stride)
+    {
+        static const int K[6] = { 0, 1, 2, 7, 8, 9 };                    // position + normal
+        for (int k : K) d[k] = s[k] + (d[k] - s[k]) * w;
+        const float len = sqrtf(d[7] * d[7] + d[8] * d[8] + d[9] * d[9]);
+        if (len > 1e-6f) { d[7] /= len; d[8] /= len; d[9] /= len; }
+    }
+}
+
+// Global modifiers (Turn Smoothing, Lean) and the squash pulses
+static void UpdateAnimModifiers(GhostObject& o, const GhostAnimAsset& a, AnimRt& r, float dt, bool live)
+{
+    GhostAnimator& an = o.animator;
+    const GhostGraphNode* turn = nullptr; const GhostGraphNode* lean = nullptr;
+    for (const GhostGraphNode& n : a.graph.nodes)
+    {
+        if (n.type == GNODE_TURN && !turn) turn = &n;
+        if (n.type == GNODE_LEAN && !lean) lean = &n;
+    }
+
+    float off = 0.0f;
+    if (turn && live)
+    {
+        const float yaw = o.rotationDeg.y;
+        if (!r.haveYaw) { r.visYaw = yaw; r.haveYaw = true; }
+        off = WrapDeg(r.visYaw - yaw);                         // what the game just snapped
+        off *= expf(-dt * 4.0f / fmaxf(turn->p[0], 0.02f));    // p[0] = time to settle
+        if (fabsf(off) < 0.05f) off = 0.0f;
+        r.visYaw = yaw + off;
+    }
+    else r.haveYaw = false;
+    an.yawOffset = off;
+
+    float target = 0.0f;
+    if (lean && live)
+    {
+        target = off * lean->p[1];
+        const float mx = fmaxf(lean->p[0], 0.0f);
+        target = target < -mx ? -mx : (target > mx ? mx : target);
+    }
+    r.lean += (target - r.lean) * (1.0f - expf(-dt * 12.0f));
+    an.leanDeg = r.lean;
+
+    float sy = 1.0f;
+    for (AnimFx& f : r.fx) { f.t += dt; if (f.t < f.dur) sy *= 1.0f + f.amt * sinf(GHOST_PI * f.t / f.dur); }
+    r.fx.erase(std::remove_if(r.fx.begin(), r.fx.end(), [](const AnimFx& f) { return f.t >= f.dur; }), r.fx.end());
+    sy = sy < 0.3f ? 0.3f : (sy > 3.0f ? 3.0f : sy);
+    const float sxz = 1.0f / sqrtf(sy);                         // keeps the volume
+    an.scaleMul = { sxz, sy, sxz };
+}
+
 static void UpdateAnimators(float dt)
 {
     if (!g_rhi || !g_pipeline) return;
+    const bool editing = g_playState == GhostPlayState::Editing;
+    const bool playing = g_playState == GhostPlayState::Playing;
     const bool paused = g_playState == GhostPlayState::Paused;
     for (auto& kv : g_skinInst) kv.second.seen = false;
+    std::set<int> animated;
+
+    if (editing && g_prevstate.active && g_prevstate.playing) g_prevstate.time += dt * g_prevstate.speed;
 
     for (GhostObject& o : g_scene.objects)
     {
         GhostAnimator& an = o.animator;
-        if (an.anim.empty() || o.meshId == GHOST_MESH_QUAD) continue;
+        if (o.meshId == GHOST_MESH_QUAD) continue;
         auto skIt = g_skinByMesh.find(o.meshId);
         if (skIt == g_skinByMesh.end()) continue;
         const GhostSkinData& sk = *skIt->second;
+        const bool isPrev = editing && g_prevstate.active && o.id == g_prevstate.objectId;
 
-        if (!an.animResolved) { an.animResolved = true; an.animId = LoadAnimFile(an.anim); }
-        if (an.animId < 0 || an.animId >= (int)g_anims.size()) continue;
-        const GhostAnimAsset& a = g_anims[(size_t)an.animId];
-        if (a.clips.empty()) continue;
-        int ci = an.clip.empty() ? -1 : GhostAnim_FindClip(a, an.clip.c_str());
-        if (ci < 0) ci = DefaultClipIndex(a);
-        const GhostClip& c = a.clips[(size_t)ci];
-        if (!c.skeletal) continue;
-        std::shared_ptr<GhostSkelClip> sc = GetSkelClip(c.model);
-        if (!sc) continue;
+        std::shared_ptr<GhostSkelClip> sc, from;
+        float time = 0.0f, fromTime = 0.0f, blendW = 1.0f;
+        bool blending = false;
+        int keyAnim = -1, keyClip = -1;
+        std::string clipName;
 
-        if (!paused && an.playing) an.time += dt * an.speed;
-        const float dur = sc->duration;
-        if (dur > 0.0f) { if (c.loop) an.time = fmodf(an.time, dur); else if (an.time > dur) an.time = dur; }
-        else an.time = 0.0f;
+        if (isPrev)
+        {
+            an.yawOffset = 0.0f; an.leanDeg = 0.0f; an.scaleMul = { 1, 1, 1 };
+            sc = GetSkelClip(g_prevstate.path);
+            if (!sc) continue;
+            const float dur = sc->duration;
+            if (dur > 0.0f)
+            {
+                if (g_prevstate.loop) { g_prevstate.time = fmodf(g_prevstate.time, dur); if (g_prevstate.time < 0.0f) g_prevstate.time += dur; }
+                else g_prevstate.time = g_prevstate.time < 0.0f ? 0.0f : (g_prevstate.time > dur ? dur : g_prevstate.time);
+            }
+            else g_prevstate.time = 0.0f;
+            g_prevstate.duration = dur;
+            g_prevstate.matched = GhostSkin_CountMatches(sk, *sc);
+            g_prevstate.total = (int)sc->tracks.size();
+            time = g_prevstate.time;
+            keyAnim = -100;
+            keyClip = (int)(std::hash<std::string>()(g_prevstate.path) & 0x7fffffff);
+            clipName = "(preview)";
+        }
+        else
+        {
+            if (an.anim.empty()) continue;
+            if (!an.animResolved) { an.animResolved = true; an.animId = LoadAnimFile(an.anim); }
+            if (an.animId < 0 || an.animId >= (int)g_anims.size()) continue;
+            const GhostAnimAsset& a = g_anims[(size_t)an.animId];
+            if (a.clips.empty()) continue;
+
+            AnimRt& rt = g_animRt[o.id];
+            animated.insert(o.id);
+
+            if (!rt.active && !rt.entryDone)                    // the Entry node decides what plays first
+            {
+                rt.entryDone = true;
+                const int es = GhostAnimGraph_EntryState(a.graph);
+                if (es >= 0 && ModelTransition(o, a.graph.nodes[(size_t)es].name, "")) rt.blending = false;
+            }
+
+            const std::string want = rt.active ? rt.clip : an.clip;
+            int ci = want.empty() ? -1 : GhostAnim_FindClip(a, want.c_str());
+            if (ci < 0) ci = DefaultClipIndex(a);
+            const GhostClip& c = a.clips[(size_t)ci];
+            if (!c.skeletal) continue;
+            sc = GetSkelClip(c.model);
+            if (!sc) continue;
+
+            float spMul = 1.0f;
+            if (rt.spD > 0.0f)
+            {
+                if (!paused) rt.spT = fminf(rt.spT + dt, rt.spD);
+                spMul = rt.spFrom + (rt.spTo - rt.spFrom) * (rt.spT / rt.spD);
+            }
+            if (!paused && an.playing) an.time += dt * an.speed * c.speed * spMul;
+            const float dur = sc->duration;
+            if (dur > 0.0f) { if (c.loop) an.time = fmodf(an.time, dur); else if (an.time > dur) an.time = dur; }
+            else an.time = 0.0f;
+            time = an.time;
+
+            if (rt.blending)
+            {
+                if (!paused) { rt.bt += dt; rt.fromTime += dt * rt.fromSpeed; }
+                from = GetSkelClip(rt.fromPath);
+                if (!from || rt.bt >= rt.bd) rt.blending = false;
+                else
+                {
+                    const float fd = from->duration;
+                    if (fd > 0.0f) rt.fromTime = rt.fromLoop ? fmodf(rt.fromTime, fd) : fminf(rt.fromTime, fd);
+                    blending = true; fromTime = rt.fromTime; blendW = Ease(rt.curve, rt.bt / rt.bd);
+                }
+            }
+            UpdateAnimModifiers(o, a, rt, dt, playing);
+            keyAnim = an.animId; keyClip = ci; clipName = c.name;
+        }
 
         SkinInst& si = g_skinInst[o.id];
         if (si.slot < 0 || si.meshId != o.meshId)
@@ -3775,38 +3999,46 @@ static void UpdateAnimators(float dt)
             if (slot < 0 || gm.cpuVerts.size() != sk.verts.size() ||
                 GhostCreateSkinMesh(g_rhi, g_pipeline, slot, o.meshId, (unsigned int)sk.verts.size()) != GHOST_OK)
             {
-                g_skinInst.erase(o.id);                 // too many animated models, or the skeleton doesn't match the mesh
+                g_skinInst.erase(o.id);
                 continue;
             }
             g_skinSlotUsed[slot] = true;
             si = SkinInst();
-            si.slot = slot;
-            si.meshId = o.meshId;
+            si.slot = slot; si.meshId = o.meshId;
             si.verts.resize(sk.verts.size());
             memcpy(si.verts.data(), gm.cpuVerts.data(), sk.verts.size() * sizeof(GhostMeshVertex));
         }
         si.seen = true;
-        if (si.lastAnim == an.animId && si.lastClip == ci && fabsf(si.lastTime - an.time) < 1e-5f) continue;   // nothing moved
-        if (si.lastAnim != an.animId || si.lastClip != ci)                      // a new clip started: say how well it fits
+        if (!blending && si.lastAnim == keyAnim && si.lastClip == keyClip && fabsf(si.lastTime - time) < 1e-5f) continue;
+        if (si.lastAnim != keyAnim || si.lastClip != keyClip)
         {
             char msg[256];
             snprintf(msg, sizeof msg, "[GhostX] 3D clip \"%s\": %d of %d tracks match the skeleton, %.2f s\n",
-                c.name.c_str(), GhostSkin_CountMatches(sk, *sc), (int)sc->tracks.size(), sc->duration);
+                clipName.c_str(), GhostSkin_CountMatches(sk, *sc), (int)sc->tracks.size(), sc->duration);
             OutputDebugStringA(msg);
         }
-        si.lastAnim = an.animId; si.lastClip = ci; si.lastTime = an.time;
+        si.lastAnim = keyAnim; si.lastClip = keyClip; si.lastTime = time;
 
-        GhostSkin_Pose(sk, sc.get(), an.time, g_boneScratch);
+        GhostSkin_Pose(sk, sc.get(), time, g_boneScratch);
         GhostSkin_Apply(sk, g_boneScratch, reinterpret_cast<float*>(si.verts.data()));
+        if (blending)
+        {
+            g_blendScratch.assign(si.verts.begin(), si.verts.end());
+            GhostSkin_Pose(sk, from.get(), fromTime, g_boneScratch);
+            GhostSkin_Apply(sk, g_boneScratch, reinterpret_cast<float*>(g_blendScratch.data()));
+            BlendVerts(si.verts.data(), g_blendScratch.data(), blendW, si.verts.size());
+        }
         if (void* dst = GhostSkinMapped(g_pipeline, si.slot))
             memcpy(dst, si.verts.data(), si.verts.size() * sizeof(GhostMeshVertex));
     }
 
-    std::vector<int> dead;                                    // objects that no longer animate (or were deleted)
+    for (auto it = g_animRt.begin(); it != g_animRt.end(); )
+        if (!animated.count(it->first)) it = g_animRt.erase(it); else ++it;
+
+    std::vector<int> dead;
     for (auto& kv : g_skinInst) if (!kv.second.seen) dead.push_back(kv.first);
     for (int id : dead) FreeSkinInstance(id);
 }
-
 
 static GhostObject* FindSprite(int id)
 {
@@ -3845,22 +4077,63 @@ static bool HasSkeletalClips(int animId)
 }
 
 // 1 = the clip is (now) playing, 0 = no such 3D clip. Asking for the clip that already plays does not restart it.
-static int ModelSetClip(GhostObject& o, const char* name)
+// Switch a model to a new state: run the wired effects and start the crossfade.
+// 1 = ok, 0 = no such 3D clip. Asking for the state that already plays does nothing.
+static int ModelTransition(GhostObject& o, const std::string& state, const std::string& wantClip)
 {
     GhostAnimator& an = o.animator;
     ResolveAnimator(an);
     if (!HasSkeletalClips(an.animId)) return 0;
     const GhostAnimAsset& a = g_anims[(size_t)an.animId];
-    std::string want = name ? name : "";
-    if (!want.empty())
+
+    auto it = g_animRt.find(o.id);
+    const std::string curState = (it != g_animRt.end() && it->second.active) ? it->second.state : std::string();
+
+    GhostGraphPath path;
+    const bool inGraph = GhostAnimGraph_Resolve(a.graph, curState, state, path);
+    std::string clipName = wantClip;
+    if (inGraph && !a.graph.nodes[(size_t)path.target].clip.empty()) clipName = a.graph.nodes[(size_t)path.target].clip;
+
+    int ci = clipName.empty() ? DefaultClipIndex(a) : GhostAnim_FindClip(a, clipName.c_str());
+    if (ci < 0 || !a.clips[(size_t)ci].skeletal) return 0;
+
+    AnimRt& rt = g_animRt[o.id];
+    const std::string curName = rt.active ? rt.clip : an.clip;
+    int curIdx = curName.empty() ? -1 : GhostAnim_FindClip(a, curName.c_str());
+    if (curIdx < 0) curIdx = DefaultClipIndex(a);
+    const bool sameClip = (curIdx == ci);
+    if (rt.active && sameClip && _stricmp(rt.state.c_str(), state.c_str()) == 0) return 1;
+
+    float bd = 0.12f; int curve = 3;                                    // default crossfade
+    rt.spFrom = rt.spTo = 1.0f; rt.spT = rt.spD = 0.0f;
+    for (int ni : path.fx)
     {
-        const int ci = GhostAnim_FindClip(a, want.c_str());
-        if (ci < 0 || !a.clips[(size_t)ci].skeletal) return 0;
-        want = a.clips[(size_t)ci].name;                         // canonical spelling
+        const GhostGraphNode& n = a.graph.nodes[(size_t)ni];
+        switch (n.type)
+        {
+        case GNODE_BLEND:  bd = n.p[0]; curve = n.curve; break;
+        case GNODE_SQUASH: rt.fx.push_back({ 0.0f, fmaxf(n.p[1], 0.05f), n.p[0] * (n.p[2] > 0.5f ? -1.0f : 1.0f) }); break;
+        case GNODE_SPEED:  rt.spFrom = n.p[0]; rt.spTo = n.p[1]; rt.spD = fmaxf(n.p[2], 0.01f); rt.spT = 0.0f; break;
+        case GNODE_SOUND:
+        {
+            const int si = GhostAudioBank_Find(n.name.c_str());
+            if (si >= 0) GhostAudioBank_PlayIndex(si, 0.0f, false);
+            break;
+        }
+        case GNODE_RUMBLE: if (g_playState == GhostPlayState::Playing) GhostPad_Rumble(n.p[0], n.p[1], n.p[2]); break;
+        }
     }
-    if (an.clip == want) return 1;
-    an.clip = want;
-    an.time = 0.0f;
+
+    if (!sameClip)
+    {
+        const GhostClip& cc = a.clips[(size_t)curIdx];
+        rt.fromPath = cc.model; rt.fromTime = an.time; rt.fromSpeed = cc.speed * an.speed; rt.fromLoop = cc.loop;
+        rt.bd = bd < 0.0f ? 0.0f : bd; rt.bt = 0.0f; rt.curve = curve; rt.blending = rt.bd > 0.001f;
+        an.time = 0.0f;
+    }
+    rt.active = true; rt.entryDone = true;
+    rt.clip = a.clips[(size_t)ci].name;
+    rt.state = state;
     return 1;
 }
 
@@ -3890,7 +4163,7 @@ static float Api_ModelClipLength(int id, const char* clip)
 
 static int Api_SpriteSetClip(int id, const char* name)
 {
-    if (GhostObject* m = AnimModelOf(id)) return name ? ModelSetClip(*m, name) : 0;
+    if (GhostObject* m = AnimModelOf(id)) return name ? ModelTransition(*m, name, name) : 0;
     GhostObject* o = FindSprite(id);
     if (!o || !name) return 0;
     GhostSprite& s = o->sprite;
@@ -3927,6 +4200,7 @@ static int Api_SpriteSetAnim(int id, const char* p)
         if (!HasSkeletalClips(aid)) return 0;                    // a sprite-sheet file: ignore it, keep what plays now
         an.anim = path; an.animId = aid; an.animResolved = true;
         an.clip.clear(); an.time = 0.0f;
+        g_animRt.erase(m->id);
         return 1;
     }
     GhostObject* o = FindSprite(id);
@@ -3948,7 +4222,7 @@ static int Api_SpriteSetState(int id, const char* state)
         if (an.animId >= 0 && an.animId < (int)g_anims.size())
             for (const auto& kv : g_anims[(size_t)an.animId].states)   // the States table: state name -> clip
                 if (_stricmp(kv.first.c_str(), state) == 0) { if (!kv.second.empty()) clip = kv.second; break; }
-        return ModelSetClip(*m, clip.c_str());
+        return ModelTransition(*m, state, clip);
     }
     GhostObject* o = FindSprite(id);
     if (!o || !state) return 0;
@@ -4118,7 +4392,7 @@ static void PerformSceneSwitch()
     const std::string rel = g_pendingScene;
     g_pendingScene.clear();
     if (g_playState == GhostPlayState::Editing || rel.empty()) return;
-
+    g_animRt.clear();
     const std::string abs = StoredToAbs(rel);
     GhostGameModule_Unload();                           // Shutdown: the old level's code lets go of its object ids
 
@@ -4165,9 +4439,10 @@ static void PerformSceneSwitch()
 // ============================================================
 int GhostEngine_Play()
 {
+
     if (!g_rhi || !g_pipeline) { g_playMessage = "The engine is not ready."; return 0; }
     if (g_playState != GhostPlayState::Editing) return 1;
-
+    g_animRt.clear();
     g_playBackup = g_scene;
     g_playBackupPath = g_scenePath;
     g_pendingScene.clear();
@@ -4207,6 +4482,7 @@ int GhostEngine_Play()
 void GhostEngine_Stop()
 {
     if (g_playState == GhostPlayState::Editing) return;
+    g_animRt.clear();
     g_scenePath = g_playBackupPath;                  // the editor goes back to the scene you were editing
     g_pendingScene.clear();
     GhostGameModule_Unload();                        // Shutdown, then free the temp copy
@@ -5557,6 +5833,7 @@ int GhostEngine_GetAnimatorText(int id, int which, char* buf, int size)
 void GhostEngine_SetAnimatorText(int id, int which, const char* text)
 {
     GhostObject* o = FindAnimatedModel(id);
+    g_animRt.erase(id);
     if (!o) return;
     GhostAnimator& an = o->animator;
     const std::string t = text ? text : "";
@@ -5588,3 +5865,71 @@ void GhostEngine_SetAnimator(int id, int playing, float speed)
     o->animator.playing = (playing != 0);
     o->animator.speed = speed != speed ? 1.0f : (speed < 0.0f ? 0.0f : (speed > 10.0f ? 10.0f : speed));
 }
+
+// ============================================================
+//  Exported: animation preview window + blueprint testing
+// ============================================================
+int GhostEngine_CreatePreviewViewport(HWND hwnd, unsigned int width, unsigned int height)
+{
+    if (!g_rhi || !g_pipeline) return 0;
+    if (width == 0) width = 1;
+    if (height == 0) height = 1;
+    const int id = g_rhi->CreateSurface(hwnd, width, height);
+    if (id <= 0) return 0;
+    if (GhostResizeDepthBuffer(g_rhi, g_pipeline, id, width, height) != GHOST_OK) { g_rhi->DestroySurface(id); return 0; }
+    g_vp[id] = EngineViewport();
+    g_vp[id].alive = g_vp[id].visible = g_vp[id].preview = true;
+    return id;
+}
+
+void GhostEngine_PreviewSetTarget(int vp, int objectId)
+{
+    if (vp > 0 && vp < GHOST_MAX_SURFACES && g_vp[vp].preview) g_vp[vp].solo = objectId;
+}
+
+void GhostEngine_PreviewOrbit(int vp, float dYaw, float dPitch, float zoomMul)
+{
+    if (vp <= 0 || vp >= GHOST_MAX_SURFACES || !g_vp[vp].preview) return;
+    EngineViewport& v = g_vp[vp];
+    v.pYaw += dYaw;
+    v.pPitch = fmaxf(-80.0f, fminf(80.0f, v.pPitch + dPitch));
+    v.pZoom = fmaxf(0.2f, fminf(5.0f, v.pZoom * (zoomMul > 0.0f ? zoomMul : 1.0f)));
+}
+
+void GhostEngine_PreviewResetCamera(int vp)
+{
+    if (vp <= 0 || vp >= GHOST_MAX_SURFACES || !g_vp[vp].preview) return;
+    g_vp[vp].pYaw = 20.0f; g_vp[vp].pPitch = -8.0f; g_vp[vp].pZoom = 1.0f;
+}
+
+// Plays one FBX clip on a model, without touching the scene (not saved, no undo, no "*" in the title)
+void GhostEngine_AnimPreview_Set(int objectId, const char* storedFbxPath, int loop, float speed, int playing)
+{
+    const std::string p = storedFbxPath ? storedFbxPath : "";
+    const bool changed = !g_prevstate.active || g_prevstate.objectId != objectId || g_prevstate.path != p;
+    g_prevstate.active = (objectId != 0 && !p.empty() && AnimModelOf(objectId) != nullptr);
+    g_prevstate.objectId = objectId; g_prevstate.path = p;
+    g_prevstate.loop = (loop != 0);
+    g_prevstate.speed = speed != speed ? 1.0f : (speed < 0.0f ? 0.0f : (speed > 8.0f ? 8.0f : speed));
+    g_prevstate.playing = (playing != 0);
+    if (changed) g_prevstate.time = 0.0f;
+}
+void GhostEngine_AnimPreview_Stop() { g_prevstate.active = false; }
+void GhostEngine_AnimPreview_Seek(float seconds) { g_prevstate.time = seconds < 0.0f ? 0.0f : seconds; }
+int  GhostEngine_AnimPreview_Get(float* time, float* duration, int* matched, int* total)
+{
+    if (!g_prevstate.active) return 0;
+    if (time) *time = g_prevstate.time;
+    if (duration) *duration = g_prevstate.duration;
+    if (matched) *matched = g_prevstate.matched;
+    if (total) *total = g_prevstate.total;
+    return 1;
+}
+
+// Blueprint test: the same call the game makes (SpriteSetState), usable in the editor
+int  GhostEngine_AnimRequestState(int objectId, const char* state)
+{
+    if (!state || !AnimModelOf(objectId)) return 0;
+    return Api_SpriteSetState(objectId, state);
+}
+void GhostEngine_AnimResetRuntime(int objectId) { g_animRt.erase(objectId); }
