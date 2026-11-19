@@ -3,6 +3,7 @@
 #include <math.h>
 #include <string.h>
 #include <stdio.h>
+#include <vector>
 #include "../GhostX/include/GhostGameAPI.h"
 #include "../GhostGame/include/Bindings.h"
 
@@ -162,3 +163,29 @@ void Game_Restart(bool died);
 // Sprite helpers: they do nothing (and return 0) if the object is a plain cube
 int  Sprite_Play(int id, const char* clip, const char* fallback);   // 1 if a clip was set
 void Sprite_FaceScreen(int id, float screenVx);                     // > 0 faces right, < 0 faces left
+
+// ---- Pathway.cpp: waypoint following for enemies and bosses ----
+struct PathPoint { float p[3]; char key[64]; int action; float hold; float jumpH; };
+struct PathFollower
+{
+    bool  active = false, started = false;
+    std::vector<PathPoint> pts;          // sorted by Link ID
+    int   cur = 0, tgt = 1, dir = 1;     // the marker we are at, the one we head to, direction (ping-pong)
+    int   phase = 0;                     // 0 hold, 1 walking / sprinting, 2 jump arc, 3 finished
+    int   act = 0;
+    float hold = 0.0f, stuck = 0.0f, lastDist = 1e9f;
+    float t = 0.0f, dur = 1.0f, jumpH = 1.0f;
+    float from[3] = { 0, 0, 0 }, to[3] = { 0, 0, 0 };
+};
+struct PathCfg { float walkSpeed, sprintMul, jumpH, sprintJumpH; int loopMode; };
+struct PathOut
+{
+    float vx = 0.0f, vz = 0.0f;          // horizontal velocity for the normal physics step
+    bool  setPos = false, jumping = false;   // setPos: write pos into the body. jumping: skip MoveBody this frame
+    float pos[3] = { 0, 0, 0 };
+    int   anim = 0;                      // 0 idle, 1 walk, 2 sprint, 3 jump
+};
+bool Path_Load(PathFollower& f, int group);
+void Path_Reset(PathFollower& f);
+void Path_Update(PathFollower& f, const Body& b, float dt, const PathCfg& c, PathOut& o);
+void Path_PlayAnim(int id, int anim);

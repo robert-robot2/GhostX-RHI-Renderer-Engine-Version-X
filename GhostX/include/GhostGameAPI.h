@@ -11,7 +11,7 @@
 extern "C" {
 #endif
 
-#define GHOST_GAME_API_VERSION 2
+#define GHOST_GAME_API_VERSION 3
 
 #ifdef __cplusplus
 #define GHOST_GAME_EXPORT extern "C" __declspec(dllexport)
@@ -72,6 +72,8 @@ extern "C" {
         float timeOffset;   // Timed Elevator (pathMode 3)
         GhostPlayerParams player;   // Role = Player settings (Details > Gameplay > Behavior)
         GhostEnemyParams  enemy;    // Role = Enemy settings
+        GhostBossParams   boss;     // Role = Boss settings
+        GhostPathParams   path;     // Pathway marker settings
     } GhostObjectProps;
 
     typedef struct GhostGameAPI

@@ -4,7 +4,7 @@
 //Entities.cpp
 
 struct Saved { int id; float pos[3], scale[3], color[3]; char tag[32]; int visible; int tex; };
-struct Enemy { int id; float a[3], b[3]; float speed, pause, wait; int mode; int dir; float vy; bool alive, done, grounded, wingless; float dieTimer; float attack, atkCool; GhostEnemyParams ep; };
+struct Enemy { int id; float a[3], b[3]; float speed, pause, wait; int mode; int dir; float vy; bool alive, done, grounded, wingless; float dieTimer; float attack, atkCool; GhostEnemyParams ep; PathFollower pf; };
 
 static std::vector<Saved> g_saved;
 static std::vector<int>   g_coins, g_enemyIds, g_blocks;
@@ -174,6 +174,7 @@ static void RebuildEnemies()
         e.speed = (has && pr.moveSpeed > 0.01f) ? pr.moveSpeed : Cfg::EnemySpeed;
         e.pause = has ? pr.movePause : 0.0f;
         e.mode = has ? pr.enemyPathMode : 0;
+        if (e.ep.followPathway) Path_Load(e.pf, e.ep.pathGroup);
         g_enemies.push_back(e);
     }
 }
@@ -817,15 +818,19 @@ static float g_bridgeTimer = 0.0f, g_bridgeLowY = 0.0f;
 static size_t g_bridgeNext = 0;
 static std::vector<BossPt> g_bossPath;
 static std::vector<int>    g_bridge, g_bridgeOrder;
+static PathFollower g_bossPF;
+static GhostBossParams g_bossP = GhostBossParams_Make();
+
 
 static void Boss_Reset()
 {
     g_bossPhase = 0; g_bossTarget = 1; g_bossDir = 1;
     g_bossWalking = true; g_bossGrounded = false;
     g_bossWait = 0.0f; g_bossVy = 0.0f; g_bossEnd = 0.0f;
-    g_bossHop = Cfg::BossHopInterval;
+    g_bossHop = g_bossP.hopInterval;
     g_bridgeTimer = 0.0f; g_bridgeNext = 0;
     g_bridgeOrder.clear();
+    Path_Reset(g_bossPF);
 }
 
 static void Boss_Init()
@@ -835,7 +840,14 @@ static void Boss_Init()
     Snapshot("BossAxe", nullptr);
     Snapshot("BridgeTile", &g_bridge);
     g_bossId = G->FindByTag("Boss");
-
+    g_bossPF = PathFollower();
+    g_bossP = GhostBossParams_Make();
+    if (g_bossId)
+    {
+        GhostObjectProps bp0 = {};
+        if (G->GetObjectProps(g_bossId, &bp0)) g_bossP = bp0.boss;
+        if (g_bossP.followPathway) Path_Load(g_bossPF, g_bossP.pathGroup);
+    }
     g_bridgeLowY = 1e9f;
     for (int id : g_bridge)
     {
@@ -900,12 +912,13 @@ static void Boss_Update(float dt)
     if (!LoadBody(g_bossId, b)) return;
     GhostObjectProps pr = {};
     G->GetObjectProps(g_bossId, &pr);
+    const GhostBossParams& bp = pr.boss;
 
-    g_bossVy -= Cfg::Gravity * dt;
-    if (g_bossVy < -Cfg::MaxFall) g_bossVy = -Cfg::MaxFall;
+    g_bossVy -= bp.gravity * dt;
+    if (g_bossVy < -bp.maxFall) g_bossVy = -bp.maxFall;
 
     const int n = (int)g_bossPath.size();
-    auto advance = [&]()                              // pick the next point
+    auto advance = [&]()                              // pick the next point (classic BossPoint path)
         {
             g_bossWait = pr.movePause;
             if (pr.pathMode == 0) { if (g_bossTarget + g_bossDir < 0 || g_bossTarget + g_bossDir >= n) g_bossDir = -g_bossDir; g_bossTarget += g_bossDir; }
@@ -916,40 +929,54 @@ static void Boss_Update(float dt)
 
     float vx = 0.0f, vz = 0.0f;
     const bool fighting = (g_bossPhase == 0);
+    const bool usePath = fighting && g_bossPF.active && bp.followPathway != 0;
+    PathOut po;
     if (fighting)
     {
-        if (g_bossGrounded) g_bossHop -= dt;
-        if (g_bossGrounded && g_bossHop <= 0.0f && pr.pathOffset[1] > 0.01f)   // Move Offset Y = hop height
+        if (usePath)                                  // Pathway markers: walk, sprint and jump from the markers' actions
         {
-            g_bossVy = sqrtf(2.0f * Cfg::Gravity * pr.pathOffset[1]);
-            g_bossHop = Cfg::BossHopInterval;
+            const PathCfg pc = { pr.moveSpeed > 0.01f ? pr.moveSpeed : 2.0f, bp.pathSprintMul, bp.pathJumpHeight, bp.pathSprintJumpHeight, bp.pathLoop };
+            Path_Update(g_bossPF, b, dt, pc, po);
+            vx = po.vx; vz = po.vz;
         }
-        if (g_bossWalking && n > 1)
+        else
         {
-            if (g_bossWait > 0.0f) g_bossWait -= dt;
-            else
+            if (g_bossGrounded) g_bossHop -= dt;
+            if (bp.autoJumpY && g_bossGrounded && g_bossHop <= 0.0f && pr.pathOffset[1] > 0.01f)   // Move Offset Y = hop height
             {
-                const float* to = g_bossPath[g_bossTarget].p;
-                const float dx = to[0] - b.pos[0], dz = to[2] - b.pos[2];
-                const float dist = sqrtf(dx * dx + dz * dz);
-                const float sp = pr.moveSpeed > 0.01f ? pr.moveSpeed : 2.0f;
-                const bool arrived = dist <= sp * dt;
-                if (dist > 0.0001f) { const float s = arrived ? dist / dt : sp; vx = dx / dist * s; vz = dz / dist * s; }
-                if (arrived) advance();
+                g_bossVy = sqrtf(2.0f * bp.gravity * pr.pathOffset[1]);
+                g_bossHop = bp.hopInterval;
+            }
+            if (g_bossWalking && n > 1)
+            {
+                if (g_bossWait > 0.0f) g_bossWait -= dt;
+                else
+                {
+                    const float* to = g_bossPath[g_bossTarget].p;
+                    const float dx = to[0] - b.pos[0], dz = to[2] - b.pos[2];
+                    const float dist = sqrtf(dx * dx + dz * dz);
+                    const float sp = pr.moveSpeed > 0.01f ? pr.moveSpeed : 2.0f;
+                    const bool arrived = dist <= sp * dt;
+                    if (dist > 0.0001f) { const float s = arrived ? dist / dt : sp; vx = dx / dist * s; vz = dz / dist * s; }
+                    if (arrived) advance();
+                }
             }
         }
     }
 
     b.vel[0] = vx; b.vel[1] = g_bossVy; b.vel[2] = vz;
-    MoveResult r = MoveBody(b, dt);
-    g_bossVy = b.vel[1];
-    g_bossGrounded = r.hitFloor;
-    if (fighting && g_bossWalking && n > 1 && (r.hitX || r.hitZ)) advance();   // blocked: turn to the next point
+    MoveResult r;
+    if (po.setPos) { memcpy(b.pos, po.pos, sizeof b.pos); g_bossVy = 0.0f; b.vel[1] = 0.0f; }
+    if (po.jumping) g_bossGrounded = false;           // the jump arc moves the body itself
+    else { r = MoveBody(b, dt); g_bossVy = b.vel[1]; g_bossGrounded = r.hitFloor; }
+    if (fighting && !usePath && g_bossWalking && n > 1 && (r.hitX || r.hitZ)) advance();   // blocked: turn to the next point
     StoreBody(b);
 
     const float yaw = S.camYaw * 0.0174532925f;
     Sprite_FaceScreen(g_bossId, vx * cosf(yaw) - vz * sinf(yaw));
+    if (G->IsModel && G->IsModel(g_bossId)) Model_Face(g_bossId, vx, vz, dt, bp.modelYawOffset, bp.modelTurnSpeed);
     if (g_bossPhase >= 1 && !g_bossGrounded) Sprite_Play(g_bossId, "Die", "Hurt");
+    else if (usePath) Path_PlayAnim(g_bossId, po.anim);
     else Sprite_Play(g_bossId, (vx != 0.0f || vz != 0.0f) ? "Walk" : "Idle", "Idle");
 
     if (g_bossPhase == 1)                             // bridge falls one tile at a time
@@ -1299,11 +1326,20 @@ void Entities_Update(float dt)
             }
         }
         const bool attacking = isModel && e.attack > 0.0f;
-        const bool walking = e.mode != 3 && !e.done && e.wait <= 0.0f && !attacking;     // mode 3 = stand still
+        const bool pathing = e.pf.active && e.ep.followPathway != 0;
+        PathOut po;
+        if (pathing && !attacking)
+        {
+            const PathCfg pc = { e.speed, e.ep.pathSprintMul, e.ep.pathJumpHeight, e.ep.pathSprintJumpHeight, e.ep.pathLoop };
+            Path_Update(e.pf, b, dt, pc, po);
+        }
+        const bool walking = pathing ? (po.anim == 1 || po.anim == 2)
+            : (e.mode != 3 && !e.done && e.wait <= 0.0f && !attacking);     // mode 3 = stand still
 
         float vx = 0.0f, vz = 0.0f;
         bool arrive = false;
-        if (walking)
+        if (pathing) { vx = po.vx; vz = po.vz; }
+        else if (walking)
         {
             const float* to = (e.dir > 0) ? e.b : e.a;
             const float dx = to[0] - b.pos[0], dz = to[2] - b.pos[2];
@@ -1320,20 +1356,21 @@ void Entities_Update(float dt)
                 vx = vz = 0.0f;
             }
         }
+        if (po.setPos) { memcpy(b.pos, po.pos, sizeof b.pos); e.vy = 0.0f; }
         b.vel[0] = vx; b.vel[1] = e.vy; b.vel[2] = vz;
 
-        MoveResult r = MoveBody(b, dt);
-        e.vy = b.vel[1];
-        e.grounded = r.hitFloor;
+        MoveResult r;
+        if (po.jumping) e.grounded = false;                                // the jump arc moves the body itself
+        else { r = MoveBody(b, dt); e.vy = b.vel[1]; e.grounded = r.hitFloor; }
 
-        if (walking && (arrive || r.hitX || r.hitZ))                       // reached the end, or a wall stopped it
+        if (!pathing && walking && (arrive || r.hitX || r.hitZ))           // reached the end, or a wall stopped it
         {
             e.wait = e.pause;
             if (e.mode == 2) e.done = true;                                // once
             else e.dir = -e.dir;                                           // ping-pong (both kinds)
         }
 
-        if (b.pos[1] < e.ep.fallLimit)
+        if (b.pos[1] < e.ep.fallLimit)                                     // fell out of the world
         {
             e.alive = false;
             G->SetTag(e.id, "Defeated");
@@ -1342,15 +1379,17 @@ void Entities_Update(float dt)
         }
 
         const float yaw = S.camYaw * 0.0174532925f;
-        Sprite_FaceScreen(e.id, vx* cosf(yaw) - vz * sinf(yaw));          // same formula the Player uses
+        Sprite_FaceScreen(e.id, vx * cosf(yaw) - vz * sinf(yaw));          // same formula the Player uses
         if (isModel)
         {
-            if (attacking) Model_Face(e.id, atkDx, atkDz, dt, e.ep.modelYawOffset, e.ep.modelTurnSpeed);   // swing toward Mario
-            else           Model_Face(e.id, vx, vz, dt, e.ep.modelYawOffset, e.ep.modelTurnSpeed);         // otherwise face the way it walks
+            if (attacking) Model_Face(e.id, atkDx, atkDz, dt, e.ep.modelYawOffset, e.ep.modelTurnSpeed);
+            else           Model_Face(e.id, vx, vz, dt, e.ep.modelYawOffset, e.ep.modelTurnSpeed);
             if (attacking && Sprite_Play(e.id, "Attack", nullptr)) {}
+            else if (pathing) Path_PlayAnim(e.id, po.anim);
             else if (!e.grounded && !isFlying && Sprite_Play(e.id, "Jump", nullptr)) {}
             else Sprite_Play(e.id, walking ? "Walk" : "Idle", "Idle");
         }
+        else if (pathing && !attacking) Path_PlayAnim(e.id, po.anim);
         else if (!(e.wingless && Sprite_Play(e.id, walking ? "WalkGround" : "IdleGround", nullptr)))
             Sprite_Play(e.id, walking ? "Walk" : "Idle", "Idle");
         StoreBody(b);

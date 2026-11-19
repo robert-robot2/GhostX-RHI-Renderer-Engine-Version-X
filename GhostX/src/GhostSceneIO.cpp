@@ -56,7 +56,10 @@ static json PlayerParamsToJson(const GhostPlayerParams& p) { json j = json::obje
 static json EnemyParamsToJson(const GhostEnemyParams& p) { json j = json::object(); GHOST_ENEMY_PARAMS(RP_SAVE, RP_SAVE) return j; }
 static void PlayerParamsFromJson(const json& j, GhostPlayerParams& p) { GHOST_PLAYER_PARAMS(RP_LOAD, RP_LOAD) GhostPlayerParams_Clamp(&p); }
 static void EnemyParamsFromJson(const json& j, GhostEnemyParams& p) { GHOST_ENEMY_PARAMS(RP_LOAD, RP_LOAD) GhostEnemyParams_Clamp(&p); }
-
+static json BossParamsToJson(const GhostBossParams& p) { json j = json::object(); GHOST_BOSS_PARAMS(RP_SAVE, RP_SAVE) return j; }
+static json PathParamsToJson(const GhostPathParams& p) { json j = json::object(); GHOST_PATH_PARAMS(RP_SAVE, RP_SAVE) return j; }
+static void BossParamsFromJson(const json& j, GhostBossParams& p) { GHOST_BOSS_PARAMS(RP_LOAD, RP_LOAD) GhostBossParams_Clamp(&p); }
+static void PathParamsFromJson(const json& j, GhostPathParams& p) { GHOST_PATH_PARAMS(RP_LOAD, RP_LOAD) GhostPathParams_Clamp(&p); }
 
 static void ReadF(const json& j, const char* key, float* out, int n)
 {
@@ -253,8 +256,12 @@ bool GhostScene_Save(const GhostScene& s, const std::string& root, const std::st
             {
                 const GhostPlayerParams pd = GhostPlayerParams_Make();
                 const GhostEnemyParams  ed = GhostEnemyParams_Make();
+                const GhostBossParams   bd = GhostBossParams_Make();
+                const GhostPathParams   td = GhostPathParams_Make();
                 if (memcmp(&o.playerP, &pd, sizeof pd) != 0) jo["playerParams"] = PlayerParamsToJson(o.playerP);
                 if (memcmp(&o.enemyP, &ed, sizeof ed) != 0) jo["enemyParams"] = EnemyParamsToJson(o.enemyP);
+                if (memcmp(&o.bossP, &bd, sizeof bd) != 0) jo["bossParams"] = BossParamsToJson(o.bossP);
+                if (memcmp(&o.pathP, &td, sizeof td) != 0) jo["pathParams"] = PathParamsToJson(o.pathP);
             }
             jo["shadow"] = json{ { "mode", o.shadowMode },{ "light", o.shadowLightId },{ "receive", o.receiveShadows } };
             if (o.meshId == GHOST_MESH_QUAD)
@@ -565,7 +572,8 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
                 }
                 if (jo.contains("playerParams") && jo["playerParams"].is_object()) PlayerParamsFromJson(jo["playerParams"], o.playerP);
                 if (jo.contains("enemyParams") && jo["enemyParams"].is_object())    EnemyParamsFromJson(jo["enemyParams"], o.enemyP);
-
+                if (jo.contains("bossParams") && jo["bossParams"].is_object()) BossParamsFromJson(jo["bossParams"], o.bossP);
+                if (jo.contains("pathParams") && jo["pathParams"].is_object()) PathParamsFromJson(jo["pathParams"], o.pathP);
                 if (jo.contains("shadow") && jo["shadow"].is_object())
                 {
                     const json& sh = jo["shadow"];
@@ -782,7 +790,7 @@ unsigned int GhostScene_Hash(const GhostScene& s)
         F(o.timeOffset);
         I(o.pathMode); I(o.enemyPathMode); I(o.flying ? 1 : 0); I(o.enemyDeathEffect); I(o.breakEffect); I(o.contents); I(o.portalTrigger);
         I(o.powerType); I(o.itemMoves); I(o.coinCount);
-        mix(&o.playerP, sizeof o.playerP); mix(&o.enemyP, sizeof o.enemyP);
+        mix(&o.playerP, sizeof o.playerP); mix(&o.enemyP, sizeof o.enemyP); mix(&o.bossP, sizeof o.bossP); mix(&o.pathP, sizeof o.pathP);
         S(o.animator.anim); S(o.animator.clip); I(o.animator.playing ? 1 : 0); F(o.animator.speed);
         const int n = GhostMesh_FaceCount(o.meshId);
         for (int f = 0; f < n; f++) mix(&o.faces[f], sizeof(GhostMaterial));

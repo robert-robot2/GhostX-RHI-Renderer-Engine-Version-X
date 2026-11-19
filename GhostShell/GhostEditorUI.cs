@@ -762,6 +762,9 @@ namespace GhostShell
             PlayerDeath = new PlayerDeathGroup(id); PlayerModel = new PlayerModelGroup(id);
             EnemyPhysics = new EnemyPhysicsGroup(id); EnemyAttack = new EnemyAttackGroup(id);
             EnemyDeath = new EnemyDeathGroup(id); EnemyModel = new EnemyModelGroup(id);
+            EnemyPathway = new EnemyPathGroup(id);
+            BossMotion = new BossMotionGroup(id); BossPathway = new BossPathGroup(id); BossModel = new BossModelGroup(id);
+            PathPoint = new PathPointGroup(id);
         }
 
         private GhostGameplayInfo Get() { var g = new GhostGameplayInfo(); GhostEngine.GhostEngine_GetGameplay(_id, ref g); return g; }
@@ -778,7 +781,10 @@ namespace GhostShell
         nameof(PlayerPower), nameof(PlayerSkid), nameof(PlayerAttack), nameof(PlayerDeath), nameof(PlayerModel) };
         private static readonly string[] EnemyProps = { nameof(MoveOffset), nameof(MoveSpeed), nameof(MovePause),
         nameof(EnemyPathMode), nameof(FlyingEnemy), nameof(EnemyDeathEffect),
-        nameof(EnemyPhysics), nameof(EnemyAttack), nameof(EnemyDeath), nameof(EnemyModel) };
+        nameof(EnemyPhysics), nameof(EnemyAttack), nameof(EnemyDeath), nameof(EnemyModel), nameof(EnemyPathway) };
+        private static readonly string[] BossProps = { nameof(MoveOffset), nameof(MoveSpeed), nameof(MovePause), nameof(PathMode),
+        nameof(BossMotion), nameof(BossPathway), nameof(BossModel) };
+        private static readonly string[] CustomProps = { nameof(PathPoint) };
         private static readonly string[] BlockProps = { nameof(Contents), nameof(PowerType), nameof(PickupMovement), nameof(CoinCount) };
         private static readonly string[] BreakableProps = { nameof(Contents), nameof(PowerType), nameof(PickupMovement), nameof(CoinCount), nameof(BreakEffect) };
         private static readonly string[] PortalProps = { nameof(PortalTrigger) };
@@ -790,8 +796,10 @@ namespace GhostShell
             2 => EnemyProps,
             4 => BlockProps,
             7 => PortalProps,
+            6 => CustomProps,         
             9 => BreakableProps,
             10 => MovingProps,
+            12 => BossProps,
             13 => BlockProps,
             _ => NoProps,        // Static, Player, Coin, Goal, Custom, Portal Exit, Projectile, Boss: empty for now
         };
@@ -887,6 +895,12 @@ namespace GhostShell
         [DisplayName("Coin Count (contents = Coin)")]
         public int CoinCount { get => Get().coinCount; set { var g = Get(); g.coinCount = Math.Clamp(value, 1, 999); Set(g); } }
 
+
+        [DisplayName("Pathway Following")] public EnemyPathGroup EnemyPathway { get; }
+        [DisplayName("Motion")] public BossMotionGroup BossMotion { get; }
+        [DisplayName("Pathway Following")] public BossPathGroup BossPathway { get; }
+        [DisplayName("3D Model")] public BossModelGroup BossModel { get; }
+        [DisplayName("Pathway Point (Custom Tag = Pathway)")] public PathPointGroup PathPoint { get; }
     }
 
 

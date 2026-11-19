@@ -172,6 +172,24 @@ namespace GhostShell
         public float attackRange, attackHeight, attackTime, attackCooldown;
         public float modelDieTime, spriteDieTime, flattenTime, flattenScaleY, flattenDrop, deathBounce, shellGrace;
         public float modelYawOffset, modelTurnSpeed;
+        public int followPathway, pathGroup, pathLoop;
+        public float pathSprintMul, pathJumpHeight, pathSprintJumpHeight;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GhostBossParams
+    {
+        public int autoJumpY;
+        public float hopInterval, gravity, maxFall;
+        public int followPathway, pathGroup, pathLoop;
+        public float pathSprintMul, pathJumpHeight, pathSprintJumpHeight;
+        public float modelYawOffset, modelTurnSpeed;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GhostPathParams
+    {
+        public int pathGroup, action;
+        public float holdTime, jumpHeight;
     }
 
     internal static class GhostEngine
@@ -339,6 +357,15 @@ namespace GhostShell
         public static extern int GhostEngine_GetEnemyParams(int objectId, ref GhostEnemyParams p);
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern void GhostEngine_SetEnemyParams(int objectId, ref GhostEnemyParams p);
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetBossParams(int objectId, ref GhostBossParams p);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetBossParams(int objectId, ref GhostBossParams p);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetPathParams(int objectId, ref GhostPathParams p);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetPathParams(int objectId, ref GhostPathParams p);
 
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern int GhostEngine_GetCustomTag(int objectId, [Out] byte[] buf, int bufSize);

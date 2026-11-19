@@ -239,6 +239,12 @@ extern "C"
     GHOST_API int  GhostEngine_GetEnemyParams(int objectId, GhostEnemyParams* out);
     GHOST_API void GhostEngine_SetEnemyParams(int objectId, const GhostEnemyParams* in);
 
+    GHOST_API int  GhostEngine_GetBossParams(int objectId, GhostBossParams* out);
+    GHOST_API void GhostEngine_SetBossParams(int objectId, const GhostBossParams* in);
+    GHOST_API int  GhostEngine_GetPathParams(int objectId, GhostPathParams* out);
+    GHOST_API void GhostEngine_SetPathParams(int objectId, const GhostPathParams* in);
+
+
     GHOST_API int  GhostEngine_GetCustomTag(int objectId, char* buf, int bufSize);
     GHOST_API void GhostEngine_SetCustomTag(int objectId, const char* utf8Tag);
     GHOST_API void GhostEngine_SetGameModulePath(const char* utf8Path);

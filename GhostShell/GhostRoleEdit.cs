@@ -13,7 +13,8 @@ namespace GhostShell
         {
             if (_done) return;
             _done = true;
-            if (Marshal.SizeOf<GhostPlayerParams>() != 49 * 4 || Marshal.SizeOf<GhostEnemyParams>() != 19 * 4)
+            if (Marshal.SizeOf<GhostPlayerParams>() != 49 * 4 || Marshal.SizeOf<GhostEnemyParams>() != 25 * 4 ||
+       Marshal.SizeOf<GhostBossParams>() != 12 * 4 || Marshal.SizeOf<GhostPathParams>() != 4 * 4)
                 MessageBox.Show("GhostPlayerParams / GhostEnemyParams in GhostEngine.cs do not match GhostRoleParams.h (field count). " +
                     "Role settings will be wrong until they match.", "Role settings", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
@@ -179,5 +180,96 @@ namespace GhostShell
         public EnemyModelGroup(int id) : base(id) { }
         [DisplayName("Yaw Offset (deg)")] public float YawOffset { get => Get().modelYawOffset; set => Edit((ref GhostEnemyParams p) => p.modelYawOffset = value); }
         [DisplayName("Turn Speed (deg/s)")] public float TurnSpeed { get => Get().modelTurnSpeed; set => Edit((ref GhostEnemyParams p) => p.modelTurnSpeed = value); }
+    }
+
+    internal sealed class PathActionConverter : FixedListConverter
+    { public static readonly string[] Names = { "Walk", "Sprint", "Jump", "Sprint Jump", "Idle (wait here, then walk)" }; protected override string[] Items => Names; }
+    internal sealed class PathLoopConverter : FixedListConverter
+    { public static readonly string[] Names = { "Loop (travel back to the first point)", "Stop at the end (idle)", "Ping-Pong (walk it backwards)", "Loop (teleport to the first point)" }; protected override string[] Items => Names; }
+
+    // ---------------- Enemy: pathway following ----------------
+    [TypeConverter(typeof(ExpandableObjectConverter))]
+    internal sealed class EnemyPathGroup : EnemyGroup
+    {
+        public EnemyPathGroup(int id) : base(id) { }
+        [DisplayName("Follow Pathway (markers tagged Pathway)")] public bool Follow { get => Get().followPathway != 0; set => Edit((ref GhostEnemyParams p) => p.followPathway = value ? 1 : 0); }
+        [DisplayName("Pathway Group")] public int Group { get => Get().pathGroup; set => Edit((ref GhostEnemyParams p) => p.pathGroup = value); }
+        [DisplayName("End Of Pathway"), TypeConverter(typeof(PathLoopConverter))]
+        public string EndOfPath
+        {
+            get => PathLoopConverter.Names[Math.Clamp(Get().pathLoop, 0, 3)];
+            set { int i = Array.IndexOf(PathLoopConverter.Names, value); if (i >= 0) Edit((ref GhostEnemyParams p) => p.pathLoop = i); }
+        }
+        [DisplayName("Sprint Speed (x Move Speed)")] public float SprintMul { get => Get().pathSprintMul; set => Edit((ref GhostEnemyParams p) => p.pathSprintMul = value); }
+        [DisplayName("Jump Height")] public float JumpHeight { get => Get().pathJumpHeight; set => Edit((ref GhostEnemyParams p) => p.pathJumpHeight = value); }
+        [DisplayName("Sprint Jump Height")] public float SprintJumpHeight { get => Get().pathSprintJumpHeight; set => Edit((ref GhostEnemyParams p) => p.pathSprintJumpHeight = value); }
+    }
+
+    // ---------------- Boss ----------------
+    internal abstract class BossGroup
+    {
+        private readonly int _id;
+        protected delegate void Mut(ref GhostBossParams p);
+        protected BossGroup(int id) { _id = id; }
+        protected GhostBossParams Get() { var p = new GhostBossParams(); GhostEngine.GhostEngine_GetBossParams(_id, ref p); return p; }
+        protected void Edit(Mut m) { var p = Get(); m(ref p); GhostEngine.GhostEngine_SetBossParams(_id, ref p); }
+        public override string ToString() => "";
+    }
+
+    [TypeConverter(typeof(ExpandableObjectConverter))]
+    internal sealed class BossMotionGroup : BossGroup
+    {
+        public BossMotionGroup(int id) : base(id) { }
+        [DisplayName("Auto Jump Y (Move Offset Y = hop height)")] public bool AutoJumpY { get => Get().autoJumpY != 0; set => Edit((ref GhostBossParams p) => p.autoJumpY = value ? 1 : 0); }
+        [DisplayName("Hop Interval (s)")] public float HopInterval { get => Get().hopInterval; set => Edit((ref GhostBossParams p) => p.hopInterval = value); }
+        [DisplayName("Gravity")] public float Gravity { get => Get().gravity; set => Edit((ref GhostBossParams p) => p.gravity = value); }
+        [DisplayName("Max Fall Speed")] public float MaxFall { get => Get().maxFall; set => Edit((ref GhostBossParams p) => p.maxFall = value); }
+    }
+
+    [TypeConverter(typeof(ExpandableObjectConverter))]
+    internal sealed class BossPathGroup : BossGroup
+    {
+        public BossPathGroup(int id) : base(id) { }
+        [DisplayName("Follow Pathway (markers tagged Pathway)")] public bool Follow { get => Get().followPathway != 0; set => Edit((ref GhostBossParams p) => p.followPathway = value ? 1 : 0); }
+        [DisplayName("Pathway Group")] public int Group { get => Get().pathGroup; set => Edit((ref GhostBossParams p) => p.pathGroup = value); }
+        [DisplayName("End Of Pathway"), TypeConverter(typeof(PathLoopConverter))]
+        public string EndOfPath
+        {
+            get => PathLoopConverter.Names[Math.Clamp(Get().pathLoop, 0, 3)];
+            set { int i = Array.IndexOf(PathLoopConverter.Names, value); if (i >= 0) Edit((ref GhostBossParams p) => p.pathLoop = i); }
+        }
+        [DisplayName("Sprint Speed (x Move Speed)")] public float SprintMul { get => Get().pathSprintMul; set => Edit((ref GhostBossParams p) => p.pathSprintMul = value); }
+        [DisplayName("Jump Height")] public float JumpHeight { get => Get().pathJumpHeight; set => Edit((ref GhostBossParams p) => p.pathJumpHeight = value); }
+        [DisplayName("Sprint Jump Height")] public float SprintJumpHeight { get => Get().pathSprintJumpHeight; set => Edit((ref GhostBossParams p) => p.pathSprintJumpHeight = value); }
+    }
+
+    [TypeConverter(typeof(ExpandableObjectConverter))]
+    internal sealed class BossModelGroup : BossGroup
+    {
+        public BossModelGroup(int id) : base(id) { }
+        [DisplayName("Yaw Offset (deg)")] public float YawOffset { get => Get().modelYawOffset; set => Edit((ref GhostBossParams p) => p.modelYawOffset = value); }
+        [DisplayName("Turn Speed (deg/s)")] public float TurnSpeed { get => Get().modelTurnSpeed; set => Edit((ref GhostBossParams p) => p.modelTurnSpeed = value); }
+    }
+
+    // ---------------- Pathway marker (Role = Custom, Custom Tag = Pathway) ----------------
+    [TypeConverter(typeof(ExpandableObjectConverter))]
+    internal sealed class PathPointGroup
+    {
+        private readonly int _id;
+        private delegate void Mut(ref GhostPathParams p);
+        public PathPointGroup(int id) { _id = id; }
+        private GhostPathParams Get() { var p = new GhostPathParams(); GhostEngine.GhostEngine_GetPathParams(_id, ref p); return p; }
+        private void Edit(Mut m) { var p = Get(); m(ref p); GhostEngine.GhostEngine_SetPathParams(_id, ref p); }
+        public override string ToString() => "";
+
+        [DisplayName("Pathway Group")] public int Group { get => Get().pathGroup; set => Edit((ref GhostPathParams p) => p.pathGroup = value); }
+        [DisplayName("Action (travel to the next marker)"), TypeConverter(typeof(PathActionConverter))]
+        public string Action
+        {
+            get => PathActionConverter.Names[Math.Clamp(Get().action, 0, 4)];
+            set { int i = Array.IndexOf(PathActionConverter.Names, value); if (i >= 0) Edit((ref GhostPathParams p) => p.action = i); }
+        }
+        [DisplayName("Hold Time (s, idle on arrival)")] public float HoldTime { get => Get().holdTime; set => Edit((ref GhostPathParams p) => p.holdTime = value); }
+        [DisplayName("Jump Height (0 = follower default)")] public float JumpHeight { get => Get().jumpHeight; set => Edit((ref GhostPathParams p) => p.jumpHeight = value); }
     }
 }

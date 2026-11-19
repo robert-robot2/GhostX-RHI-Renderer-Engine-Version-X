@@ -87,7 +87,40 @@
     F(shellGrace,        0.5f,    0.0f,    10.0f) \
     /* 3D model */ \
     F(modelYawOffset,    0.0f, -360.0f,   360.0f) \
-    F(modelTurnSpeed,  720.0f,    1.0f, 10000.0f)
+    F(modelTurnSpeed,  720.0f,    1.0f, 10000.0f) \
+    /* Pathway following */ \
+    I(followPathway,        0,        0,        1) \
+    I(pathGroup,            0,        0,       99) \
+    I(pathLoop,             0,        0,        3) \
+    F(pathSprintMul,     2.0f,     1.0f,     10.0f) \
+    F(pathJumpHeight,    1.5f,     0.0f,     20.0f) \
+    F(pathSprintJumpHeight, 2.5f,  0.0f,     20.0f)
+
+#define GHOST_BOSS_PARAMS(F, I) \
+    /* Motion */ \
+    I(autoJumpY,            1,        0,        1) \
+    F(hopInterval,       1.4f,     0.0f,     30.0f) \
+    F(gravity,          25.0f,     0.0f,    300.0f) \
+    F(maxFall,          30.0f,     1.0f,    300.0f) \
+    /* Pathway following */ \
+    I(followPathway,        0,        0,        1) \
+    I(pathGroup,            0,        0,       99) \
+    I(pathLoop,             0,        0,        3) \
+    F(pathSprintMul,     2.0f,     1.0f,     10.0f) \
+    F(pathJumpHeight,    1.5f,     0.0f,     20.0f) \
+    F(pathSprintJumpHeight, 2.5f,  0.0f,     20.0f) \
+    /* 3D model */ \
+    F(modelYawOffset,    0.0f,  -360.0f,    360.0f) \
+    F(modelTurnSpeed,  720.0f,     1.0f,  10000.0f)
+
+// Settings of a Pathway marker (Role = Custom, Custom Tag = Pathway)
+#define GHOST_PATH_PARAMS(F, I) \
+    I(pathGroup,            0,        0,       99) \
+    I(action,               0,        0,        4) \
+    F(holdTime,          0.0f,     0.0f,   3600.0f) \
+    F(jumpHeight,        0.0f,     0.0f,     20.0f)
+
+
 
 // ---- generated from the lists above ----
 static inline float GhostRP_ClampF(float v, float lo, float hi, float def)
@@ -106,6 +139,13 @@ static inline int GhostRP_ClampI(int v, int lo, int hi) { return v < lo ? lo : (
 typedef struct GhostPlayerParams { GHOST_PLAYER_PARAMS(GRP_FIELD_F, GRP_FIELD_I) } GhostPlayerParams;
 typedef struct GhostEnemyParams { GHOST_ENEMY_PARAMS(GRP_FIELD_F, GRP_FIELD_I) } GhostEnemyParams;
 
+typedef struct GhostBossParams { GHOST_BOSS_PARAMS(GRP_FIELD_F, GRP_FIELD_I) } GhostBossParams;
+typedef struct GhostPathParams { GHOST_PATH_PARAMS(GRP_FIELD_F, GRP_FIELD_I) } GhostPathParams;
+static inline GhostBossParams GhostBossParams_Make(void) { GhostBossParams p; GHOST_BOSS_PARAMS(GRP_SET, GRP_SET) return p; }
+static inline GhostPathParams GhostPathParams_Make(void) { GhostPathParams p; GHOST_PATH_PARAMS(GRP_SET, GRP_SET) return p; }
+static inline void GhostBossParams_Clamp(GhostBossParams* p) { GHOST_BOSS_PARAMS(GRP_CLAMP_F, GRP_CLAMP_I) }
+static inline void GhostPathParams_Clamp(GhostPathParams* p) { GHOST_PATH_PARAMS(GRP_CLAMP_F, GRP_CLAMP_I) }
+
 static inline GhostPlayerParams GhostPlayerParams_Make(void)
 {
     GhostPlayerParams p; GHOST_PLAYER_PARAMS(GRP_SET, GRP_SET) return p;
@@ -120,5 +160,7 @@ static inline void GhostEnemyParams_Clamp(GhostEnemyParams* p) { GHOST_ENEMY_PAR
 
 #ifdef __cplusplus
 static_assert(sizeof(GhostPlayerParams) == 49 * 4, "GhostPlayerParams: field count changed, update the C# struct");
-static_assert(sizeof(GhostEnemyParams) == 19 * 4, "GhostEnemyParams: field count changed, update the C# struct");
+static_assert(sizeof(GhostEnemyParams) == 25 * 4, "GhostEnemyParams: field count changed, update the C# struct");
+static_assert(sizeof(GhostBossParams) == 12 * 4, "GhostBossParams: field count changed, update the C# struct");
+static_assert(sizeof(GhostPathParams) == 4 * 4, "GhostPathParams: field count changed, update the C# struct");
 #endif

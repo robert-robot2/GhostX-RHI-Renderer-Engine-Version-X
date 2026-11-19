@@ -4267,6 +4267,8 @@ static int Api_GetObjectProps(int id, GhostObjectProps* out)
     out->powerType = o->powerType; out->enemyPathMode = o->enemyPathMode; out->flying = o->flying; out->enemyDeathEffect = o->enemyDeathEffect; out->itemMoves = o->itemMoves; out->coinCount = o->coinCount;
     out->player = o->playerP;
     out->enemy = o->enemyP;
+    out->boss = o->bossP;
+    out->path = o->pathP;
     return 1;
 }
 
@@ -4602,6 +4604,36 @@ void GhostEngine_SetEnemyParams(int objectId, const GhostEnemyParams* in)
     o->enemyP = p;
 }
 
+int GhostEngine_GetBossParams(int objectId, GhostBossParams* out)
+{
+    GhostObject* o = FindObject(objectId);
+    if (!o || !out) return 0;
+    *out = o->bossP;
+    return 1;
+}
+void GhostEngine_SetBossParams(int objectId, const GhostBossParams* in)
+{
+    GhostObject* o = FindObject(objectId);
+    if (!o || !in) return;
+    GhostBossParams p = *in;
+    GhostBossParams_Clamp(&p);
+    o->bossP = p;
+}
+int GhostEngine_GetPathParams(int objectId, GhostPathParams* out)
+{
+    GhostObject* o = FindObject(objectId);
+    if (!o || !out) return 0;
+    *out = o->pathP;
+    return 1;
+}
+void GhostEngine_SetPathParams(int objectId, const GhostPathParams* in)
+{
+    GhostObject* o = FindObject(objectId);
+    if (!o || !in) return;
+    GhostPathParams p = *in;
+    GhostPathParams_Clamp(&p);
+    o->pathP = p;
+}
 
 int GhostEngine_GetCustomTag(int objectId, char* buf, int bufSize)
 {

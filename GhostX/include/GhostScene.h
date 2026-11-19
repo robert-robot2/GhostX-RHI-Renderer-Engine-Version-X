@@ -317,6 +317,8 @@ struct GhostObject
     int coinCount = 1;   // blocks with contents = coin: coins paid before it is empty
     GhostPlayerParams playerP = GhostPlayerParams_Make();   // used when role == Player
     GhostEnemyParams  enemyP = GhostEnemyParams_Make();    // used when role == Enemy
+    GhostBossParams   bossP = GhostBossParams_Make();       // used when role == Boss
+    GhostPathParams   pathP = GhostPathParams_Make();       // used by Pathway markers (role == Custom)
 };
 // The tag the game module searches by: the role's name, or the custom text
 inline std::string GhostObject_Tag(const GhostObject& o)
