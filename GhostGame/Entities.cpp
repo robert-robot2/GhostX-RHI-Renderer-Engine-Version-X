@@ -4,7 +4,7 @@
 //Entities.cpp
 
 struct Saved { int id; float pos[3], scale[3], color[3]; char tag[32]; int visible; int tex; };
-struct Enemy { int id; float a[3], b[3]; float speed, pause, wait; int mode; int dir; float vy; bool alive, done, grounded, wingless; float dieTimer; float attack, atkCool; };
+struct Enemy { int id; float a[3], b[3]; float speed, pause, wait; int mode; int dir; float vy; bool alive, done, grounded, wingless; float dieTimer; float attack, atkCool; GhostEnemyParams ep; };
 
 static std::vector<Saved> g_saved;
 static std::vector<int>   g_coins, g_enemyIds, g_blocks;
@@ -164,10 +164,11 @@ static void RebuildEnemies()
 
         GhostObjectProps pr = {};
         const bool has = G->GetObjectProps(id, &pr) != 0;
+        e.ep = has ? pr.enemy : GhostEnemyParams_Make();
         float off[3] = { 0, 0, 0 };
         if (has) memcpy(off, pr.pathOffset, sizeof off);
         off[1] = 0.0f;                                        // gravity owns Y
-        if (off[0] * off[0] + off[2] * off[2] < 0.0001f) off[2] = Cfg::EnemyPatrol;   // no offset set: old default patrol
+        if (off[0] * off[0] + off[2] * off[2] < 0.0001f) off[2] = e.ep.patrolDefault;
 
         for (int k = 0; k < 3; k++) e.b[k] = e.a[k] + off[k];
         e.speed = (has && pr.moveSpeed > 0.01f) ? pr.moveSpeed : Cfg::EnemySpeed;
@@ -361,7 +362,7 @@ void Enemy_Kill(int id, bool stomp)
 
                 ShellState& ss = ShellOf(id);
                 ss.dx = ss.dz = ss.vy = 0.0f;
-                ss.cool = 0.5f;                            // grace time so the stomp doesn't instantly kick/grab it
+                ss.cool = e.ep.shellGrace;
                 Sprite_Play(id, "Shell", "Shell");
             }
             else
@@ -372,7 +373,7 @@ void Enemy_Kill(int id, bool stomp)
                 if (dpr.enemyDeathEffect == 1)
                 {
                     // bounce off screen
-                    e.vy = Cfg::StompBounce * 1.5f;
+                    e.vy = e.ep.deathBounce;
                     e.alive = false;
                     // leave visible, gravity + vy will carry it off screen naturally
                     if (!Sprite_Play(id, "Die", "Hurt")) {}
@@ -382,13 +383,13 @@ void Enemy_Kill(int id, bool stomp)
                     // flatten squash
                     float s[3], p[3];
                     G->GetScale(id, s); G->GetPosition(id, p);
-                    p[1] -= s[1] * 0.5f * 0.7f; s[1] *= 0.2f;
+                    p[1] -= s[1] * 0.5f * e.ep.flattenDrop; s[1] *= e.ep.flattenScaleY;               
                     G->SetScale(id, s); G->SetPosition(id, p);
-                    e.dieTimer = 0.6f;
+                    e.dieTimer = e.ep.flattenTime;
                 }
                 else
                 {
-                    if (Sprite_Play(id, "Die", "Hurt")) e.dieTimer = (G->IsModel && G->IsModel(id)) ? Cfg::ModelEnemyDieTime : 0.5f;
+                    if (Sprite_Play(id, "Die", "Hurt")) e.dieTimer = (G->IsModel && G->IsModel(id)) ? e.ep.modelDieTime : e.ep.spriteDieTime;
                     else G->SetVisible(id, 0);
                 }
             }
@@ -587,7 +588,7 @@ void Blocks_Bump(int id)
 
     if (brick && give == 1)                                // plain brick: only big Mario breaks it
     {
-        if (S.big || Cfg::SmallBreaksBricks) BreakBrick(id, pr.breakEffect); else Sfx("bump");
+        if (S.big || PP.smallBreaksBricks) BreakBrick(id, pr.breakEffect); else Sfx("bump");
         return;
     }
     if (brick) BreakBrick(id, pr.breakEffect);             // brick with contents breaks and pays out
@@ -702,15 +703,15 @@ void Movers_Update(float dt)
     }
 }
 // Is there something solid just beyond the enemy's leading edge, a little below its feet?
-static bool GroundAhead(const Body& b, float dx, float dz)
+static bool GroundAhead(const Body& b, float dx, float dz, float ledgeLead, float ledgeDepth)
 {
     const float len = sqrtf(dx * dx + dz * dz);
     if (len < 0.0001f) return true;
-    const float lead = fmaxf(b.half[0], b.half[2]) + 0.15f;
+    const float lead = fmaxf(b.half[0], b.half[2]) + ledgeLead;
     const float cx = b.pos[0] + dx / len * lead, cz = b.pos[2] + dz / len * lead;
     const float feet = b.pos[1] - b.half[1];
-    const float mn[3] = { cx - 0.05f, feet - 0.4f,  cz - 0.05f };
-    const float mx[3] = { cx + 0.05f, feet - 0.05f, cz + 0.05f };
+    const float mn[3] = { cx - 0.05f, feet - ledgeDepth, cz - 0.05f };
+    const float mx[3] = { cx + 0.05f, feet - 0.05f,      cz + 0.05f };
     int ids[16];
     const int n = G->QueryBox(mn, mx, ids, 16);
     for (int i = 0; i < n; i++) if (ids[i] != b.id && IsSolid(ids[i])) return true;
@@ -772,11 +773,11 @@ void Fireball_Spawn(float dx, float dy, float dz)
 
     Fireball f = {};
     f.id = id;
-    f.life = 3.0f;
+    f.life = PP.fireballLife;
     f.straight = (dy != 0.0f);
-    f.vel[0] = dx * 8.0f;
-    f.vel[1] = f.straight ? dy * 8.0f : 3.0f;   // flat shots keep the small upward arc
-    f.vel[2] = dz * 8.0f;
+    f.vel[0] = dx * PP.fireballSpeed;
+    f.vel[1] = f.straight ? dy * PP.fireballSpeed : 3.0f;   // flat shots keep the small upward arc
+    f.vel[2] = dz * PP.fireballSpeed;
     g_fireballs.push_back(f);
 }
 
@@ -1151,7 +1152,7 @@ void Entities_Update(float dt)
             }
             else
             {
-                if (r.hitFloor) fb.vel[1] = 5.0f;
+                if (r.hitFloor) fb.vel[1] = PP.fireballBounce;
                 if (r.hitX || r.hitZ) { G->Destroy(fb.id); g_fireballs.erase(g_fireballs.begin() + i); continue; }
             }
             fb.vel[0] = b.vel[0]; fb.vel[1] = b.vel[1]; fb.vel[2] = b.vel[2];
@@ -1259,7 +1260,7 @@ void Entities_Update(float dt)
                     db.vel[0] = 0.0f; db.vel[1] = e.vy; db.vel[2] = 0.0f;
                     MoveBody(db, dt);
                     StoreBody(db);
-                    if (db.pos[1] < Cfg::FallLimit) { G->SetVisible(e.id, 0); e.vy = 0.0f; }
+                    if (db.pos[1] < e.ep.fallLimit) { G->SetVisible(e.id, 0); e.vy = 0.0f; }
                 }
             }
             continue;
@@ -1271,8 +1272,8 @@ void Entities_Update(float dt)
         const bool isFlying = G->GetObjectProps(e.id, &epr) && (epr.flying == 1 || (epr.flying == 2 && !e.wingless));
         if (!isFlying)
         {
-            e.vy -= Cfg::Gravity * dt;
-            if (e.vy < -Cfg::MaxFall) e.vy = -Cfg::MaxFall;
+            e.vy -= e.ep.gravity * dt;
+            if (e.vy < -e.ep.maxFall) e.vy = -e.ep.maxFall;
         }
 
         if (e.wait > 0.0f) e.wait -= dt;
@@ -1287,13 +1288,13 @@ void Entities_Update(float dt)
             {
                 atkDx = pbody.pos[0] - b.pos[0];
                 atkDz = pbody.pos[2] - b.pos[2];
-                const float r2 = Cfg::EnemyAttackRange * Cfg::EnemyAttackRange;
+                const float r2 = e.ep.attackRange * e.ep.attackRange;
                 if (e.attack <= 0.0f && e.atkCool <= 0.0f && e.grounded &&
-                    atkDx * atkDx + atkDz * atkDz < r2 && fabsf(pbody.pos[1] - b.pos[1]) < 1.5f)
+                    atkDx * atkDx + atkDz * atkDz < r2 && fabsf(pbody.pos[1] - b.pos[1]) < e.ep.attackHeight)
                 {
-                    const float len = ClipSeconds(e.id, "Attack", Cfg::EnemyAttackTime);
+                    const float len = ClipSeconds(e.id, "Attack", e.ep.attackTime);
                     e.attack = len;
-                    e.atkCool = len + Cfg::EnemyAttackCooldown;
+                    e.atkCool = len + e.ep.attackCooldown;
                 }
             }
         }
@@ -1313,7 +1314,7 @@ void Entities_Update(float dt)
                 const float sp = arrive ? dist / dt : e.speed;             // land exactly on the end point
                 vx = dx / dist * sp; vz = dz / dist * sp;
             }
-            if (e.mode == 1 && e.grounded && !arrive && !GroundAhead(b, vx, vz))
+            if (e.mode == 1 && e.grounded && !arrive && !GroundAhead(b, vx, vz, e.ep.ledgeLead, e.ep.ledgeDepth))
             {
                 e.dir = -e.dir;                                            // ledge ahead: turn around
                 vx = vz = 0.0f;
@@ -1332,7 +1333,7 @@ void Entities_Update(float dt)
             else e.dir = -e.dir;                                           // ping-pong (both kinds)
         }
 
-        if (b.pos[1] < Cfg::FallLimit)                                     // fell out of the world
+        if (b.pos[1] < e.ep.fallLimit)
         {
             e.alive = false;
             G->SetTag(e.id, "Defeated");
@@ -1344,8 +1345,8 @@ void Entities_Update(float dt)
         Sprite_FaceScreen(e.id, vx* cosf(yaw) - vz * sinf(yaw));          // same formula the Player uses
         if (isModel)
         {
-            if (attacking) Model_Face(e.id, atkDx, atkDz, dt);            // swing toward Mario
-            else           Model_Face(e.id, vx, vz, dt);                  // otherwise face the way it walks
+            if (attacking) Model_Face(e.id, atkDx, atkDz, dt, e.ep.modelYawOffset, e.ep.modelTurnSpeed);   // swing toward Mario
+            else           Model_Face(e.id, vx, vz, dt, e.ep.modelYawOffset, e.ep.modelTurnSpeed);         // otherwise face the way it walks
             if (attacking && Sprite_Play(e.id, "Attack", nullptr)) {}
             else if (!e.grounded && !isFlying && Sprite_Play(e.id, "Jump", nullptr)) {}
             else Sprite_Play(e.id, walking ? "Walk" : "Idle", "Idle");

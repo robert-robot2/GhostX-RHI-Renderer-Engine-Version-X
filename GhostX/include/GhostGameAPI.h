@@ -1,4 +1,5 @@
 #pragma once
+#include "GhostRoleParams.h"
 // GhostGameAPI.h: the interface between the GhostX engine and a game module (GhostGame.dll).
 // Plain C, so the DLL doesn't depend on how the engine was compiled.
 // The struct only ever grows at the END. `version` changes only if an existing field changes meaning.
@@ -10,7 +11,7 @@
 extern "C" {
 #endif
 
-#define GHOST_GAME_API_VERSION 1
+#define GHOST_GAME_API_VERSION 2
 
 #ifdef __cplusplus
 #define GHOST_GAME_EXPORT extern "C" __declspec(dllexport)
@@ -69,6 +70,8 @@ extern "C" {
         int flying;   // 1 = not affected by gravity
         int enemyDeathEffect;
         float timeOffset;   // Timed Elevator (pathMode 3)
+        GhostPlayerParams player;   // Role = Player settings (Details > Gameplay > Behavior)
+        GhostEnemyParams  enemy;    // Role = Enemy settings
     } GhostObjectProps;
 
     typedef struct GhostGameAPI

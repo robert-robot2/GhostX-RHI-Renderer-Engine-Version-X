@@ -13,7 +13,8 @@ extern float g_faceDir;
 extern float g_moveYawDeg;      // world yaw Mario last moved toward
 extern bool  g_haveMoveYaw;
 extern bool  g_playerModel;     // the Player is an imported 3D model (not a Sprite Actor)
-void Model_Face(int id, float wx, float wz, float dt);   // turn a model toward world direction (wx, wz)
+extern GhostPlayerParams PP;      // Role = Player settings (Details > Gameplay > Behavior), loaded in Player_Init
+void Model_Face(int id, float wx, float wz, float dt, float yawOffset, float turnSpeed);   // turn a model toward world direction (wx, wz)
 
 // Plays a sound from the bank by name. Safe when the sound is disabled, missing, or audio is off.
 inline void Sfx(const char* name) { if (G && G->PlaySfx) G->PlaySfx(name); }
@@ -30,20 +31,20 @@ bool Shell_Ready(int id);                      // is a loose, stationary shell p
 namespace Cfg
 {
     constexpr float Gravity = 25.0f, MaxFall = 30.0f;
-    constexpr float Walk = 4.0f, Run = 7.0f, Jump = 15.0f;
-    constexpr float GroundAccel = 60.0f, AirAccel = 30.0f;
-    constexpr float CoyoteTime = 0.10f, JumpBuffer = 0.12f;
-    constexpr float EnemySpeed = 1.5f, EnemyPatrol = 3.0f;
-    constexpr float StompBounce = 7.0f, StompBounceHeld = 11.0f;
-    constexpr float GrowFactor = 1.4f, Invulnerable = 1.5f;
+
+    constexpr float EnemySpeed = 1.5f;
+
+
+    constexpr float GrowFactor = 1.4f;
+
+
     constexpr float FallLimit = -50.0f;
+
     constexpr float CamDistance = 7.0f, CamPitch = -25.0f, CamTargetHeight = 0.6f;
     constexpr float CamTurnSpeed = 100.0f, CamSmooth = 10.0f;
-    constexpr bool SideScroller = false;        // true: W/S (up/down) don't move the player, only left/right
-    constexpr bool SmallBreaksBricks = false;   // false = small Mario only bumps bricks, like the original
-    constexpr float StarTime = 10.0f, PickupSize = 0.6f, PickupRise = 1.5f, PickupSpeed = 2.0f, StarBounce = 9.0f;
-    constexpr float PowerScaleX[3] = { 1.0f, 1.0f, 1.0f };   // small, big, fire: match your art's width ratio
-    constexpr float PowerScaleY[3] = { 1.0f, 2.0f, 2.0f };   // 16x16 -> 16x32 art = 2.0. The collider follows the scale.
+
+
+    constexpr float PickupSize = 0.6f, PickupRise = 1.5f, PickupSpeed = 2.0f, StarBounce = 9.0f;
     constexpr float NightDepth = -2.0f;      // Mario below this Y: the sky goes to night
     constexpr float NightHour = 22.0f;
     constexpr float NightFadeSpeed = 8.0f;   // hours per second (8 = about 1.2 s to night). Use 1000 to snap instantly.
@@ -55,40 +56,14 @@ namespace Cfg
     constexpr float BridgeTileDelay = 0.15f;   // seconds between bridge tiles falling
     constexpr float BossHopInterval = 1.4f;    // seconds between boss hops
     constexpr float FireYawOffset = 0.0f;   // was 90.0f; rotation now lives in Player.cpp
-    constexpr float DeathTime = 2.5f;        // seconds the Death animation plays before the restart / Game Over
-    constexpr float DeathHop = 12.0f;        // hop speed when he dies on screen
-    constexpr float DeathPop = 0.65f;        // pit death: how high the pop reaches (fraction of the screen height)
-    constexpr float TransformTime = 0.9f;    // seconds the game freezes while the Transform animation plays
     constexpr float ShellKickSafe = 0.3f;    // a freshly kicked or thrown shell can't hurt Mario for this long
     constexpr float HurryTime = 100.0f;      // the hurry-up jingle plays when the timer drops to this
-    constexpr float RunJump = 20.0f;   // jump speed while sprinting (Jump = 15 otherwise)
     constexpr float CamFocusPitch = -15.0f;   // Z-reset tilt (negative = camera above Mario, looking down, same as CamPitch)
     constexpr float CamFocusPitchSpeed = 300.0f;   // degrees per second the tilt eases back
-    constexpr float GrowPop = 0.1f;   // extra lift when growing, so the bigger collider clears the floor
-    constexpr float ShrinkTime = 0.9f;   // freeze while the Shrink animation plays
-    constexpr float SkidMinSpeed = 4.5f;    // planar speed needed to skid. Walk = 4.0, so only sprinting skids. Lower it (e.g. 2.0) to skid from a walk too
-    constexpr float SkidExitSpeed = 0.5f;    // skid ends when speed drops below this
-    constexpr float SkidFriction = 28.0f;   // braking, units/s^2 (GroundAccel is 60). Lower = longer slide
-    constexpr float SkidOpposeCos = -0.6f;   // input must oppose velocity this much (-1 = exactly opposite)
     constexpr bool  SkidFlipSprite = false;   // true if your skid art is drawn facing the other way
     // ---- 3D model player (Role = Player is an imported model instead of a Sprite Actor) ----
-    constexpr float ModelYawOffset = 0.0f;       // she walks backwards: 180. Sideways: 90 or -90
-    constexpr float ModelTurnSpeed = 720.0f;     // degrees per second she turns toward the way she moves
     constexpr float ModelCamHeight = 1.1f;       // non-orbit camera aims this far above her feet (sprites use CamTargetHeight)
-    constexpr float ModelPowerScale[3] = { 1.0f, 1.5f, 1.5f };   // small, big, fire. Uniform: stretching a model looks wrong
-    constexpr float ModelStrideSpeed = 0.0f;     // 0 = off. Else the walk clip speeds up / slows down as (her speed / this)
-    // ---- 3D player attack (the Attack clip) ----
-    constexpr float ModelAttackTime = 0.9f;      // seconds. Set it to about the length of the Attack clip
-    constexpr float ModelAttackHitAt = 0.9f;     // the swing connects this far through the Attack clip (0 = start, 1 = end)
-    constexpr float ModelAttackReach = 1.4f;     // how far in front of her it reaches
-    constexpr bool  ModelMeleeDamage = true;     // false = the Attack clip is animation only
-    // ---- 3D enemies ----
-    constexpr float EnemyAttackRange = 1.6f;     // an enemy swings when Mario is this close (units, flat distance)
-    constexpr float EnemyAttackTime = 0.9f;      // seconds. About the length of its Attack clip
-    constexpr float EnemyAttackCooldown = 1.5f;  // seconds between swings
-    constexpr float ModelEnemyDieTime = 1.2f;    // how long a 3D enemy's Die clip plays before it disappears
 }
-
 enum { MODE_MENU = 0, MODE_PLAY, MODE_OVER, MODE_SELECT, MODE_OPTIONS };
 
 struct GameState

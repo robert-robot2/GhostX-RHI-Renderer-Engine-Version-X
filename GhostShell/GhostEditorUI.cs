@@ -721,36 +721,84 @@ namespace GhostShell
     { public static readonly string[] Names = { "No", "Yes (no gravity)", "Winged (first stomp drops it)" }; protected override string[] Items => Names; }
 
 
+    // Filters the Behavior group down to the selected role's own properties
+    internal sealed class RoleBehaviorConverter : ExpandableObjectConverter
+    {
+        public override bool GetPropertiesSupported(ITypeDescriptorContext? context) => true;
+
+        public override PropertyDescriptorCollection? GetProperties(ITypeDescriptorContext? context, object value, Attribute[]? attributes)
+        {
+            var all = base.GetProperties(context, value, attributes);
+            if (all == null || value is not BehaviorEdit b) return all;
+
+            var keep = new List<PropertyDescriptor>();
+            foreach (string name in BehaviorEdit.PropsFor(b.CurrentRole))
+            {
+                PropertyDescriptor? pd = all[name];
+                if (pd != null) keep.Add(pd);
+            }
+            return new PropertyDescriptorCollection(keep.ToArray(), true);
+        }
+    }
+
 
     // Details > Gameplay > Behavior: the settings the new roles use
-    [TypeConverter(typeof(ExpandableObjectConverter))]
+    [TypeConverter(typeof(RoleBehaviorConverter))]
     internal sealed class BehaviorEdit
     {
         private readonly int _id;
+        private readonly int _shownRole;
 
         public BehaviorEdit(int id)
         {
             _id = id;
+            _shownRole = Get().role;
             MoveOffset = new Vec3Edit(
                 () => { var g = Get(); return (g.moveX, g.moveY, g.moveZ); },
                 (x, y, z) => { var g = Get(); g.moveX = x; g.moveY = y; g.moveZ = z; Set(g); });
+            PlayerMovement = new PlayerMoveGroup(id); PlayerJump = new PlayerJumpGroup(id);
+            PlayerDamage = new PlayerDamageGroup(id); PlayerPower = new PlayerPowerGroup(id);
+            PlayerSkid = new PlayerSkidGroup(id); PlayerAttack = new PlayerAttackGroup(id);
+            PlayerDeath = new PlayerDeathGroup(id); PlayerModel = new PlayerModelGroup(id);
+            EnemyPhysics = new EnemyPhysicsGroup(id); EnemyAttack = new EnemyAttackGroup(id);
+            EnemyDeath = new EnemyDeathGroup(id); EnemyModel = new EnemyModelGroup(id);
         }
 
         private GhostGameplayInfo Get() { var g = new GhostGameplayInfo(); GhostEngine.GhostEngine_GetGameplay(_id, ref g); return g; }
         private void Set(GhostGameplayInfo g) => GhostEngine.GhostEngine_SetGameplay(ref g);
 
-        [DisplayName("Link ID (portals, or Scenes/Other.ghostscene)")]
-        public string LinkId
+        [Browsable(false)] public int CurrentRole => Get().role;
+        [Browsable(false)] public int ShownRole => _shownRole;
+
+        // Role index (same order as RoleConverter.Names) -> Behavior properties that role shows.
+        // 0 Static, 1 Player, 2 Enemy, 3 Coin, 4 Block, 5 Goal, 6 Custom, 7 Portal Entry,
+        // 8 Portal Exit, 9 Breakable, 10 Moving Object, 11 Projectile, 12 Boss, 13 Hidden Block
+        private static readonly string[] NoProps = Array.Empty<string>();
+        private static readonly string[] PlayerProps = { nameof(PlayerMovement), nameof(PlayerJump), nameof(PlayerDamage),
+        nameof(PlayerPower), nameof(PlayerSkid), nameof(PlayerAttack), nameof(PlayerDeath), nameof(PlayerModel) };
+        private static readonly string[] EnemyProps = { nameof(MoveOffset), nameof(MoveSpeed), nameof(MovePause),
+        nameof(EnemyPathMode), nameof(FlyingEnemy), nameof(EnemyDeathEffect),
+        nameof(EnemyPhysics), nameof(EnemyAttack), nameof(EnemyDeath), nameof(EnemyModel) };
+        private static readonly string[] BlockProps = { nameof(Contents), nameof(PowerType), nameof(PickupMovement), nameof(CoinCount) };
+        private static readonly string[] BreakableProps = { nameof(Contents), nameof(PowerType), nameof(PickupMovement), nameof(CoinCount), nameof(BreakEffect) };
+        private static readonly string[] PortalProps = { nameof(PortalTrigger) };
+        private static readonly string[] MovingProps = { nameof(MoveOffset), nameof(MoveSpeed), nameof(MovePause), nameof(PathMode), nameof(TimingOffset) };
+
+        internal static string[] PropsFor(int role) => role switch
         {
-            get
-            {
-                var b = new byte[128];
-                GhostEngine.GhostEngine_GetLinkId(_id, b, b.Length);
-                int n = Array.IndexOf(b, (byte)0);
-                return Encoding.UTF8.GetString(b, 0, n < 0 ? b.Length : n);
-            }
-            set => GhostEngine.GhostEngine_SetLinkId(_id, value ?? "");
-        }
+            1 => PlayerProps,
+            2 => EnemyProps,
+            4 => BlockProps,
+            7 => PortalProps,
+            9 => BreakableProps,
+            10 => MovingProps,
+            13 => BlockProps,
+            _ => NoProps,        // Static, Player, Coin, Goal, Custom, Portal Exit, Projectile, Boss: empty for now
+        };
+
+
+
+     
 
         [DisplayName("Portal Trigger"), TypeConverter(typeof(PortalTriggerConverter))]
         public string PortalTrigger
@@ -760,6 +808,24 @@ namespace GhostShell
         }
 
         [DisplayName("Move Offset (A to B)")] public Vec3Edit MoveOffset { get; }
+
+        static BehaviorEdit() { GhostRoleParamCheck.Verify(); }
+
+        [DisplayName("Movement")] public PlayerMoveGroup PlayerMovement { get; }
+        [DisplayName("Jump")] public PlayerJumpGroup PlayerJump { get; }
+        [DisplayName("Stomp && Damage")] public PlayerDamageGroup PlayerDamage { get; }
+        [DisplayName("Power-Ups")] public PlayerPowerGroup PlayerPower { get; }
+        [DisplayName("Skid")] public PlayerSkidGroup PlayerSkid { get; }
+        [DisplayName("Attack && Fireball")] public PlayerAttackGroup PlayerAttack { get; }
+        [DisplayName("Death")] public PlayerDeathGroup PlayerDeath { get; }
+        [DisplayName("3D Model")] public PlayerModelGroup PlayerModel { get; }
+
+        [DisplayName("Physics && Patrol")] public EnemyPhysicsGroup EnemyPhysics { get; }
+        [DisplayName("Attack (3D)")] public EnemyAttackGroup EnemyAttack { get; }
+        [DisplayName("Death")] public EnemyDeathGroup EnemyDeath { get; }
+        [DisplayName("3D Model")] public EnemyModelGroup EnemyModel { get; }
+
+
         [DisplayName("Move Speed (units/s)")] public float MoveSpeed { get => Get().moveSpeed; set { var g = Get(); g.moveSpeed = value; Set(g); } }
         [DisplayName("Move Pause at ends (s)")] public float MovePause { get => Get().movePause; set { var g = Get(); g.movePause = value; Set(g); } }
 
@@ -804,7 +870,7 @@ namespace GhostShell
             set { int i = Array.IndexOf(ContentsConverter.Names, value); if (i >= 0) { var g = Get(); g.contents = i; Set(g); } }
         }
 
-        public override string ToString() => "(role settings)";
+        public override string ToString() => PropsFor(CurrentRole).Length == 0 ? "(none for this role)" : "(role settings)";
 
         [DisplayName("Power-Up Type (contents = Power-up)"), TypeConverter(typeof(PowerTypeConverter))]
         public string PowerType
@@ -1230,6 +1296,19 @@ namespace GhostShell
             set => GhostEngine.GhostEngine_SetCustomTag(_id, value ?? "");
         }
 
+        [Category("Gameplay"), DisplayName("Link ID (portals, or Scenes/Other.ghostscene)")]
+        public string LinkId
+        {
+            get
+            {
+                var b = new byte[128];
+                GhostEngine.GhostEngine_GetLinkId(_id, b, b.Length);
+                int n = Array.IndexOf(b, (byte)0);
+                return Encoding.UTF8.GetString(b, 0, n < 0 ? b.Length : n);
+            }
+            set => GhostEngine.GhostEngine_SetLinkId(_id, value ?? "");
+        }
+
         [Category("Gameplay")]
         public bool Collider
         {
@@ -1257,6 +1336,7 @@ namespace GhostShell
         public bool Locked { get => GetG().locked != 0; set { var g = GetG(); g.locked = value ? 1 : 0; SetG(g); } }
 
         [Category("Gameplay")] public BehaviorEdit Behavior { get; }
+        internal bool BehaviorOutOfDate() => Behavior.CurrentRole != Behavior.ShownRole;
 
 
     }
@@ -2317,11 +2397,20 @@ namespace GhostShell
                 // Free <-> Orbit swaps which properties exist, so rebuild the grid instead of refreshing it
                 if (snap is GhostCameraInfo ci && _grid.SelectedObject is CameraProxy cp && cp.IsOrbit != (ci.mode == 1))
                     ShowDetails(sel);
+                else if (BehaviorStale(_grid.SelectedObject))     // role changed: rebuild so Behavior lists the new role's properties
+                    ShowDetails(sel);
                 else
                     _grid.Refresh();
                 HighlightSlot(sel);
             }
         }
+
+        private static bool BehaviorStale(object? o) => o switch
+        {
+            ObjectProxy p => p.BehaviorOutOfDate(),
+            SpriteProxy p => p.BehaviorOutOfDate(),
+            _ => false,
+        };
 
         private void RebuildTree()
         {

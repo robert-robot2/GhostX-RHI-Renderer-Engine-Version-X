@@ -240,6 +240,20 @@ namespace GhostShell
             }
             set => GhostEngine.GhostEngine_SetCustomTag(_id, value ?? "");
         }
+
+        [Category("Gameplay"), DisplayName("Link ID (portals, or Scenes/Other.ghostscene)")]
+        public string LinkId
+        {
+            get
+            {
+                var b = new byte[128];
+                GhostEngine.GhostEngine_GetLinkId(_id, b, b.Length);
+                int n = Array.IndexOf(b, (byte)0);
+                return Encoding.UTF8.GetString(b, 0, n < 0 ? b.Length : n);
+            }
+            set => GhostEngine.GhostEngine_SetLinkId(_id, value ?? "");
+        }
+
         [Category("Gameplay")] public bool Collider { get => Gp().collider != 0; set { var g = Gp(); g.collider = value ? 1 : 0; SetGp(g); } }
         [Category("Gameplay"), DisplayName("Collider Size")] public Vec3Edit ColliderSize { get; }
         [Category("Gameplay"), DisplayName("Collider Offset")] public Vec3Edit ColliderOffset { get; }
@@ -252,6 +266,9 @@ namespace GhostShell
         public bool Locked { get => Gp().locked != 0; set { var g = Gp(); g.locked = value ? 1 : 0; SetGp(g); } }
 
         [Category("Gameplay")] public BehaviorEdit Behavior { get; }
+
+        internal bool BehaviorOutOfDate() => Behavior.CurrentRole != Behavior.ShownRole;
+
     }
 
     // Play > Create Test Sprite Sheet: a 4 x 2 sheet and a matching .ghostanim, so there is something to test with

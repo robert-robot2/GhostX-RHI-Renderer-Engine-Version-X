@@ -149,7 +149,30 @@ namespace GhostShell
         public float mapTilingU, mapTilingV, mapOffsetU, mapOffsetV;
         public float wpoSway, wpoSpeed, wpoMid;
     }
-
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GhostPlayerParams
+    {
+        public float walk, run, runAnimSpeed, groundAccel, airAccel, gravity, maxFall, fallLimit;
+        public int sideScroller;
+        public float jump, runJump, jumpCut, coyoteTime, jumpBuffer;
+        public float stompBounce, stompBounceHeld, stompTolerance, invulnerable, hurtTime, hurtHop;
+        public int smallBreaksBricks;
+        public float bigScaleX, bigScaleY, fireScaleX, fireScaleY, modelBigScale, modelFireScale,
+                     growPop, transformTime, shrinkTime, starTime;
+        public float skidMinSpeed, skidExitSpeed, skidFriction, skidOpposeCos;
+        public float attackCooldown, fireballSpeed, fireballLife, fireballBounce;
+        public float deathTime, deathHop, deathPop;
+        public float modelYawOffset, modelTurnSpeed, modelStrideSpeed, modelAttackTime, modelAttackHitAt, modelAttackReach;
+        public int modelMeleeDamage;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GhostEnemyParams
+    {
+        public float gravity, maxFall, fallLimit, patrolDefault, ledgeLead, ledgeDepth;
+        public float attackRange, attackHeight, attackTime, attackCooldown;
+        public float modelDieTime, spriteDieTime, flattenTime, flattenScaleY, flattenDrop, deathBounce, shellGrace;
+        public float modelYawOffset, modelTurnSpeed;
+    }
 
     internal static class GhostEngine
     {
@@ -307,6 +330,16 @@ namespace GhostShell
         public static extern int GhostEngine_GetGameplay(int objectId, ref GhostGameplayInfo info);
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern void GhostEngine_SetGameplay(ref GhostGameplayInfo info);
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetPlayerParams(int objectId, ref GhostPlayerParams p);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetPlayerParams(int objectId, ref GhostPlayerParams p);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetEnemyParams(int objectId, ref GhostEnemyParams p);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetEnemyParams(int objectId, ref GhostEnemyParams p);
+
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern int GhostEngine_GetCustomTag(int objectId, [Out] byte[] buf, int bufSize);
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]

@@ -1,6 +1,7 @@
 // GhostScene.h — backend-agnostic scene model
 #pragma once
 #include "GhostMath.h"
+#include "GhostRoleParams.h"
 #include <vector>
 #include <string>
 #include <string.h>
@@ -314,7 +315,8 @@ struct GhostObject
     int powerType = 0;   // blocks: 0 auto, 1 mushroom, 2 fire flower, 3 star, 4 1-up
     int itemMoves = 0;   // 0 by type, 1 moves, 2 stays put
     int coinCount = 1;   // blocks with contents = coin: coins paid before it is empty
-
+    GhostPlayerParams playerP = GhostPlayerParams_Make();   // used when role == Player
+    GhostEnemyParams  enemyP = GhostEnemyParams_Make();    // used when role == Enemy
 };
 // The tag the game module searches by: the role's name, or the custom text
 inline std::string GhostObject_Tag(const GhostObject& o)

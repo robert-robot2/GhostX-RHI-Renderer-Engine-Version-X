@@ -177,6 +177,7 @@ xcopy /Y /E /I "$(ProjectDir)shaders" "$(SolutionDir)GhostShell\bin\x64\Release\
     <ClInclude Include="include\GhostPad.h" />
     <ClInclude Include="include\GhostPipeline.h" />
     <ClInclude Include="include\GhostRHI_DX12.h" />
+    <ClInclude Include="include\GhostRoleParams.h" />
     <ClInclude Include="include\GhostRuntime.h" />
     <ClInclude Include="include\GhostScene.h" />
     <ClInclude Include="include\GhostSceneIO.h" />

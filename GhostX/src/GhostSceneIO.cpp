@@ -49,6 +49,15 @@ static std::string ResolveStoredPath(const std::string& stored, const std::strin
 static json F3(const float* a) { return json::array({ a[0], a[1], a[2] }); }
 static json V3(const GhostVec3& v) { return json::array({ v.x, v.y, v.z }); }
 
+// ---- per-role parameters (generated from GhostRoleParams.h) ----
+#define RP_SAVE(n, d, lo, hi) j[#n] = p.n;
+#define RP_LOAD(n, d, lo, hi) p.n = j.value(#n, p.n);
+static json PlayerParamsToJson(const GhostPlayerParams& p) { json j = json::object(); GHOST_PLAYER_PARAMS(RP_SAVE, RP_SAVE) return j; }
+static json EnemyParamsToJson(const GhostEnemyParams& p) { json j = json::object(); GHOST_ENEMY_PARAMS(RP_SAVE, RP_SAVE) return j; }
+static void PlayerParamsFromJson(const json& j, GhostPlayerParams& p) { GHOST_PLAYER_PARAMS(RP_LOAD, RP_LOAD) GhostPlayerParams_Clamp(&p); }
+static void EnemyParamsFromJson(const json& j, GhostEnemyParams& p) { GHOST_ENEMY_PARAMS(RP_LOAD, RP_LOAD) GhostEnemyParams_Clamp(&p); }
+
+
 static void ReadF(const json& j, const char* key, float* out, int n)
 {
     auto it = j.find(key);
@@ -241,6 +250,12 @@ bool GhostScene_Save(const GhostScene& s, const std::string& root, const std::st
             jo["contents"] = o.contents;
             jo["portalTrigger"] = o.portalTrigger;
             jo["item"] = json{ { "powerType", o.powerType },{ "moves", o.itemMoves },{ "coins", o.coinCount } };
+            {
+                const GhostPlayerParams pd = GhostPlayerParams_Make();
+                const GhostEnemyParams  ed = GhostEnemyParams_Make();
+                if (memcmp(&o.playerP, &pd, sizeof pd) != 0) jo["playerParams"] = PlayerParamsToJson(o.playerP);
+                if (memcmp(&o.enemyP, &ed, sizeof ed) != 0) jo["enemyParams"] = EnemyParamsToJson(o.enemyP);
+            }
             jo["shadow"] = json{ { "mode", o.shadowMode },{ "light", o.shadowLightId },{ "receive", o.receiveShadows } };
             if (o.meshId == GHOST_MESH_QUAD)
             {
@@ -548,6 +563,9 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
                     o.itemMoves = Clampi(it.value("moves", 0), 0, 2);
                     o.coinCount = Clampi(it.value("coins", 1), 1, 999);
                 }
+                if (jo.contains("playerParams") && jo["playerParams"].is_object()) PlayerParamsFromJson(jo["playerParams"], o.playerP);
+                if (jo.contains("enemyParams") && jo["enemyParams"].is_object())    EnemyParamsFromJson(jo["enemyParams"], o.enemyP);
+
                 if (jo.contains("shadow") && jo["shadow"].is_object())
                 {
                     const json& sh = jo["shadow"];
@@ -764,6 +782,7 @@ unsigned int GhostScene_Hash(const GhostScene& s)
         F(o.timeOffset);
         I(o.pathMode); I(o.enemyPathMode); I(o.flying ? 1 : 0); I(o.enemyDeathEffect); I(o.breakEffect); I(o.contents); I(o.portalTrigger);
         I(o.powerType); I(o.itemMoves); I(o.coinCount);
+        mix(&o.playerP, sizeof o.playerP); mix(&o.enemyP, sizeof o.enemyP);
         S(o.animator.anim); S(o.animator.clip); I(o.animator.playing ? 1 : 0); F(o.animator.speed);
         const int n = GhostMesh_FaceCount(o.meshId);
         for (int f = 0; f < n; f++) mix(&o.faces[f], sizeof(GhostMaterial));

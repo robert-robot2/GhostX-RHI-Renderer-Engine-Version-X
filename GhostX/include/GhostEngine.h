@@ -1,6 +1,7 @@
 // GhostEngine.h
 #pragma once
 #include "GhostVideoSettings.h"
+#include "GhostRoleParams.h"
 #include <Windows.h>
 
 #ifdef GHOSTENGINE_EXPORTS
@@ -232,6 +233,12 @@ extern "C"
     // ---- Gameplay data ----
     GHOST_API int  GhostEngine_GetGameplay(int objectId, GhostGameplayInfo* out);
     GHOST_API void GhostEngine_SetGameplay(const GhostGameplayInfo* in);
+
+    GHOST_API int  GhostEngine_GetPlayerParams(int objectId, GhostPlayerParams* out);
+    GHOST_API void GhostEngine_SetPlayerParams(int objectId, const GhostPlayerParams* in);
+    GHOST_API int  GhostEngine_GetEnemyParams(int objectId, GhostEnemyParams* out);
+    GHOST_API void GhostEngine_SetEnemyParams(int objectId, const GhostEnemyParams* in);
+
     GHOST_API int  GhostEngine_GetCustomTag(int objectId, char* buf, int bufSize);
     GHOST_API void GhostEngine_SetCustomTag(int objectId, const char* utf8Tag);
     GHOST_API void GhostEngine_SetGameModulePath(const char* utf8Path);

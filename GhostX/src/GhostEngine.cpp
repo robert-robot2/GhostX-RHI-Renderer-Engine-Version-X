@@ -4265,6 +4265,8 @@ static int Api_GetObjectProps(int id, GhostObjectProps* out)
     out->contents = o->contents;    out->portalTrigger = o->portalTrigger;
     out->locked = o->locked ? 1 : 0;
     out->powerType = o->powerType; out->enemyPathMode = o->enemyPathMode; out->flying = o->flying; out->enemyDeathEffect = o->enemyDeathEffect; out->itemMoves = o->itemMoves; out->coinCount = o->coinCount;
+    out->player = o->playerP;
+    out->enemy = o->enemyP;
     return 1;
 }
 
@@ -4565,6 +4567,41 @@ void GhostEngine_SetGameplay(const GhostGameplayInfo* in)
     o->enemyDeathEffect = ci(in->enemyDeathEffect, 0, 3);
     o->colliderRotation = { cf(in->crx, -720.0f, 720.0f), cf(in->cry, -720.0f, 720.0f), cf(in->crz, -720.0f, 720.0f) };
 }
+
+int GhostEngine_GetPlayerParams(int objectId, GhostPlayerParams* out)
+{
+    GhostObject* o = FindObject(objectId);
+    if (!o || !out) return 0;
+    *out = o->playerP;
+    return 1;
+}
+
+void GhostEngine_SetPlayerParams(int objectId, const GhostPlayerParams* in)
+{
+    GhostObject* o = FindObject(objectId);
+    if (!o || !in) return;
+    GhostPlayerParams p = *in;
+    GhostPlayerParams_Clamp(&p);
+    o->playerP = p;
+}
+
+int GhostEngine_GetEnemyParams(int objectId, GhostEnemyParams* out)
+{
+    GhostObject* o = FindObject(objectId);
+    if (!o || !out) return 0;
+    *out = o->enemyP;
+    return 1;
+}
+
+void GhostEngine_SetEnemyParams(int objectId, const GhostEnemyParams* in)
+{
+    GhostObject* o = FindObject(objectId);
+    if (!o || !in) return;
+    GhostEnemyParams p = *in;
+    GhostEnemyParams_Clamp(&p);
+    o->enemyP = p;
+}
+
 
 int GhostEngine_GetCustomTag(int objectId, char* buf, int bufSize)
 {
