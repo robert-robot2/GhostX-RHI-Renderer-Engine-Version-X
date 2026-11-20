@@ -276,6 +276,181 @@ struct GhostAnimator
     GhostVec3 scaleMul = { 1, 1, 1 };
 };
 
+
+// ---- Tile Map (Maps > Tile Map). A GhostObject with tileMap.enabled = true ----
+constexpr int GHOST_TILEMAP_MAX_GRID = 256;
+constexpr int GHOST_TILEMAP_MAX_LAYERS = 8;           // material layers per Tile Map (the weight maps hold 8)
+constexpr int GHOST_TILEMAP_MAX_VERTS = 262144;       // terrain vertex budget: the detail setting backs off to fit
+constexpr int GHOST_TILEMAP_MAX_SPLAT = 512;          // weight map size limit per side
+
+// A new number every time terrain data changes. Every state of the data has its own,
+// so undo / redo, the unsaved-changes check and GPU rebuilds can compare numbers instead of data.
+inline unsigned int GhostTile_NextStamp() { static unsigned int c = 0; return ++c; }
+
+struct GhostTileMap
+{
+    bool  enabled = false;
+    float tileSize = 1.0f;                  // world units per tile
+    int   gridX = 10, gridY = 10;           // tiles along the grid's two axes
+    int   gridZ = 1;                        // reserved
+    int   direction = 1;                    // axis the grid faces: 0 X (wall), 1 Y (floor), 2 Z (wall toward the default camera)
+    int   shadowLightId = 0;                // 0 = every light shadows the landscape, otherwise only this directional light
+    int   layerCount = 0;                   // material layers in use (materials are GhostObject::faces[0 .. layerCount-1])
+    int   subdiv = 4;                       // terrain quads per tile side (lowered automatically for big maps)
+    std::vector<float> height;              // (gridX*sub+1) * (gridY*sub+1), row = V. Displacement along the facing axis, object units
+    std::vector<unsigned char> splat;       // splatW * splatH * 8: weight of layers 0..7 per texel (sums to 255)
+    int   splatW = 0, splatH = 0;           // the size 'splat' was built for
+    float hMin = 0.0f, hMax = 0.0f;         // height range (for picking bounds)
+    unsigned int hStamp = 0, sStamp = 0;    // change stamps of the height data and the weight data
+};
+
+inline void GhostTileMap_Clamp(GhostTileMap& t)
+{
+    auto ci = [](int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); };
+    if (!(t.tileSize >= 0.01f)) t.tileSize = 0.01f;          // also catches NaN
+    if (t.tileSize > 100.0f)    t.tileSize = 100.0f;
+    t.gridX = ci(t.gridX, 1, GHOST_TILEMAP_MAX_GRID);
+    t.gridY = ci(t.gridY, 1, GHOST_TILEMAP_MAX_GRID);
+    t.gridZ = ci(t.gridZ, 1, 64);
+    t.direction = ci(t.direction, 0, 2);
+    t.layerCount = ci(t.layerCount, 0, GHOST_TILEMAP_MAX_LAYERS);
+    t.subdiv = ci(t.subdiv, 1, 16);
+}
+
+// The detail actually used: the requested one, lowered until the mesh fits the vertex budget
+inline int GhostTileMap_EffSub(int gx, int gy, int req)
+{
+    int s = req < 1 ? 1 : (req > 16 ? 16 : req);
+    while (s > 1 && (long long)(gx * s + 1) * (long long)(gy * s + 1) > GHOST_TILEMAP_MAX_VERTS) s--;
+    return s;
+}
+
+inline void GhostTileMap_SplatSize(int gx, int gy, int& w, int& h)
+{
+    auto c = [](int v) { return v < 32 ? 32 : (v > GHOST_TILEMAP_MAX_SPLAT ? GHOST_TILEMAP_MAX_SPLAT : v); };
+    w = c(gx * 16);
+    h = c(gy * 16);
+}
+
+inline void GhostTileMap_UpdateRange(GhostTileMap& t)
+{
+    float lo = 0.0f, hi = 0.0f;
+    for (float h : t.height) { if (h < lo) lo = h; if (h > hi) hi = h; }
+    t.hMin = lo; t.hMax = hi;
+}
+
+// Rebuilds the height and weight arrays for the current grid / detail. The old arrays (built for oldGX x oldGY tiles,
+// oldSub quads per tile, an oldSW x oldSH weight map) are carried over where they still fit; new areas start flat on layer 0.
+inline void GhostTileMap_Reshape(GhostTileMap& t, int oldGX, int oldGY, int oldSub, int oldSW, int oldSH)
+{
+    const int sub = GhostTileMap_EffSub(t.gridX, t.gridY, t.subdiv);
+    const int vx = t.gridX * sub + 1, vy = t.gridY * sub + 1;
+    const int ovx = oldGX * oldSub + 1, ovy = oldGY * oldSub + 1;
+
+    std::vector<float> nh((size_t)vx * (size_t)vy, 0.0f);
+    if (oldGX > 0 && oldGY > 0 && oldSub > 0 && t.height.size() == (size_t)ovx * (size_t)ovy)
+    {
+        for (int q = 0; q < vy; q++)
+        {
+            const float ty = (float)q / (float)sub;                    // position in tiles
+            if (ty > (float)oldGY + 1e-4f) break;
+            const float fy = ty * (float)oldSub;
+            int y0 = (int)fy; if (y0 > ovy - 2) y0 = ovy - 2; if (y0 < 0) y0 = 0;
+            const float wy = fy - (float)y0;
+            for (int p = 0; p < vx; p++)
+            {
+                const float tx = (float)p / (float)sub;
+                if (tx > (float)oldGX + 1e-4f) break;
+                const float fx = tx * (float)oldSub;
+                int x0 = (int)fx; if (x0 > ovx - 2) x0 = ovx - 2; if (x0 < 0) x0 = 0;
+                const float wx = fx - (float)x0;
+                const float* r0 = &t.height[(size_t)y0 * ovx + x0];
+                const float* r1 = r0 + ovx;
+                const float a = r0[0] + (r0[1] - r0[0]) * wx, b = r1[0] + (r1[1] - r1[0]) * wx;
+                nh[(size_t)q * vx + p] = a + (b - a) * wy;
+            }
+        }
+    }
+    t.height.swap(nh);
+
+    int nw, nhh;
+    GhostTileMap_SplatSize(t.gridX, t.gridY, nw, nhh);
+    std::vector<unsigned char> ns((size_t)nw * (size_t)nhh * 8, 0);
+    for (size_t i = 0; i < (size_t)nw * (size_t)nhh; i++) ns[i * 8] = 255;               // everything on layer 0
+    if (oldGX > 0 && oldGY > 0 && oldSW > 0 && oldSH > 0 && t.splat.size() == (size_t)oldSW * (size_t)oldSH * 8)
+    {
+        for (int r = 0; r < nhh; r++)
+        {
+            const float ty = ((float)r + 0.5f) / (float)nhh * (float)t.gridY;           // tile coordinate in the new map
+            if (ty >= (float)oldGY) break;
+            int orow = (int)(ty / (float)oldGY * (float)oldSH); if (orow >= oldSH) orow = oldSH - 1;
+            for (int c = 0; c < nw; c++)
+            {
+                const float tx = ((float)c + 0.5f) / (float)nw * (float)t.gridX;
+                if (tx >= (float)oldGX) break;
+                int ocol = (int)(tx / (float)oldGX * (float)oldSW); if (ocol >= oldSW) ocol = oldSW - 1;
+                memcpy(&ns[((size_t)r * nw + c) * 8], &t.splat[((size_t)orow * oldSW + ocol) * 8], 8);
+            }
+        }
+    }
+    t.splat.swap(ns);
+    t.splatW = nw; t.splatH = nhh;
+    GhostTileMap_UpdateRange(t);
+    t.hStamp = GhostTile_NextStamp();
+    t.sStamp = GhostTile_NextStamp();
+}
+
+// Keeps the arrays the right size (new Tile Map, loaded scene, restored undo step)
+inline void GhostTileMap_EnsureTiles(GhostTileMap& t)
+{
+    const int sub = GhostTileMap_EffSub(t.gridX, t.gridY, t.subdiv);
+    int sw, sh;
+    GhostTileMap_SplatSize(t.gridX, t.gridY, sw, sh);
+    const bool hOk = t.height.size() == (size_t)(t.gridX * sub + 1) * (size_t)(t.gridY * sub + 1);
+    const bool sOk = t.splatW == sw && t.splatH == sh && t.splat.size() == (size_t)sw * (size_t)sh * 8;
+    if (hOk && sOk) return;
+    GhostTileMap_Reshape(t, t.gridX, t.gridY, sub, t.splatW, t.splatH);
+}
+
+// Height at a point of the grid (u, v = object-space coordinates along the grid's two axes). Outside the grid = 0.
+inline float GhostTileMap_Height(const GhostTileMap& t, float u, float v)
+{
+    const int sub = GhostTileMap_EffSub(t.gridX, t.gridY, t.subdiv);
+    const int vx = t.gridX * sub + 1, vy = t.gridY * sub + 1;
+    if (t.height.size() != (size_t)vx * (size_t)vy) return 0.0f;
+    const float cell = t.tileSize / (float)sub;
+    const float fx = (u + 0.5f * (float)t.gridX * t.tileSize) / cell;
+    const float fy = (v + 0.5f * (float)t.gridY * t.tileSize) / cell;
+    if (fx < 0.0f || fy < 0.0f || fx >(float)(vx - 1) || fy >(float)(vy - 1)) return 0.0f;
+    int x0 = (int)fx, y0 = (int)fy;
+    if (x0 > vx - 2) x0 = vx - 2;
+    if (y0 > vy - 2) y0 = vy - 2;
+    const float wx = fx - (float)x0, wy = fy - (float)y0;
+    const float* r0 = &t.height[(size_t)y0 * vx + x0];
+    const float* r1 = r0 + vx;
+    const float a = r0[0] + (r0[1] - r0[0]) * wx, b = r1[0] + (r1[1] - r1[0]) * wx;
+    return a + (b - a) * wy;
+}
+
+// Half extents of the flat grid in object space (thin on the facing axis)
+inline GhostVec3 GhostTileMap_Half(const GhostTileMap& t)
+{
+    const float hu = t.gridX * t.tileSize * 0.5f, hv = t.gridY * t.tileSize * 0.5f, ht = 0.05f;
+    if (t.direction == 0) return GhostVec3(ht, hv, hu);
+    if (t.direction == 2) return GhostVec3(hu, hv, ht);
+    return GhostVec3(hu, ht, hv);
+}
+
+// Object-space box around the sculpted terrain (used for picking, shadows, focus)
+inline void GhostTileMap_Box(const GhostTileMap& t, GhostVec3& mn, GhostVec3& mx)
+{
+    const float hu = t.gridX * t.tileSize * 0.5f, hv = t.gridY * t.tileSize * 0.5f;
+    const float lo = (t.hMin < -0.05f ? t.hMin : -0.05f) - 0.02f, hi = (t.hMax > 0.05f ? t.hMax : 0.05f) + 0.02f;
+    if (t.direction == 0) { mn = GhostVec3(lo, -hv, -hu);  mx = GhostVec3(hi, hv, hu); }
+    else if (t.direction == 2) { mn = GhostVec3(-hu, -hv, -hi); mx = GhostVec3(hu, hv, -lo); }   // this grid faces -Z
+    else { mn = GhostVec3(-hu, lo, -hv);  mx = GhostVec3(hu, hi, hv); }
+}
+
 struct GhostObject
 {
     int       id = 0;
@@ -297,6 +472,7 @@ struct GhostObject
     int  shadowMode = 1;                      // 0 = off, 1 = casts from every light, 2 = casts only from shadowLightId
     int  shadowLightId = 0;
     bool receiveShadows = true;
+    GhostTileMap tileMap;                     // enabled = this object is a Tile Map (meshId is GHOST_MESH_PLANE, the real mesh is generated)
     // A model that couldn't be loaded keeps its reference here, so saving the scene doesn't lose it
     std::string missingMesh, missingMeshFile, missingFaces;
     bool      useVertexColor = false;
@@ -320,6 +496,36 @@ struct GhostObject
     GhostBossParams   bossP = GhostBossParams_Make();       // used when role == Boss
     GhostPathParams   pathP = GhostPathParams_Make();       // used by Pathway markers (role == Custom)
 };
+
+// Local bounds of an object: a Tile Map's grid, otherwise its mesh
+inline GhostVec3 GhostObject_Min(const GhostObject& o)
+{
+    if (!o.tileMap.enabled) return GhostMesh_Min(o.meshId);
+    GhostVec3 mn, mx;
+    GhostTileMap_Box(o.tileMap, mn, mx);
+    return mn;
+}
+inline GhostVec3 GhostObject_Max(const GhostObject& o)
+{
+    if (!o.tileMap.enabled) return GhostMesh_Max(o.meshId);
+    GhostVec3 mn, mx;
+    GhostTileMap_Box(o.tileMap, mn, mx);
+    return mx;
+}
+
+// Material slots of an object: a Tile Map's slots are its material layers (can be 0)
+inline int GhostObject_FaceCount(const GhostObject& o)
+{
+    if (o.tileMap.enabled) return o.tileMap.layerCount;
+    return GhostMesh_FaceCount(o.meshId);
+}
+// Slots the main pass draws: a Tile Map with no layers still draws once (default look)
+inline int GhostObject_DrawFaces(const GhostObject& o)
+{
+    if (o.tileMap.enabled) return o.tileMap.layerCount > 0 ? o.tileMap.layerCount : 1;
+    return GhostMesh_FaceCount(o.meshId);
+}
+
 // The tag the game module searches by: the role's name, or the custom text
 inline std::string GhostObject_Tag(const GhostObject& o)
 {
@@ -330,9 +536,11 @@ inline std::string GhostObject_Tag(const GhostObject& o)
     return "";
 }
 
-// Draw calls the main pass needs for this object: one per run of faces that share a material
+// Draw calls the main pass needs for this object: one per run of faces that share a material.
+// A Tile Map draws one pass per material layer.
 inline int GhostObject_DrawRuns(const GhostObject& o)
 {
+    if (o.tileMap.enabled) return o.tileMap.layerCount > 0 ? o.tileMap.layerCount : 1;
     const int n = GhostMesh_FaceCount(o.meshId);
     if (n <= 0) return 0;
     int runs = 1;
@@ -496,8 +704,11 @@ inline bool GhostScene_Remove(GhostScene& s, int id)
         if (s.mods[i].id == id) { s.mods.erase(s.mods.begin() + i); goto removed; }
     return false;
 removed:
+
     for (GhostObject& o : s.objects)             // an object set to a deleted light goes back to "All Lights"
         if (o.shadowMode == 2 && o.shadowLightId == id) { o.shadowMode = 1; o.shadowLightId = 0; }
+    for (GhostObject& o : s.objects)             // a Tile Map assigned to a deleted light goes back to "All Lights"
+        if (o.tileMap.shadowLightId == id) o.tileMap.shadowLightId = 0;
     if (s.selectedId == id) s.selectedId = 0;
     s.version++;
     return true;

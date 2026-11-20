@@ -149,6 +149,27 @@ namespace GhostShell
         public float mapTilingU, mapTilingV, mapOffsetU, mapOffsetV;
         public float wpoSway, wpoSpeed, wpoMid;
     }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GhostTileMapInfo
+    {
+        public int id;
+        public float tileSize;
+        public int gridX, gridY, gridZ;
+        public int direction;
+        public int receiveShadows;
+        public int shadowLightId;
+        public int layerCount;
+        public int subdiv;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GhostPaintInfo
+    {
+        public int active, tool;
+        public float radius, strength, fade, setHeight;
+        public int layer, layerCount, hasTileMap;
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     internal struct GhostPlayerParams
     {
@@ -192,6 +213,8 @@ namespace GhostShell
         public float holdTime, jumpHeight;
     }
 
+
+
     internal static class GhostEngine
     {
         private const string DllName = "GhostX.dll";
@@ -228,6 +251,29 @@ namespace GhostShell
         public static extern int GhostEngine_AddObject(int meshId, int screenX, int screenY);
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern int GhostEngine_AddLight(int lightType, int screenX, int screenY);
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_AddTileMap(int screenX, int screenY);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetTileMap(int objectId, ref GhostTileMapInfo info);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetTileMap(ref GhostTileMapInfo info);
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_AddTileLayer(int objectId);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_RemoveTileLayer(int objectId, int layer);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_AssignTileLayer(int objectId, int layer, int col0, int row0, int col1, int row1);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetTileLayerCounts(int objectId, [Out] int[] outCounts, int maxCount);
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern void GhostEngine_SetPaintMode(int on);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern int GhostEngine_GetPaintMode();
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern void GhostEngine_GetPaintSettings(out GhostPaintInfo p);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern void GhostEngine_SetPaintSettings(ref GhostPaintInfo p);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern void GhostEngine_ResetTerrain(int objectId, int what);
+
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern int GhostEngine_RemoveEntity(int id);
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]

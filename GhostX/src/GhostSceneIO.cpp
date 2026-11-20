@@ -174,6 +174,73 @@ static GhostMaterial MatFromJson(const json& j, const std::function<int(int)>& m
     return m;
 }
 
+// ---------------- Tile Map data: run-length + base64 ----------------
+static std::string B64Enc(const unsigned char* d, size_t n)
+{
+    static const char* T = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string o;
+    o.reserve((n + 2) / 3 * 4);
+    for (size_t i = 0; i < n; i += 3)
+    {
+        unsigned v = (unsigned)d[i] << 16;
+        if (i + 1 < n) v |= (unsigned)d[i + 1] << 8;
+        if (i + 2 < n) v |= (unsigned)d[i + 2];
+        o.push_back(T[(v >> 18) & 63]);
+        o.push_back(T[(v >> 12) & 63]);
+        o.push_back(i + 1 < n ? T[(v >> 6) & 63] : '=');
+        o.push_back(i + 2 < n ? T[v & 63] : '=');
+    }
+    return o;
+}
+
+static bool B64Dec(const std::string& s, std::vector<unsigned char>& out)
+{
+    out.clear();
+    unsigned acc = 0;
+    int bits = 0;
+    for (char c : s)
+    {
+        int v;
+        if (c >= 'A' && c <= 'Z') v = c - 'A';
+        else if (c >= 'a' && c <= 'z') v = 26 + (c - 'a');
+        else if (c >= '0' && c <= '9') v = 52 + (c - '0');
+        else if (c == '+') v = 62;
+        else if (c == '/') v = 63;
+        else if (c == '=') break;
+        else return false;
+        acc = (acc << 6) | (unsigned)v;
+        bits += 6;
+        if (bits >= 8) { bits -= 8; out.push_back((unsigned char)((acc >> bits) & 0xFF)); }
+    }
+    return true;
+}
+
+static void RleEnc(const unsigned char* d, size_t n, std::vector<unsigned char>& out)    // pairs: (count 1..255, value)
+{
+    out.clear();
+    for (size_t i = 0; i < n; )
+    {
+        size_t j = i + 1;
+        while (j < n && d[j] == d[i] && j - i < 255) j++;
+        out.push_back((unsigned char)(j - i));
+        out.push_back(d[i]);
+        i = j;
+    }
+}
+
+static bool RleDec(const std::vector<unsigned char>& in, size_t expect, std::vector<unsigned char>& out)
+{
+    out.clear();
+    out.reserve(expect);
+    for (size_t i = 0; i + 1 < in.size(); i += 2)
+    {
+        if (in[i] == 0 || out.size() + in[i] > expect) return false;
+        out.insert(out.end(), in[i], in[i + 1]);
+    }
+    return out.size() == expect;
+}
+
+
 // ============================================================
 //  Save
 // ============================================================
@@ -264,6 +331,36 @@ bool GhostScene_Save(const GhostScene& s, const std::string& root, const std::st
                 if (memcmp(&o.pathP, &td, sizeof td) != 0) jo["pathParams"] = PathParamsToJson(o.pathP);
             }
             jo["shadow"] = json{ { "mode", o.shadowMode },{ "light", o.shadowLightId },{ "receive", o.receiveShadows } };
+
+            if (o.tileMap.enabled)
+            {
+                const GhostTileMap& t = o.tileMap;
+                json jt = json{ { "tileSize", t.tileSize },{ "gridX", t.gridX },{ "gridY", t.gridY },{ "gridZ", t.gridZ },
+                                { "direction", t.direction },{ "shadowLight", t.shadowLightId },{ "layers", t.layerCount },
+                                { "subdiv", t.subdiv } };
+                std::vector<unsigned char> rle;
+                bool flat = true;
+                for (float h : t.height) if (h != 0.0f) { flat = false; break; }
+                if (!flat)                                                // sculpted heights
+                {
+                    RleEnc((const unsigned char*)t.height.data(), t.height.size() * sizeof(float), rle);
+                    jt["heights"] = B64Enc(rle.data(), rle.size());
+                }
+                const size_t texels = (size_t)t.splatW * (size_t)t.splatH;
+                if (t.layerCount >= 2 && texels > 0 && t.splat.size() == texels * 8)      // painted weights, one plane per layer
+                {
+                    std::vector<unsigned char> planar(texels * (size_t)t.layerCount);
+                    for (int l = 0; l < t.layerCount; l++)
+                        for (size_t i = 0; i < texels; i++) planar[(size_t)l * texels + i] = t.splat[i * 8 + (size_t)l];
+                    RleEnc(planar.data(), planar.size(), rle);
+                    jt["splat"] = B64Enc(rle.data(), rle.size());
+                    jt["splatW"] = t.splatW;
+                    jt["splatH"] = t.splatH;
+                }
+                jo["tileMap"] = jt;
+            }
+
+
             if (o.meshId == GHOST_MESH_QUAD)
             {
                 const GhostSprite& sp = o.sprite;
@@ -290,7 +387,7 @@ bool GhostScene_Save(const GhostScene& s, const std::string& root, const std::st
                 jo["animator"] = json{ { "anim", o.animator.anim },{ "clip", o.animator.clip },
                                        { "playing", o.animator.playing },{ "speed", o.animator.speed } };
             json faces = json::array();
-            const int n = GhostMesh_FaceCount(o.meshId);
+            const int n = GhostObject_FaceCount(o);
             for (int f = 0; f < n; f++) faces.push_back(MatToJson(o.faces[f], saved));
             jo["faces"] = faces;
             if (!o.missingFaces.empty())                                   // a placeholder keeps the original slots
@@ -581,6 +678,55 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
                     o.shadowLightId = sh.value("light", 0);
                     o.receiveShadows = sh.value("receive", true);
                 }
+                if (jo.contains("tileMap") && jo["tileMap"].is_object())
+                {
+                    const json& jt = jo["tileMap"];
+                    GhostTileMap& t = o.tileMap;
+                    t.enabled = true;
+                    t.tileSize = jt.value("tileSize", 1.0f);
+                    t.gridX = jt.value("gridX", 10);
+                    t.gridY = jt.value("gridY", 10);
+                    t.gridZ = jt.value("gridZ", 1);
+                    t.direction = jt.value("direction", 1);
+                    t.shadowLightId = jt.value("shadowLight", 0);
+                    t.layerCount = jt.value("layers", 0);
+                    t.subdiv = jt.value("subdiv", 4);
+                    GhostTileMap_Clamp(t);
+                    GhostTileMap_EnsureTiles(t);
+
+                    std::vector<unsigned char> raw, dec;
+                    if (jt.contains("heights") && jt["heights"].is_string() &&
+                        B64Dec(jt["heights"].get<std::string>(), raw) && RleDec(raw, t.height.size() * sizeof(float), dec))
+                        memcpy(t.height.data(), dec.data(), dec.size());
+
+                    const size_t texels = (size_t)t.splatW * (size_t)t.splatH;
+                    if (jt.contains("splat") && jt["splat"].is_string() && t.layerCount >= 2 &&
+                        jt.value("splatW", 0) == t.splatW && jt.value("splatH", 0) == t.splatH &&
+                        B64Dec(jt["splat"].get<std::string>(), raw) && RleDec(raw, texels * (size_t)t.layerCount, dec))
+                    {
+                        for (size_t i = 0; i < texels; i++)
+                            for (int l = 0; l < 8; l++) t.splat[i * 8 + (size_t)l] = (l < t.layerCount) ? dec[(size_t)l * texels + i] : 0;
+                    }
+                    else if (jt.contains("tiles") && jt["tiles"].is_string() && t.layerCount >= 2)   // a Phase 2 scene: one layer per tile
+                    {
+                        const std::string ts = jt["tiles"].get<std::string>();
+                        if (ts.size() == (size_t)t.gridX * (size_t)t.gridY)
+                            for (int r = 0; r < t.splatH; r++)
+                                for (int c = 0; c < t.splatW; c++)
+                                {
+                                    const int tc = c * t.gridX / t.splatW, tr = r * t.gridY / t.splatH;
+                                    int L = ts[(size_t)tr * t.gridX + tc] - '0';
+                                    if (L < 0 || L >= t.layerCount) L = 0;
+                                    unsigned char* b = &t.splat[((size_t)r * t.splatW + c) * 8];
+                                    memset(b, 0, 8);
+                                    b[L] = 255;
+                                }
+                    }
+                    GhostTileMap_UpdateRange(t);
+                    t.hStamp = GhostTile_NextStamp();
+                    t.sStamp = GhostTile_NextStamp();
+                }
+
                 if (mesh == GHOST_MESH_QUAD && jo.contains("sprite") && jo["sprite"].is_object())
                 {
                     const json& js = jo["sprite"];
@@ -611,7 +757,7 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
                 }
                 if (jo.contains("faces") && jo["faces"].is_array())
                 {
-                    const int n = GhostMesh_FaceCount(mesh);
+                    const int n = GhostObject_FaceCount(o);
                     for (int f = 0; f < n && f < GHOST_MAX_FACES && f < (int)jo["faces"].size(); f++)
                         o.faces[f] = MatFromJson(jo["faces"][f], mapTex);
                 }
@@ -748,6 +894,13 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
                 for (const GhostLight& l : s.lights) if (l.id == o.shadowLightId) ok = true;
                 if (!ok) { o.shadowMode = 1; o.shadowLightId = 0; }
             }
+        for (GhostObject& o : s.objects)         // a Tile Map whose assigned light is gone -> All Lights
+            if (o.tileMap.enabled && o.tileMap.shadowLightId != 0)
+            {
+                bool ok = false;
+                for (const GhostLight& l : s.lights) if (l.id == o.tileMap.shadowLightId) ok = true;
+                if (!ok) o.tileMap.shadowLightId = 0;
+            }
         return true;
     }
     catch (const std::exception& e)
@@ -786,13 +939,18 @@ unsigned int GhostScene_Hash(const GhostScene& s)
         I(o.useVertexColor ? 1 : 0);
         I(o.role); S(o.customTag); I(o.collider ? 1 : 0); V(o.colliderSize); V(o.colliderOffset); V(o.colliderRotation); I(o.visible ? 1 : 0);
         I(o.shadowMode); I(o.shadowLightId); I(o.receiveShadows ? 1 : 0);
+        I(o.tileMap.enabled ? 1 : 0); F(o.tileMap.tileSize); I(o.tileMap.gridX); I(o.tileMap.gridY);
+        I(o.tileMap.gridZ); I(o.tileMap.direction); I(o.tileMap.shadowLightId);
+
+        I(o.tileMap.layerCount); I(o.tileMap.subdiv); I((int)o.tileMap.hStamp); I((int)o.tileMap.sStamp);
+
         I(o.locked ? 1 : 0); S(o.link); V(o.pathOffset); F(o.moveSpeed); F(o.movePause);
         F(o.timeOffset);
         I(o.pathMode); I(o.enemyPathMode); I(o.flying ? 1 : 0); I(o.enemyDeathEffect); I(o.breakEffect); I(o.contents); I(o.portalTrigger);
         I(o.powerType); I(o.itemMoves); I(o.coinCount);
         mix(&o.playerP, sizeof o.playerP); mix(&o.enemyP, sizeof o.enemyP); mix(&o.bossP, sizeof o.bossP); mix(&o.pathP, sizeof o.pathP);
         S(o.animator.anim); S(o.animator.clip); I(o.animator.playing ? 1 : 0); F(o.animator.speed);
-        const int n = GhostMesh_FaceCount(o.meshId);
+        const int n = GhostObject_FaceCount(o);
         for (int f = 0; f < n; f++) mix(&o.faces[f], sizeof(GhostMaterial));
         if (o.meshId == GHOST_MESH_QUAD)
         {

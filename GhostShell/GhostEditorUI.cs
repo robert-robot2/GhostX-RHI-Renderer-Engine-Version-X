@@ -89,8 +89,9 @@ namespace GhostShell
             for (int i = 0; i < n; i++)
             {
                 if (i == GhostFontAtlas.TextureId || GhostFontAtlas.ExtraTextures.Contains(i)) continue;
-
-                list.Add(DisplayName(i));
+                string dn = DisplayName(i);
+                if (dn.StartsWith("[Splat")) continue;               // Tile Map weight maps
+                list.Add(dn);
             }
 
             list.Add(ImportLabel);
@@ -222,10 +223,13 @@ namespace GhostShell
 
     // One texture map of the selected material slot: texture + amount + channel + invert
     [TypeConverter(typeof(ExpandableObjectConverter))]
+    [System.ComponentModel.Editor(typeof(TextureThumbEditor), typeof(System.Drawing.Design.UITypeEditor))]
     internal sealed class MapEdit
     {
         private readonly int _id, _slot;
         public MapEdit(int id, int slot) { _id = id; _slot = slot; }
+
+        [Browsable(false)] public int TextureId => Read().textureId;
 
         private delegate void MapChange(ref GhostMapInfo m);
 
@@ -1675,7 +1679,7 @@ namespace GhostShell
                 BackColor = Bg2,
                 ForeColor = Fg,
             };
-            _category.Items.AddRange(new object[] { "Lighting", "Primitives", "Sprites", "Cameras", "Mods", "Models" });
+            _category.Items.AddRange(new object[] { "Lighting", "Primitives", "Sprites", "Cameras", "Mods", "Models", "Maps" });
             _category.SelectedIndexChanged += (s, e) => FillPalette();
             // add order matters for docking: Fill first, then Bottom, then Top
             _left.Controls.Add(_palette);
@@ -1824,13 +1828,15 @@ namespace GhostShell
             bool redo = (ctrl && key == Keys.Y) || (mods == (Keys.Control | Keys.Shift) && key == Keys.Z);
             bool copy = ctrl && key == Keys.C, paste = ctrl && key == Keys.V;
             bool faceKey = plain && key == Keys.F, gridKey = plain && key == Keys.G;
-            bool colKey = plain && key == Keys.H;                        
+            bool colKey = plain && key == Keys.H;
+            bool paintKey = plain && key == Keys.P;
+            bool brushDown = plain && key == Keys.OemOpenBrackets, brushUp = plain && key == Keys.OemCloseBrackets;
             bool focusKey = plain && key == Keys.Z, renameKey = plain && key == Keys.F2;
 
-            if (!(isFour || isDelete || ctrlD || ctrlF || undo || redo || copy || paste || faceKey || gridKey || colKey || focusKey || renameKey))
+            if (!(isFour || isDelete || ctrlD || ctrlF || undo || redo || copy || paste || faceKey || gridKey || colKey || focusKey || renameKey || paintKey || brushDown || brushUp))
                 return false;
-            if ((faceKey || gridKey || focusKey || renameKey || colKey) && GhostEngine.GhostEngine_GetPlayState() != 0)
-                return false;                                  // while playing these keys belong to the game
+            if ((faceKey || gridKey || focusKey || renameKey || colKey || paintKey || brushDown || brushUp) && GhostEngine.GhostEngine_GetPlayState() != 0)
+                return false;                                 // while playing these keys belong to the game
             if (colKey) { GhostEngine.GhostEngine_SetColliderMode(GhostEngine.GhostEngine_GetColliderMode() == 0 ? 1 : 0); return true; }
 
 
@@ -1838,6 +1844,14 @@ namespace GhostShell
             if (focus == null) return false;          // a native dialog (file / color picker) has focus
             if (IsInsideDesigner(focus)) return false;
             if (IsTypingIn(focus)) return false;      // never steal keys from a text box or the property grid
+            if (brushDown || brushUp)                                  // [ and ]: brush size while paint mode is on (hold to repeat)
+            {
+                if (GhostEngine.GhostEngine_GetPaintMode() == 0) return false;
+                GhostEngine.GhostEngine_GetPaintSettings(out GhostPaintInfo bp);
+                bp.radius *= brushUp ? 1.15f : 0.87f;
+                GhostEngine.GhostEngine_SetPaintSettings(ref bp);
+                return true;
+            }
             if (repeat) return true;
 
             int sel = GhostEngine.GhostEngine_GetSelected();
@@ -1846,7 +1860,7 @@ namespace GhostShell
             if (paste) { DoPaste(); return true; }
             if (gridKey) { ToggleGrid(); return true; }
             if (faceKey) { GhostEngine.GhostEngine_SetFaceMode(GhostEngine.GhostEngine_GetFaceMode() == 0 ? 1 : 0); return true; }
-
+            if (paintKey) { GhostEngine.GhostEngine_SetPaintMode(GhostEngine.GhostEngine_GetPaintMode() == 0 ? 1 : 0); return true; }
             if (isFour) { ToggleVisible(); return true; }
             if (sel == 0) return false;
             if (isDelete) { DoDelete(); return true; }
@@ -2281,6 +2295,9 @@ namespace GhostShell
                         if (_palette.Items.Count == 0) Add("(none yet - File > Import Model...)", "none", 0);
                         break;
                     }
+                case 6:
+                    Add("Tile Map", "tilemap", 0);
+                    break;
                 default:
                     {
                         int n = GhostEngine.GhostEngine_GetModTypeCount();
@@ -2318,9 +2335,10 @@ namespace GhostShell
         private void Spawn(string kind, int type, int x, int y)
         {
             int id = kind == "light" ? GhostEngine.GhostEngine_AddLight(type, x, y)
-         : kind == "cam" ? GhostEngine.GhostEngine_AddCamera(type, x, y)
-         : kind == "mod" ? GhostEngine.GhostEngine_AddMod(type, x, y)
-                           : GhostEngine.GhostEngine_AddObject(type, x, y);
+: kind == "cam" ? GhostEngine.GhostEngine_AddCamera(type, x, y)
+: kind == "mod" ? GhostEngine.GhostEngine_AddMod(type, x, y)
+: kind == "tilemap" ? GhostEngine.GhostEngine_AddTileMap(x, y)
+                : GhostEngine.GhostEngine_AddObject(type, x, y);
             if (id == 0) System.Media.SystemSounds.Beep.Play();   // scene is full (or 4 cameras already)
             else if (kind == "cam") _vp.Open(id);
             Sync();
@@ -2423,6 +2441,7 @@ namespace GhostShell
         {
             ObjectProxy p => p.BehaviorOutOfDate(),
             SpriteProxy p => p.BehaviorOutOfDate(),
+            TileMapProxy p => p.LayersOutOfDate(),
             _ => false,
         };
 
@@ -2510,9 +2529,13 @@ namespace GhostShell
                 var l = new GhostLightInfo();
                 if (GhostEngine.GhostEngine_GetObject(id, ref o) != 0)
                 {
-                    proxy = o.meshId == 4 ? new SpriteProxy(id)
-       : GhostEngine.GhostEngine_IsMeshSkinned(o.meshId) != 0 ? new ModelProxy(id)
-       : new ObjectProxy(id);
+                    var tm = new GhostTileMapInfo();
+                    if (GhostEngine.GhostEngine_GetTileMap(id, ref tm) != 0)
+                        proxy = tm.layerCount > 0 ? new TileMapLayerProxy(id) : new TileMapProxy(id);
+                    else
+                        proxy = o.meshId == 4 ? new SpriteProxy(id)
+                              : GhostEngine.GhostEngine_IsMeshSkinned(o.meshId) != 0 ? new ModelProxy(id)
+                              : new ObjectProxy(id);
                 }
                 else if (GhostEngine.GhostEngine_GetLight(id, ref l) != 0)
                 {
@@ -2546,7 +2569,9 @@ namespace GhostShell
             {
                 var gp = new GhostGameplayInfo();
                 GhostEngine.GhostEngine_GetGameplay(id, ref gp);
-                return (o, GhostEngine.GhostEngine_GetTargetFace(), gp);
+                var tm = new GhostTileMapInfo();
+                GhostEngine.GhostEngine_GetTileMap(id, ref tm);
+                return (o, GhostEngine.GhostEngine_GetTargetFace(), gp, tm, GhostEngine.GhostEngine_GetPaintMode());
             }
             var l = new GhostLightInfo();
             if (GhostEngine.GhostEngine_GetLight(id, ref l) != 0) return l;

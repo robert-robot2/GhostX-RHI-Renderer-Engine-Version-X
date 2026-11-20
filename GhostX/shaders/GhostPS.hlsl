@@ -48,6 +48,7 @@ cbuffer ObjectBuffer : register(b0)       // same layout as MVPBuffer in GhostVS
     float4 surfB;                         // subsurface rgb, w amount
     float4 wpoP;
     float4 opacityP;                      // x opacity
+    float4 tileP[2];                      // Tile Map: [0] x weight texture A, y weight texture B, z layer of this pass / [1] x gridX, y gridY, z 1 = checker look
 };
 
 Texture2D gTex[256] : register(t0, space1);   // linear views, indexed by texture id
@@ -371,6 +372,20 @@ float4 PSMain(PSInput input, bool isFront : SV_IsFrontFace) : SV_TARGET
     if ((spriteFlags & 1) != 0 && texel.a < 0.5f) discard;
     if (usePbr && surfA.x < 0.5f && !isFront) discard;            // Two Sided off
     const bool receive = objPad.z < 0.5f;
+    const int shadowSel = (int)(opacityP.y + 0.5f);     // 0 = every light shadows this surface, n = only light n-1 does (Tile Map: Directional Light)
+
+    // ---- Tile Map weight map: how much of this layer the pixel shows (layers are drawn as additive passes) ----
+    float splatW = 1.0f;
+    if (tileP[0].x > 0.5f)
+    {
+        const int    layerK = (int)(tileP[0].z + 0.5f);
+        const int    sid = (int)((layerK < 4 ? tileP[0].x : tileP[0].y) + 0.5f);
+        const float2 suv = float2(input.uv.x / tileP[1].x, 1.0f - input.uv.y / tileP[1].y);
+        const float4 sw = gTex[sid].SampleLevel(sLinClamp, suv, 0);
+        const int    ch = layerK & 3;
+        splatW = (ch == 0) ? sw.r : ((ch == 1) ? sw.g : ((ch == 2) ? sw.b : sw.a));
+        if (layerK > 0 && splatW < 0.004f) discard;
+    }
 
     // ---- alpha: masked = alpha test, translucent = blended ----
     float srcA = texel.a;
@@ -385,6 +400,14 @@ float4 PSMain(PSInput input, bool isFront : SV_IsFrontFace) : SV_TARGET
     else if (blend == 2) opacity = saturate(opacityP.x * MapValue(MAP_OPACITY, mu, 1.0f) * srcA);
 
     float3 albedo = pow(input.color.rgb, 2.2f) * texel.rgb;
+
+    if (tileP[1].z > 0.5f)                // a Tile Map with no layers yet: checker and tile lines, so the tiles can be seen
+    {
+        albedo *= (((int)(floor(input.uv.x) + floor(input.uv.y)) & 1) != 0) ? 1.0f : 0.75f;
+        const float2 fr = frac(input.uv);
+        const float edge = min(min(fr.x, 1.0f - fr.x), min(fr.y, 1.0f - fr.y));
+        albedo *= lerp(0.5f, 1.0f, smoothstep(0.0f, 0.03f, edge));
+    }
 
     // ---- surface values: slider, or the map ----
     const float metallic = saturate(MapValue(MAP_METALLIC, mu, saturate(pbrA.x)));
@@ -464,7 +487,7 @@ float4 PSMain(PSInput input, bool isFront : SV_IsFrontFace) : SV_TARGET
 
         float rawNoL = dot(N, toLight);
         float NoL = saturate(rawNoL);
-        if (receive && NoL > 0.0f && atten > 0.0f && L.shadow.x >= 0.0f)
+        if (receive && NoL > 0.0f && atten > 0.0f && L.shadow.x >= 0.0f && (shadowSel == 0 || shadowSel == (int)i + 1))
             atten *= lerp(1.0f, ShadowFactor(L, input.worldPos, Ng, type, input.pos.xy), shadowGlobal.x);
 
         // diffuse, with tinted wrap lighting for skin (Custom Data / Subsurface)
@@ -528,7 +551,7 @@ float4 PSMain(PSInput input, bool isFront : SV_IsFrontFace) : SV_TARGET
     }
 
     if (objPad.x > 1.5f) color += float3(0.25f, 0.12f, 0.0f);
-    return float4(pow(saturate(color), 1.0f / 2.2f), outA);
+    return float4(pow(saturate(color), 1.0f / 2.2f) * splatW, outA);
 }
 
 // ---------------- Icons ----------------

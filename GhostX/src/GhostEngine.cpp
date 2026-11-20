@@ -76,6 +76,16 @@ static bool       g_dragging = false;
 static int        g_dragId = 0;
 static GhostVec3  g_dragOffset;
 static GhostVec3  g_dragPlanePoint;
+
+// ---- Paint mode (P): sculpt and paint the selected Tile Map (the code is further down, next to the Tile Map mesh code) ----
+struct PaintBrush { int tool = 0; float radius = 2.0f, strength = 0.5f, fade = 0.6f, setHeight = 0.0f; };
+static bool        g_paintMode = false, g_painting = false, g_paintMouseIn = false, g_strokeHasPrev = false;
+static PaintBrush  g_brush;
+static int         g_paintMX = 0, g_paintMY = 0;
+static float       g_flattenH = 0.0f, g_prevU = 0.0f, g_prevV = 0.0f;
+static bool PaintBegin(int x, int y);
+static void OverlayPaintBrush(int rw, int rh);
+
 static GhostObject* FindObject(int id);
 static int          CurrentFace();
 static void UpdateSprites(float dt);
@@ -151,9 +161,47 @@ static void ReleaseSkinInstancesOfMesh(int meshId)
     for (int id : ids) FreeSkinInstance(id);
 }
 
+
+// ---- Tile Maps: one generated mesh slot per Tile Map object, plus its weight map textures ----
+struct TileInst
+{
+    int   slot = -1;
+    float tileSize = 0.0f;
+    int   gx = 0, gy = 0, dir = -1, sub = 0;
+    unsigned int hStamp = 0, sStamp = 0;                  // the data stamps the GPU copies were built from
+    int   splatA = 0, splatB = 0;                         // texture ids of the weight maps (0 = none)
+    int   splatW = 0, splatH = 0;
+    bool  seen = false;
+};
+static std::map<int, TileInst> g_tileInst;               // key = object id
+static bool g_tileSlotUsed[GHOST_MAX_TILEMAPS] = {};
+static std::vector<int> g_splatFree;                     // weight map texture ids that can be reused
+
+// 0 = every light shadows the surface, n = only light n-1 of the scene does (the Tile Map's "Directional Light")
+static int ShadowLightSelector(const GhostObject& o)
+{
+    if (!o.tileMap.enabled || o.tileMap.shadowLightId == 0) return 0;
+    for (size_t i = 0; i < g_scene.lights.size() && i < GHOST_MAX_LIGHTS; i++)      // same order as BuildSceneCB
+        if (g_scene.lights[i].id == o.tileMap.shadowLightId) return (int)i + 1;
+    return 0;
+}
+
+// Index range of a material slot of a normal mesh
+struct FaceSpan { unsigned int first, count; };
+static FaceSpan FaceSpanOf(const GhostObject& o, int f)
+{
+    const GhostFaceDef& d = GhostMesh_Face(o.meshId, f);
+    return { d.firstIndex, d.indexCount };
+}
+
 // The mesh slot to draw an object with: its animated vertex buffer when it has one
 static int DrawMeshOf(const GhostObject& o)
 {
+    if (o.tileMap.enabled)
+    {
+        auto t = g_tileInst.find(o.id);
+        return (t != g_tileInst.end() && t->second.slot >= 0) ? (int)GHOST_TILE_MESH_BASE + t->second.slot : -1;   // -1 draws nothing (not built yet)
+    }
     auto it = g_skinInst.find(o.id);
     if (it == g_skinInst.end() || it->second.slot < 0 || it->second.meshId != o.meshId) return o.meshId;
     return GHOST_MAX_MESHES + it->second.slot;
@@ -643,7 +691,7 @@ static void FinishMarquee()
     std::vector<int> hits;
     for (const GhostObject& o : g_scene.objects)
     {
-        const GhostVec3 mn = GhostMesh_Min(o.meshId), mx = GhostMesh_Max(o.meshId);
+        const GhostVec3 mn = GhostObject_Min(o), mx = GhostObject_Max(o);
         const GhostVec3 c(o.position.x + (mn.x + mx.x) * 0.5f * o.scale.x,
             o.position.y + (mn.y + mx.y) * 0.5f * o.scale.y,
             o.position.z + (mn.z + mx.z) * 0.5f * o.scale.z);
@@ -695,7 +743,7 @@ static int PickAt(int sx, int sy)
         float byw; GhostMat4 inv = ObjectInverse(ob, BillYaw(ob, g_mainEye, byw));
         float t;
         if (RayAABB(XformPoint(inv, o, 1.0f), XformPoint(inv, d, 0.0f),
-            GhostMesh_Min(ob.meshId), GhostMesh_Max(ob.meshId), t) && t < bestT)
+            GhostObject_Min(ob), GhostObject_Max(ob), t) && t < bestT)
         {
             bestT = t; bestId = ob.id;
         }
@@ -725,6 +773,7 @@ static bool RayTriangle(const GhostVec3& o, const GhostVec3& d,
 // Exact face under a screen position (nearest triangle, double-sided). -1 = none.
 static int PickFace(const GhostObject& ob, int sx, int sy)
 {
+    if (ob.tileMap.enabled) return -1;
     GhostVec3 o, d;
     if (!ScreenRay(sx, sy, o, d)) return -1;
 
@@ -824,6 +873,7 @@ void GhostEngine_MouseDown(int px, int py, int button)
     if (button != 0 || g_looking || !g_haveCam || g_playState != GhostPlayState::Editing) return;
     int x, y;
     if (!PanelToRender(px, py, x, y, false)) return;          // clicked the dark bars
+    if (g_paintMode && PaintBegin(x, y)) return;              // paint mode: the brush owns the left button
     if (LabelClick(x, y)) return;
     if (GizmoBegin(x, y)) return;
     int id = PickAt(x, y);
@@ -871,6 +921,11 @@ void GhostEngine_MouseDown(int px, int py, int button)
 void GhostEngine_MouseMove(int px, int py)
 {
     UiMouseEvent(0, px, py);
+    {
+        int rx, ry;
+        g_paintMouseIn = PanelToRender(px, py, rx, ry, false);
+        if (PanelToRender(px, py, rx, ry, true)) { g_paintMX = rx; g_paintMY = ry; }
+    }
     if (g_looking || !g_haveCam || g_playState != GhostPlayState::Editing) { g_hoverId = 0; return; }
 
     int x, y;
@@ -918,12 +973,12 @@ void GhostEngine_MouseUp(int x, int y, int button)
     if (g_marquee) FinishMarquee();
     else if (g_collapseId && !g_dragMoved) { g_multi.clear(); g_scene.selectedId = g_collapseId; }   // plain click on a group member
     g_marquee = false; g_collapseId = 0;
-    g_gizmo.active = false;
+    g_gizmo.active = false; g_painting = false;
     g_dragging = false;
     g_dragId = 0;
 }
 
-void GhostEngine_MouseLeave() { g_hoverId = 0; UiMouseEvent(3, 0, 0); }
+void GhostEngine_MouseLeave() { g_hoverId = 0; g_paintMouseIn = false; UiMouseEvent(3, 0, 0); }
 
 // ============================================================
 //  Exported: scene
@@ -955,6 +1010,31 @@ int GhostEngine_AddLight(int lightType, int sx, int sy)
     l->position = p;
     g_scene.selectedId = l->id;
     return l->id;
+}
+
+int GhostEngine_AddTileMap(int sx, int sy)
+{
+    if (g_playState != GhostPlayState::Editing) return 0;
+    if (!CanAddObject(GHOST_MESH_PLANE)) return 0;
+    int have = 0;
+    for (const GhostObject& x : g_scene.objects) if (x.tileMap.enabled) have++;
+    if (have >= (int)GHOST_MAX_TILEMAPS) return 0;
+
+    GhostObject* o = GhostScene_AddObject(g_scene, GHOST_MESH_PLANE);       // the plane only supplies 1 material slot; the real mesh is generated
+    if (!o) return 0;
+    o->name = "Tile Map " + std::to_string(o->id);
+    o->tileMap = GhostTileMap();
+    o->tileMap.enabled = true;
+    GhostTileMap_EnsureTiles(o->tileMap);
+    o->useVertexColor = true;                // the checker shading lives in the vertex colors
+    o->shadowMode = 0;                       // the landscape doesn't cast shadows (it only receives them)
+    o->receiveShadows = true;
+    o->collider = false;
+
+    SpawnCoords(sx, sy);
+    o->position = SpawnPoint(sx, sy);
+    g_scene.selectedId = o->id;
+    return o->id;
 }
 
 int GhostEngine_RemoveEntity(int id)
@@ -1185,7 +1265,7 @@ static void RenderShadowPass(GhostSceneCB& cb, const GhostVec3& eye, const Ghost
     {
         if (!o.visible && playing) continue;
 
-        const GhostVec3 mn = GhostMesh_Min(o.meshId), mx = GhostMesh_Max(o.meshId);      // scene bounds from every visible object
+        const GhostVec3 mn = GhostObject_Min(o), mx = GhostObject_Max(o);
         const float ex = fmaxf(fabsf(mn.x), fabsf(mx.x)) * fabsf(o.scale.x);
         const float ey = fmaxf(fabsf(mn.y), fabsf(mx.y)) * fabsf(o.scale.y);
         const float ez = fmaxf(fabsf(mn.z), fabsf(mx.z)) * fabsf(o.scale.z);
@@ -1387,7 +1467,7 @@ static void OverlayBounds(const GhostObject& o, const GhostVec3& eye)
 {
     float byw;
     const GhostMat4 M = GhostObjectModel(o, BillYaw(o, eye, byw));
-    const GhostVec3 mn = GhostMesh_Min(o.meshId), mx = GhostMesh_Max(o.meshId);
+    const GhostVec3 mn = GhostObject_Min(o), mx = GhostObject_Max(o);
     GhostVec3 c[8];
     for (int i = 0; i < 8; i++)
         c[i] = XformPoint(M, GhostVec3((i & 1) ? mx.x : mn.x, (i & 2) ? mx.y : mn.y, (i & 4) ? mx.z : mn.z), 1.0f);
@@ -1841,7 +1921,7 @@ static void OverlayDims(const GhostObject& o, const GhostVec3& eye)
 {
     float byw;
     const GhostMat4 M = GhostObjectModel(o, BillYaw(o, eye, byw));
-    const GhostVec3 mn = GhostMesh_Min(o.meshId), mx = GhostMesh_Max(o.meshId);
+    const GhostVec3 mn = GhostObject_Min(o), mx = GhostObject_Max(o);
     GhostVec3 ax[3];
     for (int k = 0; k < 3; k++) ax[k] = GhostVec3(M.m[0][k], M.m[1][k], M.m[2][k]).Normalize();
 
@@ -1885,6 +1965,7 @@ static bool NearP(const GhostVec3& a, const GhostVec3& b) { return (a - b).Lengt
 // A single polygon (the triangle, or a face of up to 64 triangles): label every boundary edge A, B, C...
 static void OverlayFaceEdges(const GhostObject& o, const GhostVec3& eye)
 {
+    if (o.tileMap.enabled) return;
     int face = CurrentFace();
     if (face < 0 && GhostMesh_FaceCount(o.meshId) == 1) face = 0;
     if (face < 0 || face >= GhostMesh_FaceCount(o.meshId)) return;
@@ -1998,7 +2079,7 @@ static void DrawViewportOverlay(const GhostMat4& view, const GhostMat4& proj, co
             {
                 if (o) OverlayBounds(*o, eye);
                 if (o && o->collider) OverlayCollider(*o);
-                OverlayGizmo(sel);
+                if (!(g_paintMode && o && o->tileMap.enabled)) OverlayGizmo(sel);    // no gizmo while painting a Tile Map
             }
             if (o && s.showSelection)
             {
@@ -2061,7 +2142,7 @@ static void DrawViewportOverlay(const GhostMat4& view, const GhostMat4& proj, co
         const float mc[4] = { 0.40f, 0.80f, 1.0f, 1.0f };
         g_ov.TextPx(14.0f, (float)rh - 82.0f, 20.0f, t, mc);
     }
-
+    if (editing && g_paintMode) OverlayPaintBrush((int)rw, (int)rh);
     if (s.showFps)
     {
         char t[48];
@@ -2105,7 +2186,7 @@ static bool BuildPreviewCamera(int vp, GhostCamera& c)
 {
     GhostObject* o = FindObject(g_vp[vp].solo);
     if (!o) return false;
-    const GhostVec3 mn = GhostMesh_Min(o->meshId), mx = GhostMesh_Max(o->meshId);
+    const GhostVec3 mn = GhostObject_Min(*o), mx = GhostObject_Max(*o);
     const GhostVec3 ctr(o->position.x + (mn.x + mx.x) * 0.5f * o->scale.x,
         o->position.y + (mn.y + mx.y) * 0.5f * o->scale.y,
         o->position.z + (mn.z + mx.z) * 0.5f * o->scale.z);
@@ -2274,10 +2355,50 @@ static void RenderViewport(int vp)
     {
         if (preview && o.id != g_vp[vp].solo) continue;
         if (!o.visible && g_playState != GhostPlayState::Editing) continue;   // hidden in game
-        const int       faceCount = GhostMesh_FaceCount(o.meshId);
+
+        const int       faceCount = GhostObject_DrawFaces(o);
         const GhostMat4 model = GhostObjectModel(o);
         const bool      selected = overlays && IsSelected(o.id);
-        const int       hl = (selected && o.id == g_scene.selectedId) ? CurrentFace() : -1;
+        const int       hl = (selected && o.id == g_scene.selectedId && !o.tileMap.enabled) ? CurrentFace() : -1;
+        if (o.tileMap.enabled)                                 // Tile Map: one pass per material layer, weighted by the weight maps
+        {
+            auto ti = g_tileInst.find(o.id);
+            if (ti == g_tileInst.end() || ti->second.slot < 0) continue;
+            const TileInst& T = ti->second;
+            const int layers = o.tileMap.layerCount > 0 ? o.tileMap.layerCount : 1;
+            const int passes = (layers > 1 && T.splatA <= 0) ? 1 : layers;      // no weight map (yet): layer 0 only
+            for (int L = 0; L < passes && slot < MAX_SCENE_OBJECTS; L++)
+            {
+                const GhostMaterial& m = o.faces[L];
+                GhostObjectCB cb = {};
+                cb.model = model;
+                cb.view = view;
+                cb.proj = proj;
+                cb.color[0] = m.tint[0]; cb.color[1] = m.tint[1]; cb.color[2] = m.tint[2]; cb.color[3] = 1.0f;
+                cb.useVertexColor = 0.0f;
+                cb.pad[0] = selected ? 1.0f : 0.0f;
+                cb.pad[2] = o.receiveShadows ? 0.0f : 1.0f;
+                cb.uvParams[0] = m.tiling[0]; cb.uvParams[1] = m.tiling[1];
+                cb.uvParams[2] = m.offset[0]; cb.uvParams[3] = m.offset[1];
+                cb.mapParams[0] = (float)m.mapMode;
+                cb.mapParams[1] = m.rotationDeg * d2r;
+                cb.mapParams[2] = (float)m.wrap;
+                cb.mapParams[3] = (float)m.filter;
+                cb.pbr[0] = m.metallic;  cb.pbr[1] = m.roughness;  cb.pbr[2] = m.specular;  cb.pbr[3] = m.emissiveStrength;
+                cb.pbr[4] = m.emissive[0];  cb.pbr[5] = m.emissive[1];  cb.pbr[6] = m.emissive[2];
+                cb.pbr[7] = 1.0f;
+                FillMaterialCB(cb, m);
+                cb.alphaP[0] = 0.0f;                                            // layers are opaque: they blend through the weights
+                cb.opacityP[1] = (float)ShadowLightSelector(o);
+                cb.tileP[4] = (float)o.tileMap.gridX; cb.tileP[5] = (float)o.tileMap.gridY;
+                cb.tileP[6] = (o.tileMap.layerCount == 0) ? 1.0f : 0.0f;
+                if (layers > 1 && T.splatA > 0) { cb.tileP[0] = (float)T.splatA; cb.tileP[1] = (float)T.splatB; cb.tileP[2] = (float)L; }
+                GhostUpdateObjectCB(g_pipeline, slot, &cb);
+                GhostDrawMesh(g_rhi, g_pipeline, DrawMeshOf(o), slot, (unsigned int)m.textureId, 0, 0, false, L > 0);
+                slot++;
+            }
+            continue;
+        }
         if (o.meshId == GHOST_MESH_QUAD)                       // sprite actor: one billboard quad
         {
             if (slot >= MAX_SCENE_OBJECTS) continue;
@@ -2314,15 +2435,17 @@ static void RenderViewport(int vp)
             while (g < faceCount && GhostMaterial_Equal(o.faces[g], o.faces[f]) && ((g == hl) == (f == hl))) g++;
 
             const GhostMaterial& m = o.faces[f];
-            const GhostFaceDef& a = GhostMesh_Face(o.meshId, f);
-            const GhostFaceDef& b = GhostMesh_Face(o.meshId, g - 1);
+            const FaceSpan a = FaceSpanOf(o, f);
+            const FaceSpan b = FaceSpanOf(o, g - 1);
+            const unsigned int runCount = b.first + b.count - a.first;
+            if (o.tileMap.enabled && runCount == 0) { f = g; continue; }      // a layer with no tiles draws nothing
 
             GhostObjectCB cb = {};
             cb.model = model;
             cb.view = view;
             cb.proj = proj;
             cb.color[0] = m.tint[0]; cb.color[1] = m.tint[1]; cb.color[2] = m.tint[2]; cb.color[3] = 1.0f;
-            cb.useVertexColor = o.useVertexColor ? 1.0f : 0.0f;
+            cb.useVertexColor = (o.tileMap.enabled ? (o.tileMap.layerCount == 0) : o.useVertexColor) ? 1.0f : 0.0f;
             cb.pad[0] = selected ? ((f == hl) ? 2.0f : 1.0f) : 0.0f;   // 1 = selected, 2 = selected face
             cb.pad[2] = o.receiveShadows ? 0.0f : 1.0f;
             cb.uvParams[0] = m.tiling[0]; cb.uvParams[1] = m.tiling[1];
@@ -2335,16 +2458,15 @@ static void RenderViewport(int vp)
             cb.pbr[4] = m.emissive[0];  cb.pbr[5] = m.emissive[1];  cb.pbr[6] = m.emissive[2];
             cb.pbr[7] = 1.0f;                                  // this draw uses PBR
             FillMaterialCB(cb, m);
+            cb.opacityP[1] = (float)ShadowLightSelector(o);          // Tile Map: which light's shadows apply (0 = all)
             GhostUpdateObjectCB(g_pipeline, slot, &cb);
             if (m.alphaMode == 2)                                  // translucent: drawn after all opaque work, back to front
             {
                 const GhostVec3 dv = o.position - eye;
-                g_translucent.push_back({ DrawMeshOf(o), slot, (unsigned int)m.textureId, a.firstIndex,
-                                          b.firstIndex + b.indexCount - a.firstIndex, dv.Dot(dv) });
+                g_translucent.push_back({ DrawMeshOf(o), slot, (unsigned int)m.textureId, a.first, runCount, dv.Dot(dv) });
             }
             else
-                GhostDrawMesh(g_rhi, g_pipeline, DrawMeshOf(o), slot, (unsigned int)m.textureId,
-                    a.firstIndex, b.firstIndex + b.indexCount - a.firstIndex);
+                GhostDrawMesh(g_rhi, g_pipeline, DrawMeshOf(o), slot, (unsigned int)m.textureId, a.first, runCount);
             slot++;
             f = g;
         }
@@ -2588,6 +2710,519 @@ int GhostEngine_Redo()
 int GhostEngine_UndoCount() { return (int)g_undo.size(); }
 int GhostEngine_RedoCount() { return (int)g_redo.size(); }
 
+// ============================================================
+//  Tile Map mesh: one quad per tile (own 4 vertices, so each tile can get its own material / data later)
+// ============================================================
+// ============================================================
+//  Tile Map terrain: mesh, weight maps, and the paint-mode brush
+// ============================================================
+static void TileAxes(int dir, GhostVec3& U, GhostVec3& V, GhostVec3& N)       // U, V = the grid's axes, N = facing. cross(V, U) = N
+{
+    if (dir == 0) { U = GhostVec3(0, 0, 1); V = GhostVec3(0, 1, 0); N = GhostVec3(1, 0, 0); }
+    else if (dir == 2) { U = GhostVec3(1, 0, 0); V = GhostVec3(0, 1, 0); N = GhostVec3(0, 0, -1); }
+    else { U = GhostVec3(1, 0, 0); V = GhostVec3(0, 0, 1); N = GhostVec3(0, 1, 0); }
+}
+
+// Object scale along the grid's U, V and facing axes
+static void TileScales(const GhostObject& o, float& sU, float& sV, float& sN)
+{
+    const float x = fabsf(o.scale.x), y = fabsf(o.scale.y), z = fabsf(o.scale.z);
+    if (o.tileMap.direction == 0) { sU = z; sV = y; sN = x; }
+    else if (o.tileMap.direction == 2) { sU = x; sV = y; sN = z; }
+    else { sU = x; sV = z; sN = y; }
+    if (sU < 1e-3f) sU = 1e-3f;
+    if (sV < 1e-3f) sV = 1e-3f;
+    if (sN < 1e-3f) sN = 1e-3f;
+}
+
+// One shared-vertex quad grid. UVs run in tile units, so every tile shows the whole texture (Mesh UV mapping) and the repeat wraps.
+static void BuildTileMesh(const GhostTileMap& t, std::vector<GhostVertex>& v, std::vector<unsigned int>& idx)
+{
+    GhostVec3 U, V, N;
+    TileAxes(t.direction, U, V, N);
+    const int   sub = GhostTileMap_EffSub(t.gridX, t.gridY, t.subdiv);
+    const int   nx = t.gridX * sub, ny = t.gridY * sub, vx = nx + 1, vy = ny + 1;
+    const float cell = t.tileSize / (float)sub;
+    const float u0 = -0.5f * (float)t.gridX * t.tileSize, v0 = -0.5f * (float)t.gridY * t.tileSize;
+    const bool  haveH = t.height.size() == (size_t)vx * (size_t)vy;
+    auto H = [&](int p, int q) -> float
+        {
+            p = p < 0 ? 0 : (p > vx - 1 ? vx - 1 : p);
+            q = q < 0 ? 0 : (q > vy - 1 ? vy - 1 : q);
+            return haveH ? t.height[(size_t)q * vx + p] : 0.0f;
+        };
+
+    v.resize((size_t)vx * (size_t)vy);
+    for (int q = 0; q < vy; q++)
+        for (int p = 0; p < vx; p++)
+        {
+            const int pa = p > 0 ? p - 1 : p, pb = p < vx - 1 ? p + 1 : p;
+            const int qa = q > 0 ? q - 1 : q, qb = q < vy - 1 ? q + 1 : q;
+            const float su = (H(pb, q) - H(pa, q)) / ((float)(pb - pa) * cell);      // slopes along the two axes
+            const float sv = (H(p, qb) - H(p, qa)) / ((float)(qb - qa) * cell);
+            GhostVec3 n = N - U * su - V * sv;                                       // normal of the surface u*U + v*V + h*N
+            n = n.Normalize();
+            const float h = H(p, q);
+            const float pu = u0 + (float)p * cell, pv = v0 + (float)q * cell;
+
+            GhostVertex g = {};
+            g.x = U.x * pu + V.x * pv + N.x * h;
+            g.y = U.y * pu + V.y * pv + N.y * h;
+            g.z = U.z * pu + V.z * pv + N.z * h;
+            g.r = g.g = g.b = 1.0f; g.a = 1.0f;
+            g.nx = n.x; g.ny = n.y; g.nz = n.z;
+            g.u = (float)p / (float)sub;
+            g.v = (float)t.gridY - (float)q / (float)sub;
+            v[(size_t)q * vx + p] = g;
+        }
+
+    idx.clear();
+    idx.reserve((size_t)nx * (size_t)ny * 6);
+    for (int q = 0; q < ny; q++)
+        for (int p = 0; p < nx; p++)
+        {
+            const unsigned int i00 = (unsigned int)(q * vx + p), i10 = i00 + 1, i01 = i00 + (unsigned int)vx, i11 = i01 + 1;
+            idx.push_back(i00); idx.push_back(i01); idx.push_back(i10);
+            idx.push_back(i01); idx.push_back(i11); idx.push_back(i10);
+        }
+}
+
+// ---- weight map textures (hidden from the texture lists: their names start with "[Splat") ----
+static int TakeSplatTexture(const std::vector<unsigned char>& px, int w, int h)
+{
+    while (!g_splatFree.empty())
+    {
+        const int id = g_splatFree.back();
+        g_splatFree.pop_back();
+        if (GhostCreateTexture(g_rhi, g_pipeline, px.data(), (unsigned int)w, (unsigned int)h, id) == id)
+        {
+            g_scene.textures[(size_t)id].width = (unsigned int)w;
+            g_scene.textures[(size_t)id].height = (unsigned int)h;
+            return id;
+        }
+    }
+    const int id = RegisterTexture("[Splat]", px.data(), (unsigned int)w, (unsigned int)h);
+    return id > 0 ? id : 0;
+}
+
+static void ReleaseSplat(TileInst& ti)
+{
+    if (ti.splatA > 0) g_splatFree.push_back(ti.splatA);
+    if (ti.splatB > 0) g_splatFree.push_back(ti.splatB);
+    ti.splatA = ti.splatB = 0;
+    ti.splatW = ti.splatH = 0;
+}
+static void FreeAllTileInstances()
+{
+    for (auto& kv : g_tileInst)
+    {
+        TileInst& ti = kv.second;
+        if (ti.slot >= 0) { GhostReleaseTileMesh(g_pipeline, ti.slot); g_tileSlotUsed[ti.slot] = false; }
+        ReleaseSplat(ti);
+    }
+    g_tileInst.clear();
+}
+static void UpdateSplat(const GhostObject& o, TileInst& ti)
+{
+    const GhostTileMap& t = o.tileMap;
+    if (t.layerCount < 2)
+    {
+        if (ti.splatA > 0 || ti.splatB > 0) ReleaseSplat(ti);
+        ti.sStamp = t.sStamp;
+        return;
+    }
+    const int w = t.splatW, h = t.splatH;
+    if (w <= 0 || h <= 0 || t.splat.size() != (size_t)w * (size_t)h * 8) return;
+    const bool needB = t.layerCount > 4;
+    const bool resized = (ti.splatW != w || ti.splatH != h);
+    if (!resized && ti.sStamp == t.sStamp && ti.splatA > 0 && (ti.splatB > 0) == needB) return;
+
+    static std::vector<unsigned char> pa, pb;
+    const size_t n = (size_t)w * (size_t)h;
+    auto push = [&](int& id, const std::vector<unsigned char>& px) -> bool
+        {
+            if (id <= 0) { id = TakeSplatTexture(px, w, h); return id > 0; }
+            if (resized)
+            {
+                if (GhostCreateTexture(g_rhi, g_pipeline, px.data(), (unsigned int)w, (unsigned int)h, id) != id) return false;
+                g_scene.textures[(size_t)id].width = (unsigned int)w;
+                g_scene.textures[(size_t)id].height = (unsigned int)h;
+                return true;
+            }
+            return GhostUpdateTextureLevel0(g_rhi, g_pipeline, id, px.data(), (unsigned int)w, (unsigned int)h);
+        };
+
+    bool ok = true;
+    pa.resize(n * 4);
+    for (size_t i = 0; i < n; i++) memcpy(&pa[i * 4], &t.splat[i * 8], 4);          // layers 0..3
+    ok &= push(ti.splatA, pa);
+    if (needB)
+    {
+        pb.resize(n * 4);
+        for (size_t i = 0; i < n; i++) memcpy(&pb[i * 4], &t.splat[i * 8 + 4], 4);  // layers 4..7
+        ok &= push(ti.splatB, pb);
+    }
+    else if (ti.splatB > 0) { g_splatFree.push_back(ti.splatB); ti.splatB = 0; }
+
+    if (!ok) return;                                  // leave stamps/size untouched so the next frame retries
+    ti.splatW = w; ti.splatH = h; ti.sStamp = t.sStamp;
+}
+
+
+// Between frames: rebuild the mesh of every Tile Map whose grid / heights changed, refresh the weight maps, free removed ones
+static void UpdateTileMaps()
+{
+    if (!g_rhi || !g_pipeline) return;
+    for (auto& kv : g_tileInst) kv.second.seen = false;
+
+    static std::vector<GhostVertex> verts;
+    static std::vector<unsigned int> idx;
+
+    for (GhostObject& o : g_scene.objects)
+    {
+        if (!o.tileMap.enabled) continue;
+        GhostTileMap_Clamp(o.tileMap);
+        GhostTileMap_EnsureTiles(o.tileMap);
+        const GhostTileMap& t = o.tileMap;
+        TileInst& ti = g_tileInst[o.id];
+        ti.seen = true;
+
+        const int sub = GhostTileMap_EffSub(t.gridX, t.gridY, t.subdiv);
+        if (ti.slot < 0 || ti.hStamp != t.hStamp || ti.tileSize != t.tileSize || ti.gx != t.gridX || ti.gy != t.gridY ||
+            ti.dir != t.direction || ti.sub != sub)
+        {
+            int slot = ti.slot;
+            if (slot < 0)
+                for (int k = 0; k < (int)GHOST_MAX_TILEMAPS; k++) if (!g_tileSlotUsed[k]) { slot = k; break; }
+            if (slot < 0) continue;                                          // all slots in use: this one isn't drawn
+
+            BuildTileMesh(t, verts, idx);
+            if (GhostUploadTileMesh(g_rhi, g_pipeline, slot, verts.data(), (unsigned int)verts.size(),
+                idx.data(), (unsigned int)idx.size()) != GHOST_OK) continue;
+            g_tileSlotUsed[slot] = true;
+            ti.slot = slot; ti.tileSize = t.tileSize; ti.gx = t.gridX; ti.gy = t.gridY; ti.dir = t.direction;
+            ti.sub = sub; ti.hStamp = t.hStamp;
+        }
+        UpdateSplat(o, ti);
+    }
+
+    std::vector<int> dead;
+    for (auto& kv : g_tileInst) if (!kv.second.seen) dead.push_back(kv.first);
+    for (int id : dead)
+    {
+        TileInst& ti = g_tileInst[id];
+        if (ti.slot >= 0) { GhostReleaseTileMesh(g_pipeline, ti.slot); g_tileSlotUsed[ti.slot] = false; }
+        ReleaseSplat(ti);
+        g_tileInst.erase(id);
+    }
+}
+
+// ---------------- paint mode ----------------
+// Ray against the sculpted terrain. lu, lv = object-space coordinates of the hit along the grid's axes.
+static bool TerrainHit(const GhostObject& o, const GhostVec3& ro, const GhostVec3& rd, float& lu, float& lv, GhostVec3& world)
+{
+    const GhostTileMap& t = o.tileMap;
+    const GhostMat4 inv = ObjectInverse(o);
+    const GhostVec3 lo = XformPoint(inv, ro, 1.0f), ld = XformPoint(inv, rd, 0.0f);      // t keeps its world meaning
+    GhostVec3 mn, mx;
+    GhostTileMap_Box(t, mn, mx);
+
+    const float oo[3] = { lo.x, lo.y, lo.z }, dd[3] = { ld.x, ld.y, ld.z };
+    const float a[3] = { mn.x, mn.y, mn.z }, b[3] = { mx.x, mx.y, mx.z };
+    float t0 = 0.0f, t1 = 1e30f;
+    for (int i = 0; i < 3; i++)
+    {
+        if (fabsf(dd[i]) < 1e-8f) { if (oo[i] < a[i] || oo[i] > b[i]) return false; continue; }
+        const float k = 1.0f / dd[i];
+        float s = (a[i] - oo[i]) * k, e = (b[i] - oo[i]) * k;
+        if (s > e) { const float tmp = s; s = e; e = tmp; }
+        if (s > t0) t0 = s;
+        if (e < t1) t1 = e;
+        if (t0 > t1) return false;
+    }
+    const float ldLen = sqrtf(ld.x * ld.x + ld.y * ld.y + ld.z * ld.z);
+    if (ldLen < 1e-8f) return false;
+
+    GhostVec3 U, V, N;
+    TileAxes(t.direction, U, V, N);
+    const float cell = t.tileSize / (float)GhostTileMap_EffSub(t.gridX, t.gridY, t.subdiv);
+    int steps = (int)ceilf((t1 - t0) * ldLen / (cell * 0.5f));
+    steps = steps < 1 ? 1 : (steps > 4000 ? 4000 : steps);
+    const float dt = (t1 - t0) / (float)steps;
+
+    auto F = [&](float tt, float& u, float& v) -> float          // height of the ray above the terrain
+        {
+            const GhostVec3 P = lo + ld * tt;
+            u = P.Dot(U); v = P.Dot(V);
+            return P.Dot(N) - GhostTileMap_Height(t, u, v);
+        };
+
+    float u, v;
+    float tp = t0, fp = F(t0, u, v);
+    for (int i = 1; i <= steps; i++)
+    {
+        const float tc = t0 + dt * (float)i;
+        const float fc = F(tc, u, v);
+        if ((fp >= 0.0f) != (fc >= 0.0f))                         // crossed the surface: bisect
+        {
+            float ta = tp, tb = tc, fa = fp;
+            for (int k = 0; k < 14; k++)
+            {
+                const float tm = 0.5f * (ta + tb);
+                const float fm = F(tm, u, v);
+                if ((fa >= 0.0f) == (fm >= 0.0f)) { ta = tm; fa = fm; }
+                else tb = tm;
+            }
+            const float th = 0.5f * (ta + tb);
+            F(th, lu, lv);
+            world = ro + rd * th;
+            return true;
+        }
+        tp = tc; fp = fc;
+    }
+    return false;
+}
+
+static float BrushFalloff(float d, float fade)      // d = distance / radius. 1 inside the core, smooth to 0 at the edge
+{
+    const float inner = 1.0f - fade;
+    if (d <= inner) return 1.0f;
+    if (d >= 1.0f) return 0.0f;
+    const float x = (d - inner) / (1.0f - inner);
+    return 1.0f - x * x * (3.0f - 2.0f * x);
+}
+
+static float Clamp01f(float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
+
+// amt = seconds of brush time this dab stands for
+static void DabHeight(GhostObject& o, float lu, float lv, float amt)
+{
+    GhostTileMap& t = o.tileMap;
+    const int   sub = GhostTileMap_EffSub(t.gridX, t.gridY, t.subdiv);
+    const int   vx = t.gridX * sub + 1, vy = t.gridY * sub + 1;
+    if (t.height.size() != (size_t)vx * (size_t)vy) return;
+    const float cell = t.tileSize / (float)sub;
+    const float u0 = -0.5f * (float)t.gridX * t.tileSize, v0 = -0.5f * (float)t.gridY * t.tileSize;
+    float sU, sV, sN;
+    TileScales(o, sU, sV, sN);
+
+    const float R = g_brush.radius;
+    const int pr = (int)ceilf(R / (sU * cell)) + 1, qr = (int)ceilf(R / (sV * cell)) + 1;
+    const int pc = (int)floorf((lu - u0) / cell + 0.5f), qc = (int)floorf((lv - v0) / cell + 0.5f);
+    const int p0 = pc - pr < 0 ? 0 : pc - pr, p1 = pc + pr > vx - 1 ? vx - 1 : pc + pr;
+    const int q0 = qc - qr < 0 ? 0 : qc - qr, q1 = qc + qr > vy - 1 ? vy - 1 : qc + qr;
+
+    const int tool = g_brush.tool;
+    static std::vector<float> src;
+    if (tool == 2) src = t.height;                                // smoothing reads the untouched copy
+
+    for (int q = q0; q <= q1; q++)
+        for (int p = p0; p <= p1; p++)
+        {
+            const float du = (u0 + (float)p * cell - lu) * sU, dv = (v0 + (float)q * cell - lv) * sV;
+            const float d = sqrtf(du * du + dv * dv) / R;
+            if (d >= 1.0f) continue;
+            const float w = BrushFalloff(d, g_brush.fade);
+            float& h = t.height[(size_t)q * vx + p];
+            if (tool == 0)      h += g_brush.strength * 4.0f * w * amt / sN;            // up to 4 units per second
+            else if (tool == 1) h -= g_brush.strength * 4.0f * w * amt / sN;
+            else if (tool == 2)
+            {
+                float s = 0.0f; int c = 0;
+                for (int dq = -1; dq <= 1; dq++)
+                    for (int dp = -1; dp <= 1; dp++)
+                    {
+                        const int pp = p + dp, qq = q + dq;
+                        if (pp < 0 || qq < 0 || pp >= vx || qq >= vy) continue;
+                        s += src[(size_t)qq * vx + pp]; c++;
+                    }
+                h += (s / (float)c - h) * Clamp01f(g_brush.strength * w * amt * 12.0f);
+            }
+            else if (tool == 3) h += (g_flattenH - h) * Clamp01f(g_brush.strength * w * amt * 12.0f);
+            else                h += (g_brush.setHeight / sN - h) * Clamp01f(g_brush.strength * w * amt * 12.0f);
+            if (h > 1000.0f) h = 1000.0f;
+            if (h < -1000.0f) h = -1000.0f;
+        }
+}
+
+static void DabSplat(GhostObject& o, float lu, float lv, float amt, int layer)
+{
+    GhostTileMap& t = o.tileMap;
+    if (t.layerCount < 2 || layer < 0 || layer >= t.layerCount) return;
+    const int W = t.splatW, H = t.splatH;
+    if (W <= 0 || H <= 0 || t.splat.size() != (size_t)W * (size_t)H * 8) return;
+    const float gw = (float)t.gridX * t.tileSize, gh = (float)t.gridY * t.tileSize;
+    const float tw = gw / (float)W, th = gh / (float)H;
+    const float u0 = -0.5f * gw, v0 = -0.5f * gh;
+    float sU, sV, sN;
+    TileScales(o, sU, sV, sN);
+
+    const float R = g_brush.radius;
+    const int rc = (int)ceilf(R / (sU * tw)) + 1, rr = (int)ceilf(R / (sV * th)) + 1;
+    const int cc = (int)floorf((lu - u0) / tw), cr = (int)floorf((lv - v0) / th);
+    const int c0 = cc - rc < 0 ? 0 : cc - rc, c1 = cc + rc > W - 1 ? W - 1 : cc + rc;
+    const int r0 = cr - rr < 0 ? 0 : cr - rr, r1 = cr + rr > H - 1 ? H - 1 : cr + rr;
+    const bool paint = (g_brush.tool == 5);
+    if (!paint && layer == 0) return;                                 // nothing to erase from the base layer
+
+    for (int r = r0; r <= r1; r++)
+        for (int c = c0; c <= c1; c++)
+        {
+            const float du = (u0 + ((float)c + 0.5f) * tw - lu) * sU, dv = (v0 + ((float)r + 0.5f) * th - lv) * sV;
+            const float d = sqrtf(du * du + dv * dv) / R;
+            if (d >= 1.0f) continue;
+            const float k = Clamp01f(g_brush.strength * BrushFalloff(d, g_brush.fade) * amt * 8.0f);
+            if (k <= 0.0f) continue;
+
+            unsigned char* b = &t.splat[((size_t)r * W + c) * 8];
+            float f[8];
+            for (int i = 0; i < 8; i++) f[i] = (float)b[i] / 255.0f;
+            int fix;
+            if (paint)                                                // this layer grows, the others shrink in proportion
+            {
+                const float cur = f[layer], nw = cur + (1.0f - cur) * k, others = 1.0f - cur;
+                if (others > 1e-5f) { const float s = (1.0f - nw) / others; for (int i = 0; i < 8; i++) if (i != layer) f[i] *= s; }
+                f[layer] = nw;
+                fix = layer;
+            }
+            else                                                      // erase: the weight goes back to layer 0
+            {
+                const float cur = f[layer], nw = cur * (1.0f - k);
+                f[0] += cur - nw;
+                f[layer] = nw;
+                fix = 0;
+            }
+            int q[8], rest = 0, big = -1;
+            for (int i = 0; i < 8; i++)
+            {
+                int v = (int)(f[i] * 255.0f + 0.5f);
+                q[i] = v < 0 ? 0 : (v > 255 ? 255 : v);
+                if (i != fix) { rest += q[i]; if (big < 0 || q[i] > q[big]) big = i; }
+            }
+            if (rest > 255 && big >= 0) { q[big] -= rest - 255; rest = 255; }
+            q[fix] = 255 - rest;
+            for (int i = 0; i < 8; i++) b[i] = (unsigned char)q[i];
+        }
+}
+
+static bool PaintBegin(int x, int y)
+{
+    GhostObject* o = FindObject(g_scene.selectedId);
+    if (!o || !o->tileMap.enabled) return false;                      // not a Tile Map: normal clicking
+    g_painting = true;
+    g_strokeHasPrev = false;
+    g_paintMX = x; g_paintMY = y;
+    GhostVec3 ro, rd, wp;
+    float lu, lv;
+    if (ScreenRay(x, y, ro, rd) && TerrainHit(*o, ro, rd, lu, lv, wp))
+        g_flattenH = GhostTileMap_Height(o->tileMap, lu, lv);         // Flatten levels to the height where the stroke starts
+    return true;
+}
+
+static void PaintTick(float dt)
+{
+    if (g_paintMode && g_playState != GhostPlayState::Editing) { g_paintMode = false; g_painting = false; }
+    if (!g_painting) return;
+    if (!(GetAsyncKeyState(VK_LBUTTON) & 0x8000)) { g_painting = false; return; }
+    GhostObject* o = FindObject(g_scene.selectedId);
+    if (!o || !o->tileMap.enabled) { g_painting = false; return; }
+    GhostTileMap& t = o->tileMap;
+    const int tool = g_brush.tool;
+    if (tool >= 5 && t.layerCount < 2) return;                        // painting layers needs at least two
+    if (dt > 0.05f) dt = 0.05f;
+
+    GhostVec3 ro, rd, wp;
+    float lu, lv;
+    if (!ScreenRay(g_paintMX, g_paintMY, ro, rd) || !TerrainHit(*o, ro, rd, lu, lv, wp)) { g_strokeHasPrev = false; return; }
+
+    float sU, sV, sN;
+    TileScales(*o, sU, sV, sN);
+    int n = 1;
+    if (g_strokeHasPrev)                                              // fast strokes: dabs along the path, so there are no gaps
+    {
+        const float dx = (lu - g_prevU) * sU, dy = (lv - g_prevV) * sV;
+        const float spacing = fmaxf(g_brush.radius * 0.3f, 0.05f);
+        n = (int)ceilf(sqrtf(dx * dx + dy * dy) / spacing);
+        n = n < 1 ? 1 : (n > 24 ? 24 : n);
+    }
+    int layer = CurrentFace();
+    if (layer < 0) layer = 0;
+    for (int i = 1; i <= n; i++)
+    {
+        const float f = (float)i / (float)n;
+        const float u = g_strokeHasPrev ? g_prevU + (lu - g_prevU) * f : lu;
+        const float v = g_strokeHasPrev ? g_prevV + (lv - g_prevV) * f : lv;
+        if (tool <= 4) DabHeight(*o, u, v, dt / (float)n);
+        else           DabSplat(*o, u, v, dt / (float)n, layer);
+    }
+    g_prevU = lu; g_prevV = lv; g_strokeHasPrev = true;
+    if (tool <= 4) { GhostTileMap_UpdateRange(t); t.hStamp = GhostTile_NextStamp(); }
+    else t.sStamp = GhostTile_NextStamp();
+}
+
+// The brush ring on the terrain and the mode line
+static void OverlayPaintBrush(int rw, int rh)
+{
+    static const char* kTool[7] = { "Raise", "Lower", "Smooth", "Flatten", "Set Height", "Paint Layer", "Erase Layer" };
+    const float hot[4] = { 1.0f, 0.82f, 0.30f, 1.0f }, cool[4] = { 0.40f, 0.80f, 1.0f, 1.0f };
+    GhostObject* o = FindObject(g_scene.selectedId);
+    if (!o || !o->tileMap.enabled)
+    {
+        g_ov.TextPx(14.0f, (float)rh - 106.0f, 20.0f, "PAINT MODE: click a Tile Map to select it   (P to leave)", hot);
+        return;
+    }
+    const GhostTileMap& t = o->tileMap;
+    const int tool = g_brush.tool < 0 ? 0 : (g_brush.tool > 6 ? 6 : g_brush.tool);
+    int L = CurrentFace();
+    if (L < 0) L = 0;
+    char info[220];
+    if (tool >= 5 && t.layerCount < 2)
+        snprintf(info, sizeof info, "PAINT MODE  %s needs 2+ material layers (Details > Material Layers)   (P to leave)", kTool[tool]);
+    else if (tool >= 5)
+        snprintf(info, sizeof info, "PAINT MODE  %s: Layer %d   size %.2f   strength %d%%   fade %d%%   ([ ] size, P leave)",
+            kTool[tool], L, g_brush.radius, (int)(g_brush.strength * 100.0f + 0.5f), (int)(g_brush.fade * 100.0f + 0.5f));
+    else if (tool == 4)
+        snprintf(info, sizeof info, "PAINT MODE  Set Height %.2f   size %.2f   strength %d%%   fade %d%%   ([ ] size, P leave)",
+            g_brush.setHeight, g_brush.radius, (int)(g_brush.strength * 100.0f + 0.5f), (int)(g_brush.fade * 100.0f + 0.5f));
+    else
+        snprintf(info, sizeof info, "PAINT MODE  %s   size %.2f   strength %d%%   fade %d%%   ([ ] size, P leave)",
+            kTool[tool], g_brush.radius, (int)(g_brush.strength * 100.0f + 0.5f), (int)(g_brush.fade * 100.0f + 0.5f));
+    const float* col = tool >= 5 ? cool : hot;
+    g_ov.TextPx(14.0f, (float)rh - 106.0f, 20.0f, info, col);
+
+    if (!g_paintMouseIn || g_looking) return;
+    GhostVec3 ro, rd, wp;
+    float lu, lv;
+    if (!ScreenRay(g_paintMX, g_paintMY, ro, rd) || !TerrainHit(*o, ro, rd, lu, lv, wp)) return;
+
+    GhostVec3 U, V, N;
+    TileAxes(t.direction, U, V, N);
+    float sU, sV, sN;
+    TileScales(*o, sU, sV, sN);
+    const GhostMat4 M = GhostObjectModel(*o);
+    auto at = [&](float u, float v) -> GhostVec3
+        {
+            const float h = GhostTileMap_Height(t, u, v) + 0.03f / sN;           // a hair above the surface
+            return XformPoint(M, U * u + V * v + N * h, 1.0f);
+        };
+    auto ring = [&](float rad, float width)
+        {
+            GhostVec3 prev = at(lu + rad / sU, lv);
+            for (int i = 1; i <= 48; i++)
+            {
+                const float a = (float)i / 48.0f * 2.0f * GHOST_PI;
+                const GhostVec3 cur = at(lu + cosf(a) * rad / sU, lv + sinf(a) * rad / sV);
+                g_ov.Line(prev, cur, col, width, false);
+                prev = cur;
+            }
+        };
+    ring(g_brush.radius, 2.2f);
+    const float inner = g_brush.radius * (1.0f - g_brush.fade);               // where the full-strength core ends
+    if (g_brush.fade > 0.05f && inner > 0.02f) ring(inner, 1.2f);
+    g_ov.Point(at(lu, lv), 8.0f, col);
+}
+
+
 void GhostEngine_Tick()
 {
     if (!g_rhi || !g_pipeline) return;
@@ -2751,6 +3386,8 @@ void GhostEngine_Tick()
     UpdateOrbitCameras(dt, g_playState != GhostPlayState::Editing);
     UpdateSprites(dt); // animation clips run in the editor and while playing
     UpdateAnimators(dt);
+    PaintTick(dt);
+    UpdateTileMaps();
     GhostAudio_Update(dt);
 
     if (g_playState == GhostPlayState::Editing)
@@ -2807,13 +3444,14 @@ void GhostEngine_Shutdown()
 int GhostEngine_GetFaceCount(int objectId)
 {
     GhostObject* o = FindObject(objectId);
-    return o ? GhostMesh_FaceCount(o->meshId) : 0;
+    return o ? GhostObject_FaceCount(*o) : 0;
 }
 
 int GhostEngine_GetFaceName(int objectId, int face, char* buf, int bufSize)
 {
     GhostObject* o = FindObject(objectId);
-    if (!o || !buf || bufSize <= 0 || face < 0 || face >= GhostMesh_FaceCount(o->meshId)) return 0;
+    if (!o || !buf || bufSize <= 0 || face < 0 || face >= GhostObject_FaceCount(*o)) return 0;
+    if (o->tileMap.enabled) { snprintf(buf, (size_t)bufSize, "Layer %d", face); return 1; }
     strncpy_s(buf, bufSize, GhostMesh_Face(o->meshId, face).name.c_str(), _TRUNCATE);
     return 1;
 }
@@ -2823,7 +3461,7 @@ int GhostEngine_GetMaterial(int objectId, int face, GhostMaterialInfo* out)
     GhostObject* o = FindObject(objectId);
     if (!o || !out) return 0;
     if (face < 0) face = 0;
-    if (face >= GhostMesh_FaceCount(o->meshId)) return 0;
+    if (face >= GhostObject_FaceCount(*o)) return 0;
     const GhostMaterial& m = o->faces[face];
     *out = { m.textureId, m.mapMode, m.wrap, m.filter,
              m.tiling[0], m.tiling[1], m.offset[0], m.offset[1], m.rotationDeg,
@@ -2838,7 +3476,7 @@ void GhostEngine_SetMaterial(int objectId, int face, const GhostMaterialInfo* in
 {
     GhostObject* o = FindObject(objectId);
     if (!o || !in) return;
-    const int count = GhostMesh_FaceCount(o->meshId);
+    const int count = GhostObject_FaceCount(*o);
     if (face >= count) return;
 
     auto nz = [](float v) { return fabsf(v) < 0.001f ? (v < 0.0f ? -0.001f : 0.001f) : v; };
@@ -2878,7 +3516,7 @@ int GhostEngine_GetMap(int objectId, int face, int slot, GhostMapInfo* out)
     GhostObject* o = FindObject(objectId);
     if (!o || !out || slot < 0 || slot >= GHOST_MAP_COUNT) return 0;
     if (face < 0) face = 0;
-    if (face >= GhostMesh_FaceCount(o->meshId)) return 0;
+    if (face >= GhostObject_FaceCount(*o)) return 0;
     const GhostMapParams& p = o->faces[face].maps[slot];
     *out = { p.textureId, p.amount, p.channel, p.invert };
     return 1;
@@ -2888,7 +3526,7 @@ void GhostEngine_SetMap(int objectId, int face, int slot, const GhostMapInfo* in
 {
     GhostObject* o = FindObject(objectId);
     if (!o || !in || slot < 0 || slot >= GHOST_MAP_COUNT) return;
-    const int count = GhostMesh_FaceCount(o->meshId);
+    const int count = GhostObject_FaceCount(*o);
     if (face >= count) return;
 
     const float mx = kMapMax[slot], mn = (slot == GHOST_MAP_WPO) ? -mx : 0.0f;
@@ -2906,7 +3544,7 @@ int GhostEngine_GetSurface(int objectId, int face, GhostSurfaceInfo* out)
     GhostObject* o = FindObject(objectId);
     if (!o || !out) return 0;
     if (face < 0) face = 0;
-    if (face >= GhostMesh_FaceCount(o->meshId)) return 0;
+    if (face >= GhostObject_FaceCount(*o)) return 0;
     const GhostMaterial& m = o->faces[face];
     *out = { m.twoSided, m.opacity, m.refractionIOR, m.reflectionRotDeg, m.anisotropy,
              m.sssColor[0], m.sssColor[1], m.sssColor[2], m.sssAmount,
@@ -2919,7 +3557,7 @@ void GhostEngine_SetSurface(int objectId, int face, const GhostSurfaceInfo* in)
 {
     GhostObject* o = FindObject(objectId);
     if (!o || !in) return;
-    const int count = GhostMesh_FaceCount(o->meshId);
+    const int count = GhostObject_FaceCount(*o);
     if (face >= count) return;
     auto cf = [](float v, float lo, float hi) { return v != v ? lo : (v < lo ? lo : (v > hi ? hi : v)); };
     auto nz = [](float v) { return fabsf(v) < 0.001f ? (v < 0.0f ? -0.001f : 0.001f) : v; };
@@ -2950,7 +3588,7 @@ void GhostEngine_SetTargetFace(int face)
 {
     CurrentFace();
     GhostObject* o = FindObject(g_scene.selectedId);
-    g_scene.selectedFace = (o && face >= 0 && face < GhostMesh_FaceCount(o->meshId)) ? face : -1;
+    g_scene.selectedFace = (o && face >= 0 && face < GhostObject_FaceCount(*o)) ? face : -1;
 }
 
 
@@ -2985,7 +3623,7 @@ static int PickObjectAt(int sx, int sy)
         float byw; GhostMat4 inv = ObjectInverse(ob, BillYaw(ob, g_mainEye, byw));
         float t;
         if (RayAABB(XformPoint(inv, o, 1.0f), XformPoint(inv, d, 0.0f),
-            GhostMesh_Min(ob.meshId), GhostMesh_Max(ob.meshId), t) && t < bestT)
+            GhostObject_Min(ob), GhostObject_Max(ob), t) && t < bestT)
         {
             bestT = t; bestId = ob.id;
         }
@@ -3273,6 +3911,7 @@ int GhostEngine_LoadScene(const char* path, char* msg, int msgSize)
     }
     warn += g_modelWarn;
     g_hoverId = 0; g_dragging = false; g_dragId = 0; g_inputCameraId = 0;
+    FreeAllTileInstances();
     g_scenePath = GhostPath_Normalize(path);
     g_scene.version++;
     UndoReset();
@@ -3285,6 +3924,7 @@ void GhostEngine_ClearScene()
     GhostEngine_Stop();
     g_animRt.clear();
     g_scene.objects.clear(); g_scenePath.clear();
+    FreeAllTileInstances();
     g_scene.lights.clear();
     g_scene.cameras.clear(); g_scene.mods.clear();
     g_scene.ambientColor[0] = g_scene.ambientColor[1] = g_scene.ambientColor[2] = 1.0f;
@@ -4416,6 +5056,7 @@ static void PerformSceneSwitch()
         OutputDebugStringA(("[GhostX] Scene \"" + rel + "\":\n" + warn + g_modelWarn).c_str());
 
     g_scenePath = abs;
+    FreeAllTileInstances();
     g_scene.version++;
     if (g_scene.gameStartCameraId && FindCamera(g_scene.gameStartCameraId))
         g_scene.activeCameraId = g_scene.gameStartCameraId;
@@ -4508,7 +5149,7 @@ void GhostEngine_Stop()
     g_scene.textures = tex;
     g_scene.version = version + 1;                   // the hierarchy rebuilds
     g_playBackup = GhostScene();
-
+    FreeAllTileInstances();
     g_playState = GhostPlayState::Editing;
     g_hoverId = 0; g_dragging = false; g_dragId = 0;
 }
@@ -4794,7 +5435,7 @@ int GhostEngine_FocusSelected()
     float radius = 1.0f;
     if (const GhostObject* o = FindObject(g_scene.selectedId))
     {
-        const GhostVec3 mn = GhostMesh_Min(o->meshId), mx = GhostMesh_Max(o->meshId);
+        const GhostVec3 mn = GhostObject_Min(*o), mx = GhostObject_Max(*o);
         center = GhostVec3(o->position.x + (mn.x + mx.x) * 0.5f * o->scale.x,
             o->position.y + (mn.y + mx.y) * 0.5f * o->scale.y,
             o->position.z + (mn.z + mx.z) * 0.5f * o->scale.z);
@@ -5166,6 +5807,194 @@ void GhostEngine_SetShadowTuning(const GhostShadowTuning* in)
     const float d = cf(in->distance, 0.0f, 1000.0f);
     g_scene.shadowDistance = (d > 0.0f && d < 2.0f) ? 2.0f : d;        // 0 = whole scene, otherwise at least 2
 }
+
+
+int GhostEngine_GetTileMap(int id, GhostTileMapInfo* out)
+{
+    GhostObject* o = FindObject(id);
+    if (!o || !out || !o->tileMap.enabled) return 0;
+    const GhostTileMap& t = o->tileMap;
+    *out = { o->id, t.tileSize, t.gridX, t.gridY, t.gridZ, t.direction, o->receiveShadows ? 1 : 0, t.shadowLightId, t.layerCount, t.subdiv };
+    return 1;
+}
+
+void GhostEngine_SetTileMap(const GhostTileMapInfo* in)
+{
+    if (!in) return;
+    GhostObject* o = FindObject(in->id);
+    if (!o || !o->tileMap.enabled) return;
+    GhostTileMap& t = o->tileMap;
+    const int oldGX = t.gridX, oldGY = t.gridY, oldSW = t.splatW, oldSH = t.splatH;
+    const int oldSub = GhostTileMap_EffSub(t.gridX, t.gridY, t.subdiv);
+    t.tileSize = in->tileSize;
+    t.gridX = in->gridX; t.gridY = in->gridY; t.gridZ = in->gridZ;
+    t.direction = in->direction;
+    t.subdiv = in->subdiv;
+    t.shadowLightId = 0;                                                    // only a real directional light is accepted
+    if (in->shadowLightId != 0)
+        for (const GhostLight& l : g_scene.lights)
+            if (l.id == in->shadowLightId && l.type == GhostLightType::Directional) t.shadowLightId = l.id;
+    o->receiveShadows = (in->receiveShadows != 0);
+    GhostTileMap_Clamp(t);
+    if (t.gridX != oldGX || t.gridY != oldGY || GhostTileMap_EffSub(t.gridX, t.gridY, t.subdiv) != oldSub)
+        GhostTileMap_Reshape(t, oldGX, oldGY, oldSub, oldSW, oldSH);        // heights and paint stay where they were
+    GhostTileMap_EnsureTiles(t);
+}
+
+int GhostEngine_AddTileLayer(int id)
+{
+    if (g_playState != GhostPlayState::Editing) return -1;
+    GhostObject* o = FindObject(id);
+    if (!o || !o->tileMap.enabled) return -1;
+    GhostTileMap& t = o->tileMap;
+    if (t.layerCount >= GHOST_TILEMAP_MAX_LAYERS) return -1;
+    GhostTileMap_EnsureTiles(t);
+    const int layer = t.layerCount;
+    o->faces[layer] = GhostMaterial();                                      // a fresh material. Layer 0 covers everything until you paint
+    t.layerCount++;
+    t.sStamp = GhostTile_NextStamp();
+    return layer;
+}
+
+int GhostEngine_RemoveTileLayer(int id, int layer)
+{
+    if (g_playState != GhostPlayState::Editing) return 0;
+    GhostObject* o = FindObject(id);
+    if (!o || !o->tileMap.enabled) return 0;
+    GhostTileMap& t = o->tileMap;
+    if (layer < 0 || layer >= t.layerCount) return 0;
+    GhostTileMap_EnsureTiles(t);
+    for (int l = layer; l < t.layerCount - 1; l++) o->faces[l] = o->faces[l + 1];
+    o->faces[t.layerCount - 1] = GhostMaterial();
+
+    const size_t texels = (size_t)t.splatW * (size_t)t.splatH;              // its weight goes to layer 0 (or layer 1 when layer 0 is removed)
+    for (size_t i = 0; i < texels; i++)
+    {
+        unsigned char* b = &t.splat[i * 8];
+        const int dst = (layer == 0) ? 1 : 0;
+        const int moved = (int)b[dst] + (int)b[layer];
+        b[dst] = (unsigned char)(moved > 255 ? 255 : moved);
+        for (int l = layer; l < 7; l++) b[l] = b[l + 1];
+        b[7] = 0;
+    }
+    t.layerCount--;
+    t.sStamp = GhostTile_NextStamp();
+    if (g_scene.selectedId == id && g_scene.selectedFace >= t.layerCount)
+        g_scene.selectedFace = t.layerCount > 0 ? t.layerCount - 1 : -1;
+    return 1;
+}
+
+// Fills a block of tiles (columns x0..x1, rows y0..y1) with one layer. Returns the number of tiles covered.
+int GhostEngine_AssignTileLayer(int id, int layer, int x0, int y0, int x1, int y1)
+{
+    if (g_playState != GhostPlayState::Editing) return 0;
+    GhostObject* o = FindObject(id);
+    if (!o || !o->tileMap.enabled) return 0;
+    GhostTileMap& t = o->tileMap;
+    if (layer < 0 || layer >= t.layerCount) return 0;
+    GhostTileMap_EnsureTiles(t);
+    if (x0 > x1) std::swap(x0, x1);
+    if (y0 > y1) std::swap(y0, y1);
+    x0 = x0 < 0 ? 0 : x0;  y0 = y0 < 0 ? 0 : y0;
+    x1 = x1 >= t.gridX ? t.gridX - 1 : x1;  y1 = y1 >= t.gridY ? t.gridY - 1 : y1;
+    if (x0 > x1 || y0 > y1) return 0;
+
+    const int c0 = x0 * t.splatW / t.gridX, c1 = (x1 + 1) * t.splatW / t.gridX - 1;
+    const int r0 = y0 * t.splatH / t.gridY, r1 = (y1 + 1) * t.splatH / t.gridY - 1;
+    for (int r = r0; r <= r1; r++)
+        for (int c = c0; c <= c1; c++)
+        {
+            unsigned char* b = &t.splat[((size_t)r * t.splatW + c) * 8];
+            memset(b, 0, 8);
+            b[layer] = 255;
+        }
+    t.sStamp = GhostTile_NextStamp();
+    return (x1 - x0 + 1) * (y1 - y0 + 1);
+}
+
+// outCounts[l] = how much of the map layer l dominates, in tiles (approximate once painted)
+int GhostEngine_GetTileLayerCounts(int id, int* out, int maxCount)
+{
+    GhostObject* o = FindObject(id);
+    if (!o || !o->tileMap.enabled) return 0;
+    const GhostTileMap& t = o->tileMap;
+    const int n = maxCount < GHOST_TILEMAP_MAX_LAYERS ? maxCount : GHOST_TILEMAP_MAX_LAYERS;
+    if (out && n > 0)
+    {
+        for (int l = 0; l < n; l++) out[l] = 0;
+        const size_t texels = (size_t)t.splatW * (size_t)t.splatH;
+        if (t.layerCount > 0 && texels > 0 && t.splat.size() == texels * 8)
+        {
+            int cnt[GHOST_TILEMAP_MAX_LAYERS] = {};
+            for (size_t i = 0; i < texels; i++)
+            {
+                const unsigned char* b = &t.splat[i * 8];
+                int best = 0;
+                for (int l = 1; l < t.layerCount; l++) if (b[l] > b[best]) best = l;
+                cnt[best]++;
+            }
+            const double tiles = (double)t.gridX * (double)t.gridY;
+            for (int l = 0; l < n; l++) out[l] = (int)((double)cnt[l] * tiles / (double)texels + 0.5);
+        }
+    }
+    return t.layerCount;
+}
+
+void GhostEngine_ResetTerrain(int id, int what)
+{
+    if (g_playState != GhostPlayState::Editing) return;
+    GhostObject* o = FindObject(id);
+    if (!o || !o->tileMap.enabled) return;
+    GhostTileMap& t = o->tileMap;
+    GhostTileMap_EnsureTiles(t);
+    if (what & 1)
+    {
+        std::fill(t.height.begin(), t.height.end(), 0.0f);
+        GhostTileMap_UpdateRange(t);
+        t.hStamp = GhostTile_NextStamp();
+    }
+    if (what & 2)
+    {
+        const size_t texels = (size_t)t.splatW * (size_t)t.splatH;
+        for (size_t i = 0; i < texels; i++) { memset(&t.splat[i * 8], 0, 8); t.splat[i * 8] = 255; }
+        t.sStamp = GhostTile_NextStamp();
+    }
+}
+
+// ---- Paint mode ----
+void GhostEngine_SetPaintMode(int on)
+{
+    g_paintMode = (on != 0) && g_playState == GhostPlayState::Editing;
+    if (!g_paintMode) g_painting = false;
+}
+int GhostEngine_GetPaintMode() { return g_paintMode ? 1 : 0; }
+
+void GhostEngine_GetPaintSettings(GhostPaintInfo* out)
+{
+    if (!out) return;
+    int layers = 0, has = 0;
+    if (GhostObject* o = FindObject(g_scene.selectedId))
+        if (o->tileMap.enabled) { has = 1; layers = o->tileMap.layerCount; }
+    int f = CurrentFace();
+    if (f < 0) f = 0;
+    *out = { g_paintMode ? 1 : 0, g_brush.tool, g_brush.radius, g_brush.strength, g_brush.fade, g_brush.setHeight, f, layers, has };
+}
+
+void GhostEngine_SetPaintSettings(const GhostPaintInfo* in)
+{
+    if (!in) return;
+    auto cf = [](float v, float lo, float hi) { return v != v ? lo : (v < lo ? lo : (v > hi ? hi : v)); };
+    g_brush.tool = in->tool < 0 ? 0 : (in->tool > 6 ? 6 : in->tool);
+    g_brush.radius = cf(in->radius, 0.05f, 200.0f);
+    g_brush.strength = cf(in->strength, 0.01f, 1.0f);
+    g_brush.fade = cf(in->fade, 0.0f, 1.0f);
+    g_brush.setHeight = cf(in->setHeight, -1000.0f, 1000.0f);
+    if (in->layer >= 0)                                          // the brush layer = the Active Layer, but only for a Tile Map with layers
+        if (GhostObject* o = FindObject(g_scene.selectedId))
+            if (o->tileMap.enabled && o->tileMap.layerCount > 0 && in->layer < o->tileMap.layerCount && in->layer != g_scene.selectedFace)
+                GhostEngine_SetTargetFace(in->layer);
+}
+
 
 // ============================================================
 //  Exported: model import, materials, re-import and .ghostmesh loading
@@ -5708,7 +6537,7 @@ int GhostEngine_GetObjectSize(int id, float* xyz)
 {
     GhostObject* o = FindObject(id);
     if (!o || !xyz) return 0;
-    const GhostVec3 mn = GhostMesh_Min(o->meshId), mx = GhostMesh_Max(o->meshId);
+    const GhostVec3 mn = GhostObject_Min(*o), mx = GhostObject_Max(*o);
     xyz[0] = fabsf((mx.x - mn.x) * o->scale.x);
     xyz[1] = fabsf((mx.y - mn.y) * o->scale.y);
     xyz[2] = fabsf((mx.z - mn.z) * o->scale.z);
@@ -5719,7 +6548,7 @@ void GhostEngine_SetObjectSize(int id, int axis, float world)
 {
     GhostObject* o = FindObject(id);
     if (!o || g_playState != GhostPlayState::Editing || axis < 0 || axis > 2 || world != world) return;
-    const GhostVec3 mn = GhostMesh_Min(o->meshId), mx = GhostMesh_Max(o->meshId);
+    const GhostVec3 mn = GhostObject_Min(*o), mx = GhostObject_Max(*o);
     const float meshExt[3] = { fabsf(mx.x - mn.x), fabsf(mx.y - mn.y), fabsf(mx.z - mn.z) };
     if (meshExt[axis] < 1e-6f) return;
 

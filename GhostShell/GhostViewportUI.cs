@@ -42,11 +42,17 @@ namespace GhostShell
         private ToolStripMenuItem _taaItem = null!;
         private readonly List<(ToolStripMenuItem item, float speed)> _marksJit = new();
 
+        private readonly OverlayButton _paintBtn = new();
+        private readonly ContextMenuStrip _paintMenu = new();
+        private delegate void ChangeP(ref GhostPaintInfo p);
+        private readonly List<(ToolStripMenuItem item, Func<GhostPaintInfo, bool> on)> _marksP = new();
+        private ToolStripMenuItem _paintModeItem = null!, _layerMenu = null!;
+
         public GhostViewportBar(Control host)
         {
             _host = host;
             Color bg = Color.FromArgb(0x26, 0x26, 0x2A), fg = Color.FromArgb(0xF2, 0xF2, 0xF2);
-            foreach (ContextMenuStrip m in new[] { _toolMenu, _viewMenu })
+            foreach (ContextMenuStrip m in new[] { _toolMenu, _viewMenu, _paintMenu })
             {
                 m.Renderer = new GhostMenuRenderer(bg, fg);
                 m.ShowImageMargin = false;
@@ -58,16 +64,21 @@ namespace GhostShell
 
             BuildToolMenu();
             BuildViewMenu();
-
+            BuildPaintMenu();
             _toolBtn.Click += (s, e) => _toolMenu.Show(_toolBtn, new Point(0, _toolBtn.Height));
             _viewBtn.Click += (s, e) => _viewMenu.Show(_viewBtn, new Point(0, _viewBtn.Height));
-
+            _paintBtn.Click += (s, e) => _paintMenu.Show(_paintBtn, new Point(0, _paintBtn.Height));
             host.Controls.Add(_toolBtn);
             host.Controls.Add(_viewBtn);
+            host.Controls.Add(_paintBtn);
             _toolBtn.BringToFront();
             _viewBtn.BringToFront();
+            _paintBtn.BringToFront();
             host.Resize += (s, e) => Place();
             Place();
+            var paintTimer = new System.Windows.Forms.Timer { Interval = 150 };     // follows the P key
+            paintTimer.Tick += (s, e) => SyncPaint();
+            paintTimer.Start();
             Sync();
         }
 
@@ -113,7 +124,8 @@ namespace GhostShell
         private void Place()
         {
             _toolBtn.Location = new Point(10, 10);
-            _viewBtn.Location = new Point(Math.Max(_host.ClientSize.Width - _viewBtn.Width - 10, 140), 10);
+            _paintBtn.Location = new Point(_toolBtn.Right + 8, 10);
+            _viewBtn.Location = new Point(Math.Max(_host.ClientSize.Width - _viewBtn.Width - 10, _paintBtn.Right + 8), 10);
         }
 
         // ---------------- menus ----------------
@@ -390,6 +402,10 @@ namespace GhostShell
             foreach (var (item, on) in _marksV) item.Checked = on(vs);
             bool isPreset = vs.resW == 0 || Array.Exists(ResolutionConverter.Sizes, z => z.w == vs.resW && z.h == vs.resH);
             _customRes.Checked = !isPreset;
+            GhostEngine.GhostEngine_GetPaintSettings(out GhostPaintInfo pi);
+            foreach (var (item, on) in _marksP) item.Checked = on(pi);
+            _paintModeItem.Checked = pi.active != 0;
+            RebuildLayerMenu(pi);
         }
 
         private void Sync()
@@ -397,6 +413,7 @@ namespace GhostShell
             GhostEngine.GhostEngine_GetViewSettings(out GhostViewSettings s);
             _toolBtn.Text = Tools[Math.Clamp(s.tool, 0, Tools.Length - 1)] + "  \u25BE";
             _viewBtn.Text = "View  \u25BE";
+            SyncPaint();
         }
 
         // ---------------- saved with the user's settings ----------------
@@ -467,5 +484,112 @@ namespace GhostShell
             GhostEngine.GhostEngine_SetTAA(GhostSettings.Data.TaaEnabled);
             Sync();
         }
+
+        // ---------------- paint menu ----------------
+        private ToolStripMenuItem AddP(ToolStripItemCollection into, string text, Func<GhostPaintInfo, bool> on, ChangeP apply)
+        {
+            var it = new ToolStripMenuItem(text);
+            it.Click += (s, e) => EditP(apply);
+            into.Add(it);
+            _marksP.Add((it, on));
+            return it;
+        }
+
+        private static void EditP(ChangeP c)
+        {
+            GhostEngine.GhostEngine_GetPaintSettings(out GhostPaintInfo p);
+            c(ref p);
+            GhostEngine.GhostEngine_SetPaintSettings(ref p);
+        }
+
+        private void BuildPaintMenu()
+        {
+            ToolStripItemCollection it = _paintMenu.Items;
+            CultureInfo ci = CultureInfo.InvariantCulture;
+
+            _paintModeItem = new ToolStripMenuItem("Paint Mode   (P)");
+            _paintModeItem.Click += (s, e) => GhostEngine.GhostEngine_SetPaintMode(GhostEngine.GhostEngine_GetPaintMode() == 0 ? 1 : 0);
+            it.Add(_paintModeItem);
+            it.Add(new ToolStripSeparator());
+
+            string[] topo = { "Raise", "Lower", "Smooth", "Flatten (to the height you click)", "Set Height (to the value below)" };
+            ToolStripMenuItem topoMenu = Sub(it, "Topology Tools");
+            for (int i = 0; i < topo.Length; i++)
+            {
+                int v = i;
+                AddP(topoMenu.DropDownItems, topo[i], p => p.tool == v, (ref GhostPaintInfo p) => p.tool = v);
+            }
+            ToolStripMenuItem paintMenu = Sub(it, "Paint Tools");
+            AddP(paintMenu.DropDownItems, "Paint Layer", p => p.tool == 5, (ref GhostPaintInfo p) => p.tool = 5);
+            AddP(paintMenu.DropDownItems, "Erase Layer (weight returns to Layer 0)", p => p.tool == 6, (ref GhostPaintInfo p) => p.tool = 6);
+            _layerMenu = Sub(it, "Active Layer (paint)");
+            it.Add(new ToolStripSeparator());
+
+            ToolStripMenuItem size = Sub(it, "Brush Size (units)    [  and  ]");
+            foreach (float s0 in new[] { 0.25f, 0.5f, 1f, 2f, 3f, 5f, 8f, 12f, 20f, 40f })
+            {
+                float r = s0;
+                AddP(size.DropDownItems, r.ToString("0.##", ci), p => Math.Abs(p.radius - r) < 0.01f, (ref GhostPaintInfo p) => p.radius = r);
+            }
+            ToolStripMenuItem str = Sub(it, "Strength");
+            foreach (float s0 in new[] { 0.05f, 0.1f, 0.25f, 0.5f, 0.75f, 1f })
+            {
+                float r = s0;
+                AddP(str.DropDownItems, $"{(int)(r * 100)}%", p => Math.Abs(p.strength - r) < 0.01f, (ref GhostPaintInfo p) => p.strength = r);
+            }
+            ToolStripMenuItem fade = Sub(it, "Fade Out (soft edge)");
+            foreach (float s0 in new[] { 0f, 0.25f, 0.5f, 0.6f, 0.75f, 1f })
+            {
+                float r = s0;
+                AddP(fade.DropDownItems, r <= 0f ? "0% (hard edge)" : $"{(int)(r * 100)}%",
+                    p => Math.Abs(p.fade - r) < 0.01f, (ref GhostPaintInfo p) => p.fade = r);
+            }
+
+            ToolStripMenuItem sh = Sub(it, "Set Height value (units)");
+            foreach (float s0 in new[] { -5f, -2f, -1f, -0.5f, 0f, 0.5f, 1f, 2f, 5f, 10f })
+            {
+                float r = s0;
+                AddP(sh.DropDownItems, r.ToString("0.##", ci), p => Math.Abs(p.setHeight - r) < 0.01f, (ref GhostPaintInfo p) => p.setHeight = r);
+            }
+
+            it.Add(new ToolStripSeparator());
+            var reset = new ToolStripMenuItem("Reset brush");
+            reset.Click += (s, e) => EditP((ref GhostPaintInfo p) =>
+            {
+                p.tool = 0; p.radius = 2f; p.strength = 0.5f; p.fade = 0.6f; p.setHeight = 0f;
+            });
+            it.Add(reset);
+        }
+
+        // The layer list follows the selected Tile Map (rebuilt each time the menu opens)
+        private void RebuildLayerMenu(GhostPaintInfo pi)
+        {
+            _layerMenu.DropDownItems.Clear();
+            if (pi.hasTileMap == 0 || pi.layerCount == 0)
+            {
+                _layerMenu.DropDownItems.Add(new ToolStripMenuItem("(select a Tile Map with layers)") { Enabled = false });
+                return;
+            }
+            for (int l = 0; l < pi.layerCount; l++)
+            {
+                int layer = l;
+                var item = new ToolStripMenuItem($"Layer {l}") { Checked = pi.layer == l };
+                item.Click += (s, e) => EditP((ref GhostPaintInfo p) => p.layer = layer);
+                _layerMenu.DropDownItems.Add(item);
+            }
+        }
+
+        // The Paint button lights up while paint mode is on (also follows the P key)
+        private void SyncPaint()
+        {
+            GhostEngine.GhostEngine_GetPaintSettings(out GhostPaintInfo pi);
+            bool on = pi.active != 0;
+            string t = on ? "Paint \u25CF  \u25BE" : "Paint  \u25BE";
+            if (_paintBtn.Text != t) _paintBtn.Text = t;
+            Color c = on ? Color.FromArgb(0x5A, 0x42, 0x1E) : Color.FromArgb(0x2A, 0x2A, 0x30);
+            if (_paintBtn.BackColor != c) _paintBtn.BackColor = c;
+        }
+
+
     }
 }

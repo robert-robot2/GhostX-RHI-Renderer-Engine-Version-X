@@ -687,6 +687,111 @@ void GhostReleaseSkinMesh(GhostPipeline* p, int slot)
     m = GhostMesh();
 }
 
+GhostResult GhostUploadTileMesh(IGhostRHI* rhi, GhostPipeline* p, int slot,
+    const GhostVertex* verts, unsigned int vertexCount, const unsigned int* indices, unsigned int indexCount)
+{
+    if (!rhi || !p || slot < 0 || slot >= (int)GHOST_MAX_TILEMAPS || !verts || !indices ||
+        vertexCount == 0 || indexCount < 3) return GHOST_FAIL;
+
+    const unsigned long long vbSize = (unsigned long long)vertexCount * sizeof(GhostVertex);
+    const unsigned long long ibSize = (unsigned long long)indexCount * sizeof(unsigned int);
+    if (vbSize > 0xFFFFFFFFull || ibSize > 0xFFFFFFFFull) return GHOST_FAIL;
+
+    ID3D12Device* d = rhi->GetDevice();
+    GhostMesh& m = p->meshes[GHOST_TILE_MESH_BASE + slot];
+    D3D12_RANGE rr = { 0, 0 };
+
+    if (!m.vb || !p->tileVBMapped[slot] || p->tileVBCap[slot] < vbSize)        // (re)allocate only when it has to grow
+    {
+        ComPtr<ID3D12Resource> nb;
+        if (CreateUploadBuffer(d, vbSize, &nb) != GHOST_OK) return GHOST_FAIL;
+        void* ptr = nullptr;
+        nb->Map(0, &rr, &ptr);
+        m.vb = nb;                                                           // the GPU is idle between frames, so the old one can go
+        p->tileVBMapped[slot] = ptr;
+        p->tileVBCap[slot] = (unsigned int)vbSize;
+    }
+    memcpy(p->tileVBMapped[slot], verts, (size_t)vbSize);
+    m.vbView = { m.vb->GetGPUVirtualAddress(), (UINT)vbSize, sizeof(GhostVertex) };
+
+    if (!m.ib || !p->tileIBMapped[slot] || p->tileIBCap[slot] < ibSize)
+    {
+        ComPtr<ID3D12Resource> nb;
+        if (CreateUploadBuffer(d, ibSize, &nb) != GHOST_OK) return GHOST_FAIL;
+        void* ptr = nullptr;
+        nb->Map(0, &rr, &ptr);
+        m.ib = nb;
+        p->tileIBMapped[slot] = ptr;
+        p->tileIBCap[slot] = (unsigned int)ibSize;
+    }
+    memcpy(p->tileIBMapped[slot], indices, (size_t)ibSize);
+    m.ibView = { m.ib->GetGPUVirtualAddress(), (UINT)ibSize, DXGI_FORMAT_R32_UINT };
+    m.indexCount = indexCount;
+    return GHOST_OK;
+}
+
+void GhostReleaseTileMesh(GhostPipeline* p, int slot)
+{
+    if (!p || slot < 0 || slot >= (int)GHOST_MAX_TILEMAPS) return;
+    p->meshes[GHOST_TILE_MESH_BASE + slot] = GhostMesh();
+    p->tileVBMapped[slot] = p->tileIBMapped[slot] = nullptr;
+    p->tileVBCap[slot] = p->tileIBCap[slot] = 0;
+}
+
+bool GhostUpdateTextureLevel0(IGhostRHI* rhi, GhostPipeline* p, int index,
+    const unsigned char* rgba, unsigned int w, unsigned int h)
+{
+    if (!rhi || !p || !rgba || index < 0 || index >= (int)p->textureCount || !p->textures[index]) return false;
+    ID3D12Device* device = rhi->GetDevice();
+    ID3D12Resource* tex = p->textures[index].Get();
+    const D3D12_RESOURCE_DESC td = tex->GetDesc();
+    if (td.Width != w || td.Height != h) return false;
+
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp = {};
+    UINT numRows = 0;
+    UINT64 rowBytes = 0, total = 0;
+    device->GetCopyableFootprints(&td, 0, 1, 0, &fp, &numRows, &rowBytes, &total);
+
+    if (!p->splatUpload || p->splatUploadSize < total)
+    {
+        p->splatUpload.Reset();
+        if (CreateUploadBuffer(device, total, &p->splatUpload) != GHOST_OK) return false;
+        p->splatUploadSize = total;
+    }
+    unsigned char* dst = nullptr;
+    D3D12_RANGE rr = { 0, 0 };
+    p->splatUpload->Map(0, &rr, (void**)&dst);
+    for (UINT row = 0; row < numRows; row++)
+        memcpy(dst + fp.Offset + (UINT64)row * fp.Footprint.RowPitch, rgba + (size_t)row * w * 4, (size_t)w * 4);
+    p->splatUpload->Unmap(0, nullptr);
+
+    ID3D12Resource* up = p->splatUpload.Get();
+    GhostResult r = rhi->ExecuteOneShot([&](ID3D12GraphicsCommandList* cmd)
+        {
+            D3D12_RESOURCE_BARRIER b = {};
+            b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+            b.Transition.pResource = tex;
+            b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+            b.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+            b.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
+            cmd->ResourceBarrier(1, &b);
+
+            D3D12_TEXTURE_COPY_LOCATION dl = {};
+            dl.pResource = tex;
+            dl.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+            dl.SubresourceIndex = 0;
+            D3D12_TEXTURE_COPY_LOCATION sl = {};
+            sl.pResource = up;
+            sl.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+            sl.PlacedFootprint = fp;
+            cmd->CopyTextureRegion(&dl, 0, 0, 0, &sl, nullptr);
+
+            b.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+            b.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+            cmd->ResourceBarrier(1, &b);
+        });
+    return r == GHOST_OK;
+}
 
 // ============================================================
 //  Internal helpers  (no RHI dependency — take raw device)
@@ -1120,7 +1225,7 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
     {
         delete p; return GHOST_FAIL;
     }
-    // this may be wrong
+  
     {
         D3D12_GRAPHICS_PIPELINE_STATE_DESC bd = psoDesc;         // translucent: premultiplied blend, no depth write
         D3D12_RENDER_TARGET_BLEND_DESC& tb = bd.BlendState.RenderTarget[0];
@@ -1130,6 +1235,18 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
         tb.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
         bd.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
         if (FAILED(device->CreateGraphicsPipelineState(&bd, IID_PPV_ARGS(&p->blendPso)))) { delete p; return GHOST_FAIL; }
+    }
+
+    {
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC ad = psoDesc;          // Tile Map layers: added on top of the first pass (same geometry, same depth)
+        D3D12_RENDER_TARGET_BLEND_DESC& ab = ad.BlendState.RenderTarget[0];
+        ab.BlendEnable = TRUE;
+        ab.SrcBlend = D3D12_BLEND_ONE;       ab.DestBlend = D3D12_BLEND_ONE;       ab.BlendOp = D3D12_BLEND_OP_ADD;
+        ab.SrcBlendAlpha = D3D12_BLEND_ZERO; ab.DestBlendAlpha = D3D12_BLEND_ONE;  ab.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+        ab.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_RED | D3D12_COLOR_WRITE_ENABLE_GREEN | D3D12_COLOR_WRITE_ENABLE_BLUE;
+        ad.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+        ad.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+        if (FAILED(device->CreateGraphicsPipelineState(&ad, IID_PPV_ARGS(&p->addPso)))) { delete p; return GHOST_FAIL; }
     }
 
 
@@ -1596,17 +1713,22 @@ void GhostDrawIcon(IGhostRHI* rhi, GhostPipeline* p, unsigned int slot)
 }
 
 void GhostDrawMesh(IGhostRHI* rhi, GhostPipeline* p, int meshId, unsigned int slot,
-    unsigned int textureIndex, unsigned int firstIndex, unsigned int indexCount, bool translucent)
+    unsigned int textureIndex, unsigned int firstIndex, unsigned int indexCount, bool translucent, bool additive)
 {
        
-    if (meshId < 0 || meshId >= (int)(GHOST_MAX_MESHES + GHOST_MAX_SKINS) || slot >= GHOST_MAX_OBJECTS) return;
+    if (meshId < 0 || meshId >= (int)(GHOST_MAX_MESHES + GHOST_MAX_SKINS + GHOST_MAX_TILEMAPS) || slot >= GHOST_MAX_OBJECTS) return;
     const GhostMesh& m = p->meshes[meshId];
     if (!m.vb) return;
 
     auto* cmd = rhi->GetCmdList();
     ID3D12DescriptorHeap* heaps[] = { p->cbvHeap.Get() };
     cmd->SetDescriptorHeaps(1, heaps);
-    cmd->SetPipelineState((translucent && p->blendPso) ? p->blendPso.Get() : p->pso.Get());
+
+    ID3D12PipelineState* pso = p->pso.Get();
+    if (additive && p->addPso)                 pso = p->addPso.Get();     // Tile Map layers 1..n: ONE/ONE blend, LESS_EQUAL, no depth write
+    else if (translucent && p->blendPso)       pso = p->blendPso.Get();
+    cmd->SetPipelineState(pso);
+
     cmd->SetGraphicsRootSignature(p->rootSignature.Get());
     BindShadowTable(cmd, p);
 
@@ -1967,7 +2089,7 @@ void GhostShadowSlice(IGhostRHI* rhi, GhostPipeline* p, int slice, const float* 
 
 void GhostShadowDraw(IGhostRHI* rhi, GhostPipeline* p, int meshId, unsigned int slot, unsigned int texIndex)
 {
-    if (meshId < 0 || meshId >= (int)(GHOST_MAX_MESHES + GHOST_MAX_SKINS) || slot >= GHOST_MAX_SHADOW_CASTERS) return;
+    if (meshId < 0 || meshId >= (int)(GHOST_MAX_MESHES + GHOST_MAX_SKINS + GHOST_MAX_TILEMAPS) || slot >= GHOST_MAX_SHADOW_CASTERS) return;
     const GhostMesh& m = p->meshes[meshId];
     if (!m.vb) return;
 
@@ -2178,6 +2300,17 @@ GhostResult GhostRebuildScenePSOs(IGhostRHI* rhi, GhostPipeline* p, unsigned int
         blendD.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
     }
 
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC addD = base;
+    {
+        D3D12_RENDER_TARGET_BLEND_DESC& ab = addD.BlendState.RenderTarget[0];
+        ab.BlendEnable = TRUE;
+        ab.SrcBlend = D3D12_BLEND_ONE;       ab.DestBlend = D3D12_BLEND_ONE;       ab.BlendOp = D3D12_BLEND_OP_ADD;
+        ab.SrcBlendAlpha = D3D12_BLEND_ZERO; ab.DestBlendAlpha = D3D12_BLEND_ONE;  ab.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+        ab.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_RED | D3D12_COLOR_WRITE_ENABLE_GREEN | D3D12_COLOR_WRITE_ENABLE_BLUE;
+        addD.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+        addD.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+    }
+
     ComPtr<ID3D12PipelineState> nMain, nIcon, nUI, nOvTop, nOvDepth, nSky, nBlend;
     if (FAILED(device->CreateGraphicsPipelineState(&base, IID_PPV_ARGS(&nMain))) ||
         FAILED(device->CreateGraphicsPipelineState(&iconD, IID_PPV_ARGS(&nIcon))) ||
@@ -2186,6 +2319,11 @@ GhostResult GhostRebuildScenePSOs(IGhostRHI* rhi, GhostPipeline* p, unsigned int
         FAILED(device->CreateGraphicsPipelineState(&ovDepthD, IID_PPV_ARGS(&nOvDepth))) ||
         FAILED(device->CreateGraphicsPipelineState(&skyD, IID_PPV_ARGS(&nSky))) ||
         FAILED(device->CreateGraphicsPipelineState(&blendD, IID_PPV_ARGS(&nBlend))))    
+        return GHOST_FAIL;
+    ComPtr<ID3D12PipelineState> nAdd;
+
+
+    if (FAILED(device->CreateGraphicsPipelineState(&addD, IID_PPV_ARGS(&nAdd))))
         return GHOST_FAIL;
 
     // All six built: swap them in (the GPU is idle, so the old ones can go)
@@ -2196,6 +2334,7 @@ GhostResult GhostRebuildScenePSOs(IGhostRHI* rhi, GhostPipeline* p, unsigned int
     p->overlayDepthPso = nOvDepth;
     p->skyPso = nSky;
     p->blendPso = nBlend;
+    p->addPso = nAdd;
     p->sampleCount = sampleCount;
     return GHOST_OK;
 }

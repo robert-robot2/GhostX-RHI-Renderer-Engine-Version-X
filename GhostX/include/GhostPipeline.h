@@ -36,9 +36,10 @@ struct GhostObjectCB            // matches cbuffer MVPBuffer (VS) and ObjectBuff
     float     surfA[4];                   // x two sided, y IOR, z reflection rotation (rad), w anisotropy
     float     surfB[4];                   // subsurface rgb, w amount
     float     wpoP[4];                    // x sway, y speed, z mid level, w time (s)
-    float     opacityP[4];                // x opacity
+    float     opacityP[4];                // x opacity, y Tile Map shadow light selector
+    float     tileP[8];                   // Tile Map: [0] weight texture A, [1] weight texture B, [2] layer of this pass, [4] gridX, [5] gridY, [6] 1 = checker look
 };
-static_assert(sizeof(GhostObjectCB) == 848, "GhostObjectCB layout must match the HLSL cbuffer");
+static_assert(sizeof(GhostObjectCB) == 880, "GhostObjectCB layout must match the HLSL cbuffer");
 
 constexpr unsigned int GHOST_SHADOW_SIZE = 1024;     // each shadow map is 1024 x 1024
 constexpr unsigned int GHOST_SHADOW_SLICES = 16;       // a directional light uses 1, a point or rect light 6
@@ -73,8 +74,12 @@ constexpr unsigned int       GHOST_MAX_OBJECTS = 2048;          // was 1024: dra
 constexpr unsigned long long GHOST_OBJECT_CB_STRIDE = 1024;
 static_assert(sizeof(GhostObjectCB) <= GHOST_OBJECT_CB_STRIDE, "GhostObjectCB too large");
 
-constexpr unsigned int       GHOST_MAX_TEXTURES = 256;
+constexpr unsigned int       GHOST_MAX_TEXTURES = 1024;
 constexpr unsigned int       GHOST_MAX_SKINS = 16;              // animated models drawn at once
+
+constexpr unsigned int GHOST_MAX_TILEMAPS = 16;                                   // Tile Maps with their own generated mesh
+constexpr unsigned int GHOST_TILE_MESH_BASE = GHOST_MAX_MESHES + GHOST_MAX_SKINS;   // first Tile Map slot in meshes[]
+
 constexpr unsigned int GHOST_MAX_SHADOW_CASTERS = 512;          // was 256: this is also the object limit
 constexpr unsigned int GHOST_SHADOW_SRV_INDEX = GHOST_MAX_TEXTURES + GHOST_MAX_SURFACES;   // last slot of the SRV heap
 
@@ -108,8 +113,14 @@ struct GhostPipeline
     ComPtr<ID3D12RootSignature>  rootSignature;
     ComPtr<ID3D12PipelineState>  pso;
     ComPtr<ID3D12PipelineState>  blendPso;      // translucent materials
+    ComPtr<ID3D12PipelineState> addPso;         // Tile Map layers 1..n: added on top of layer 0 (same depth)
     ComPtr<ID3D12PipelineState> iconPso;
-    GhostMesh meshes[GHOST_MAX_MESHES + GHOST_MAX_SKINS];   // slots from GHOST_MAX_MESHES up are animated vertex buffers
+    GhostMesh meshes[GHOST_MAX_MESHES + GHOST_MAX_SKINS + GHOST_MAX_TILEMAPS];   // then skin slots, then Tile Map slots
+    void* tileVBMapped[GHOST_MAX_TILEMAPS] = {};     // Tile Map meshes keep their upload buffers mapped, so sculpting only copies bytes
+    void* tileIBMapped[GHOST_MAX_TILEMAPS] = {};
+    unsigned int tileVBCap[GHOST_MAX_TILEMAPS] = {}, tileIBCap[GHOST_MAX_TILEMAPS] = {};
+    ComPtr<ID3D12Resource> splatUpload;                      // shared upload buffer for weight map updates
+    unsigned long long     splatUploadSize = 0;
     void* skinMapped[GHOST_MAX_SKINS] = {};
 
     // ---- Constant Buffer ----
@@ -194,6 +205,11 @@ GhostResult GhostCreateSkinMesh(IGhostRHI* rhi, GhostPipeline* pipeline, int slo
 void* GhostSkinMapped(GhostPipeline* pipeline, int slot);
 void        GhostReleaseSkinMesh(GhostPipeline* pipeline, int slot);
 
+// Tile Maps: a generated mesh (32-bit indices) in slot 0..GHOST_MAX_TILEMAPS-1. Draw with meshId = GHOST_TILE_MESH_BASE + slot.
+// Re-uploading replaces the old buffers: call between frames only.
+GhostResult GhostUploadTileMesh(IGhostRHI* rhi, GhostPipeline* pipeline, int slot,
+    const GhostVertex* vertices, unsigned int vertexCount, const unsigned int* indices, unsigned int indexCount);
+void        GhostReleaseTileMesh(GhostPipeline* pipeline, int slot);
 // Rebuilds the PSOs that draw into the scene target (main, icon, UI, overlays, sky) at a new sample count.
 // Between frames only. On failure nothing is changed.
 GhostResult GhostRebuildScenePSOs(IGhostRHI* rhi, GhostPipeline* pipeline, unsigned int sampleCount);
@@ -207,7 +223,12 @@ int GhostCreateTexture(IGhostRHI* rhi, GhostPipeline* pipeline,
 
 // indexCount 0 = whole mesh; otherwise draws indices [firstIndex, firstIndex + indexCount)
 void GhostDrawMesh(IGhostRHI* rhi, GhostPipeline* pipeline, int meshId, unsigned int slot,
-    unsigned int textureIndex = 0, unsigned int firstIndex = 0, unsigned int indexCount = 0, bool translucent = false);
+    unsigned int textureIndex = 0, unsigned int firstIndex = 0, unsigned int indexCount = 0,
+    bool translucent = false, bool additive = false);
+
+// Re-uploads the top mip of an existing texture (weight maps). Same size only. Returns false on failure.
+bool GhostUpdateTextureLevel0(IGhostRHI* rhi, GhostPipeline* pipeline, int index,
+    const unsigned char* rgba, unsigned int width, unsigned int height);
 
 void GhostDrawIcon(IGhostRHI* rhi, GhostPipeline* pipeline, unsigned int slot);
 

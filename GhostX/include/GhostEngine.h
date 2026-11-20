@@ -141,6 +141,27 @@ struct GhostSurfaceInfo
     float wpoSway, wpoSpeed, wpoMid;
 };
 
+struct GhostTileMapInfo
+{
+    int   id;
+    float tileSize;
+    int   gridX, gridY, gridZ;
+    int   direction;            // 0 X, 1 Y (floor), 2 Z
+    int   receiveShadows;       // Landscape Shadows on/off
+    int   shadowLightId;        // 0 = all lights, otherwise a directional light's id
+    int   layerCount;           // read-only here: use Add / RemoveTileLayer
+    int   subdiv;               // terrain quads per tile side
+};
+struct GhostPaintInfo
+{
+    int   active;               // paint mode on
+    int   tool;                 // 0 raise, 1 lower, 2 smooth, 3 flatten, 4 set height, 5 paint layer, 6 erase layer
+    float radius, strength, fade, setHeight;
+    int   layer;                // the Active Layer (read-only here: set through SetTargetFace)
+    int   layerCount;           // layers of the selected Tile Map (0 = none selected)
+    int   hasTileMap;
+};
+
 extern "C"
 {
     GHOST_API int  GhostEngine_Init(HWND hwnd, unsigned int width, unsigned int height);
@@ -159,6 +180,20 @@ extern "C"
     // Spawn at a screen position (ground-plane hit); pass -1, -1 for screen center. Returns id, 0 on failure.
     GHOST_API int  GhostEngine_AddObject(int meshId, int screenX, int screenY);
     GHOST_API int  GhostEngine_AddLight(int lightType, int screenX, int screenY);
+
+    GHOST_API int  GhostEngine_AddTileMap(int screenX, int screenY);         // Maps > Tile Map. New id, 0 = failed
+    GHOST_API int  GhostEngine_GetTileMap(int objectId, GhostTileMapInfo* out);   // 0 = not a Tile Map
+    GHOST_API void GhostEngine_SetTileMap(const GhostTileMapInfo* in);
+    GHOST_API int  GhostEngine_AddTileLayer(int objectId);                        // new layer index, -1 = refused (limit / not a Tile Map)
+    GHOST_API int  GhostEngine_RemoveTileLayer(int objectId, int layer);          // 1 = removed
+    GHOST_API int  GhostEngine_AssignTileLayer(int objectId, int layer, int col0, int row0, int col1, int row1);   // returns tiles changed
+    GHOST_API int  GhostEngine_GetTileLayerCounts(int objectId, int* outCounts, int maxCount);   // returns layer count, outCounts[l] = tiles using layer l
+    GHOST_API void GhostEngine_SetPaintMode(int on);
+    GHOST_API int  GhostEngine_GetPaintMode();
+    GHOST_API void GhostEngine_GetPaintSettings(GhostPaintInfo* out);
+    GHOST_API void GhostEngine_SetPaintSettings(const GhostPaintInfo* in);
+    GHOST_API void GhostEngine_ResetTerrain(int objectId, int what);       // 1 heights, 2 weights, 3 both
+
     GHOST_API int  GhostEngine_RemoveEntity(int id);      // returns 1 if removed (0 = refused, e.g. the last camera)
 
     // ---- Cameras ----
