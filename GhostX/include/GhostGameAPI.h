@@ -213,6 +213,10 @@ extern "C" {
         int   (*IsModel)(int id);                               // 1 if the object is an imported 3D model (not a primitive or sprite)
         float (*ModelClipLength)(int id, const char* clip);     // seconds a model's 3D clip lasts (0 = not a model, or no such clip)
 
+        // ---- terrain (Tile Maps) ----
+        int   (*IsTerrain)(int id);                                          // 1 if the object is a Tile Map
+        int   (*GetTerrainHeight)(int id, float worldX, float worldZ, float* outWorldY);   // 0 = outside the grid / not a floor map
+
     } GhostGameAPI;
 
     // A game module must export:

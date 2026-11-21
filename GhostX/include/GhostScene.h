@@ -31,7 +31,7 @@ enum GhostRole {
     GHOST_ROLE_PORTAL_ENTRY, GHOST_ROLE_PORTAL_EXIT, GHOST_ROLE_BREAKABLE,
     GHOST_ROLE_MOVER, GHOST_ROLE_PROJECTILE, GHOST_ROLE_BOSS, GHOST_ROLE_HIDDEN, GHOST_ROLE_COUNT
 };
-enum class GhostLightType : int { Directional = 0, Point = 1, RectArea = 2 };
+enum class GhostLightType : int { Directional = 0, Point = 1, RectArea = 2, Spot = 3 };
 constexpr unsigned int GHOST_MAX_LIGHTS = 16;
 constexpr unsigned int GHOST_MAX_CAMERAS = 4;
 // face cap???
@@ -297,6 +297,7 @@ struct GhostTileMap
     int   shadowLightId = 0;                // 0 = every light shadows the landscape, otherwise only this directional light
     int   layerCount = 0;                   // material layers in use (materials are GhostObject::faces[0 .. layerCount-1])
     int   subdiv = 4;                       // terrain quads per tile side (lowered automatically for big maps)
+    bool  autoCollider = true;              // collider box follows the terrain bounds
     std::vector<float> height;              // (gridX*sub+1) * (gridY*sub+1), row = V. Displacement along the facing axis, object units
     std::vector<unsigned char> splat;       // splatW * splatH * 8: weight of layers 0..7 per texel (sums to 255)
     int   splatW = 0, splatH = 0;           // the size 'splat' was built for
@@ -432,6 +433,27 @@ inline float GhostTileMap_Height(const GhostTileMap& t, float u, float v)
     return a + (b - a) * wy;
 }
 
+// Height of the terrain exactly as the mesh is drawn (each cell = 2 triangles, split along the i01-i10 diagonal).
+// Use this for collision. GhostTileMap_Height (bilinear) can differ from the drawn surface by a hair.
+inline float GhostTileMap_HeightMesh(const GhostTileMap& t, float u, float v)
+{
+    const int sub = GhostTileMap_EffSub(t.gridX, t.gridY, t.subdiv);
+    const int vx = t.gridX * sub + 1, vy = t.gridY * sub + 1;
+    if (t.height.size() != (size_t)vx * (size_t)vy) return 0.0f;
+    const float cell = t.tileSize / (float)sub;
+    const float fx = (u + 0.5f * (float)t.gridX * t.tileSize) / cell;
+    const float fy = (v + 0.5f * (float)t.gridY * t.tileSize) / cell;
+    if (fx < 0.0f || fy < 0.0f || fx >(float)(vx - 1) || fy >(float)(vy - 1)) return 0.0f;
+    int x0 = (int)fx, y0 = (int)fy;
+    if (x0 > vx - 2) x0 = vx - 2;
+    if (y0 > vy - 2) y0 = vy - 2;
+    const float wx = fx - (float)x0, wy = fy - (float)y0;
+    const float h00 = t.height[(size_t)y0 * vx + x0], h10 = t.height[(size_t)y0 * vx + x0 + 1];
+    const float h01 = t.height[(size_t)(y0 + 1) * vx + x0], h11 = t.height[(size_t)(y0 + 1) * vx + x0 + 1];
+    if (wx + wy <= 1.0f) return h00 + (h10 - h00) * wx + (h01 - h00) * wy;          // triangle (i00, i01, i10)
+    return h11 + (h01 - h11) * (1.0f - wx) + (h10 - h11) * (1.0f - wy);              // triangle (i01, i11, i10)
+}
+
 // Half extents of the flat grid in object space (thin on the facing axis)
 inline GhostVec3 GhostTileMap_Half(const GhostTileMap& t)
 {
@@ -513,6 +535,14 @@ inline GhostVec3 GhostObject_Max(const GhostObject& o)
     return mx;
 }
 
+inline void GhostObject_FitTileCollider(GhostObject& o)
+{
+    GhostVec3 mn, mx;
+    GhostTileMap_Box(o.tileMap, mn, mx);
+    auto d = [](float v) { v = v < 0.0f ? -v : v; return v < 0.01f ? 0.01f : v; };
+    o.colliderSize = { d(mx.x - mn.x), d(mx.y - mn.y), d(mx.z - mn.z) };
+    o.colliderOffset = { (mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f, (mn.z + mx.z) * 0.5f };
+}
 // Material slots of an object: a Tile Map's slots are its material layers (can be 0)
 inline int GhostObject_FaceCount(const GhostObject& o)
 {
@@ -562,6 +592,10 @@ struct GhostLight
     float          range = 10.0f;                    // point + rect
     float          width = 1.0f, height = 1.0f;      // rect only
     bool           castShadows = true;
+    float          innerDeg = 20.0f, outerDeg = 35.0f;   // spot cone
+    bool           shadowObjects = true;                 // spot: objects cast shadows from this light
+    bool           shadowLandscape = true;               // spot: Tile Maps cast shadows from this light
+    float          spinYaw = 0.0f, spinPitch = 0.0f;     // deg/sec, applied while playing
 };
 struct GhostCamera
 {
@@ -660,14 +694,15 @@ inline GhostObject* GhostScene_AddObject(GhostScene& s, int meshId)
 inline GhostLight* GhostScene_AddLight(GhostScene& s, GhostLightType type)
 {
     if (s.lights.size() >= GHOST_MAX_LIGHTS) return nullptr;
-    static const char* names[] = { "Directional Light", "Point Light", "Rect Light" };
+    static const char* names[] = { "Directional Light", "Point Light", "Rect Light", "Spot Light" };
 
     GhostLight l;
     l.id = s.nextId++;
     l.type = type;
     l.name = std::string(names[(int)type]) + " " + std::to_string(l.id);
     if (type == GhostLightType::Directional) l.pitchDeg = -45.0f;
-    if (type == GhostLightType::RectArea)    l.pitchDeg = -90.0f;   // faces down
+    if (type == GhostLightType::RectArea)    l.pitchDeg = -90.0f;
+    if (type == GhostLightType::Spot) { l.pitchDeg = -90.0f; l.intensity = 3.0f; }
     s.lights.push_back(l);
     s.version++;
     return &s.lights.back();

@@ -110,6 +110,7 @@ struct GameState
 extern GameState S;
 enum { PU_NONE = 0, PU_MUSHROOM, PU_FLOWER, PU_STAR, PU_ONEUP };
 inline int PowerLevel() { return S.big ? (S.fire ? 2 : 1) : 0; }
+
 // ---- Collision.cpp ----
 struct Body
 {
@@ -129,6 +130,8 @@ bool       LoadBody(int id, Body& b);                         // false if the ob
 MoveResult MoveBody(Body& b, float dt);                       // moves by vel * dt: X, then Z, then Y
 int        QueryBody(const Body& b, int* ids, int maxCount);  // colliders overlapping the body (never itself)
 void       StoreBody(const Body& b);                          // writes the object's position back (center minus the offset)
+bool       Terrain_Is(int id);                                // a floor Tile Map (height field)
+
 // ---- Player.cpp ----
 void Player_Init();
 void Player_Reset();

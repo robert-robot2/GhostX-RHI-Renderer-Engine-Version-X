@@ -1375,7 +1375,7 @@ namespace GhostShell
         protected void Set(GhostLightInfo i) => GhostEngine.GhostEngine_SetLight(ref i);
 
         [Category("Details")] public string Name => GhostNames.Of(Id);
-        [Category("Details")] public string Type => Get().type switch { 0 => "Directional", 1 => "Point", _ => "Rect Area" };
+        [Category("Details")] public string Type => Get().type switch { 0 => "Directional", 1 => "Point", 3 => "Spot", _ => "Rect Area" };
 
         [Category("Transform")] public Vec3Edit Position { get; }
 
@@ -1405,6 +1405,12 @@ namespace GhostShell
 
         [Category("Light"), DisplayName("Pitch (deg)")]
         public float Pitch { get => Get().pitchDeg; set { var i = Get(); i.pitchDeg = value; Set(i); } }
+
+        [Category("Rotation"), DisplayName("Spin Yaw (deg/sec, Play)")]
+        public float SpinYaw { get => Get().spinYaw; set { var i = Get(); i.spinYaw = value; Set(i); } }
+
+        [Category("Rotation"), DisplayName("Spin Pitch (deg/sec, Play)")]
+        public float SpinPitch { get => Get().spinPitch; set { var i = Get(); i.spinPitch = value; Set(i); } }
     }
 
     internal class PointLightProxy : LightProxy
@@ -1428,6 +1434,34 @@ namespace GhostShell
 
         [Category("Light")]
         public float Height { get => Get().height; set { var i = Get(); i.height = value; Set(i); } }
+    }
+
+    internal class SpotLightProxy : DirectionalLightProxy
+    {
+        public SpotLightProxy(int id) : base(id) { }
+
+        [Category("Light")]
+        public float Range { get => Get().range; set { var i = Get(); i.range = value; Set(i); } }
+
+        [Category("Spot"), DisplayName("Inner Cone (deg)")]
+        public float InnerCone { get => Get().innerDeg; set { var i = Get(); i.innerDeg = value; Set(i); } }
+
+        [Category("Spot"), DisplayName("Outer Cone (deg)")]
+        public float OuterCone { get => Get().outerDeg; set { var i = Get(); i.outerDeg = value; Set(i); } }
+
+        [Category("Spot Shadows"), DisplayName("Objects Cast Shadows")]
+        public bool ShadowObjects
+        {
+            get => Get().shadowObjects != 0;
+            set { var i = Get(); i.shadowObjects = value ? 1 : 0; Set(i); }
+        }
+
+        [Category("Spot Shadows"), DisplayName("Landscape Casts Shadows")]
+        public bool ShadowLandscape
+        {
+            get => Get().shadowLandscape != 0;
+            set { var i = Get(); i.shadowLandscape = value ? 1 : 0; Set(i); }
+        }
     }
 
     internal static class GhostSceneAudio
@@ -1783,13 +1817,14 @@ namespace GhostShell
             _viewport.DragOver += OnViewportDrag;
             _viewport.DragDrop += OnViewportDrop;
             _viewport.MouseDown += (s, e) => _viewport.Select();
+            /*
             _viewport.MouseEnter += (s, e) =>
             {
                 // Hovering the viewport takes keyboard focus, unless you're typing somewhere
                 if (Form.ActiveForm != null && Form.ActiveForm == _viewport.TopLevelControl && !IsTyping())
                     _viewport.Select();
             };
-
+            */
             // ---- Live sync (hierarchy, selection, values changed by viewport drags) ----
             var timer = new System.Windows.Forms.Timer { Interval = 100 };
             timer.Tick += (s, e) => Sync();
@@ -1817,6 +1852,7 @@ namespace GhostShell
         }
 
         // Returns true if the key was consumed
+        // Returns true if the key was consumed
         public bool HandleKey(Keys key, bool repeat)
         {
             Keys mods = Control.ModifierKeys;
@@ -1832,19 +1868,36 @@ namespace GhostShell
             bool paintKey = plain && key == Keys.P;
             bool brushDown = plain && key == Keys.OemOpenBrackets, brushUp = plain && key == Keys.OemCloseBrackets;
             bool focusKey = plain && key == Keys.Z, renameKey = plain && key == Keys.F2;
+            bool fullscreenKey = plain && key == Keys.F11;
 
-            if (!(isFour || isDelete || ctrlD || ctrlF || undo || redo || copy || paste || faceKey || gridKey || colKey || focusKey || renameKey || paintKey || brushDown || brushUp))
+            if (!(isFour || isDelete || ctrlD || ctrlF || undo || redo || copy || paste || faceKey || gridKey ||
+                  colKey || focusKey || renameKey || paintKey || brushDown || brushUp || fullscreenKey))
                 return false;
-            if ((faceKey || gridKey || focusKey || renameKey || colKey || paintKey || brushDown || brushUp) && GhostEngine.GhostEngine_GetPlayState() != 0)
-                return false;                                 // while playing these keys belong to the game
-            if (colKey) { GhostEngine.GhostEngine_SetColliderMode(GhostEngine.GhostEngine_GetColliderMode() == 0 ? 1 : 0); return true; }
 
+            // Never act while a modal dialog (Rename prompt, color picker, Array dialog...) is open
+            if (Form.ActiveForm is { Modal: true }) return false;
+
+            if (fullscreenKey) return ToggleFullscreenForFocus();
 
             Control? focus = Control.FromHandle(GhostShell.Win32.GetFocus());
             if (focus == null) return false;          // a native dialog (file / color picker) has focus
             if (IsInsideDesigner(focus)) return false;
             if (IsTypingIn(focus)) return false;      // never steal keys from a text box or the property grid
-            if (brushDown || brushUp)                                  // [ and ]: brush size while paint mode is on (hold to repeat)
+
+            bool inViewport = IsInViewport(focus);
+            bool sceneFocus = inViewport || IsInTree(focus);
+
+            // Single-letter viewport tools: only when the viewport itself is the active control
+            bool viewportOnly = faceKey || gridKey || colKey || paintKey || brushDown || brushUp || focusKey;
+            // Scene edits: viewport or hierarchy only (not the content browser, palette, etc.)
+            bool sceneKey = isDelete || ctrlD || ctrlF || copy || paste || renameKey;
+
+            if (viewportOnly && !inViewport) return false;
+            if (sceneKey && !sceneFocus) return false;
+            if ((viewportOnly || renameKey) && GhostEngine.GhostEngine_GetPlayState() != 0)
+                return false;                                 // while playing these keys belong to the game
+
+            if (brushDown || brushUp)                         // [ and ]: brush size while paint mode is on (hold to repeat)
             {
                 if (GhostEngine.GhostEngine_GetPaintMode() == 0) return false;
                 GhostEngine.GhostEngine_GetPaintSettings(out GhostPaintInfo bp);
@@ -1860,6 +1913,7 @@ namespace GhostShell
             if (paste) { DoPaste(); return true; }
             if (gridKey) { ToggleGrid(); return true; }
             if (faceKey) { GhostEngine.GhostEngine_SetFaceMode(GhostEngine.GhostEngine_GetFaceMode() == 0 ? 1 : 0); return true; }
+            if (colKey) { GhostEngine.GhostEngine_SetColliderMode(GhostEngine.GhostEngine_GetColliderMode() == 0 ? 1 : 0); return true; }
             if (paintKey) { GhostEngine.GhostEngine_SetPaintMode(GhostEngine.GhostEngine_GetPaintMode() == 0 ? 1 : 0); return true; }
             if (isFour) { ToggleVisible(); return true; }
             if (sel == 0) return false;
@@ -1871,6 +1925,138 @@ namespace GhostShell
             if (renameKey) { _form.BeginInvoke(new Action(RenameSelected)); return true; }
             return false;
         }
+
+        private bool IsInViewport(Control? c)
+        {
+            for (; c != null; c = c.Parent) if (c == _viewport) return true;
+            return false;
+        }
+        private bool IsInTree(Control? c)
+        {
+            for (; c != null; c = c.Parent) if (c == _tree) return true;
+            return false;
+        }
+
+        // For GhostForm: true only when the main viewport is clicked/active and nothing is being typed into
+        public bool ViewportActive()
+        {
+            Control? f = Control.FromHandle(GhostShell.Win32.GetFocus());
+            return f != null && IsInViewport(f) && !IsTypingIn(f);
+        }
+
+        // -------------------------------------------------------
+        //  Windowed fullscreen for editor windows (F11)
+        // -------------------------------------------------------
+        private sealed class FullscreenHost : Form
+        {
+            private readonly Action _exit;
+            private readonly Action? _save;
+            public bool Leaving;
+
+            public FullscreenHost(Control content, string title, Rectangle bounds, Action exit, Action? save)
+            {
+                _exit = exit; _save = save;
+                Text = title;
+                FormBorderStyle = FormBorderStyle.None;
+                StartPosition = FormStartPosition.Manual;
+                Bounds = bounds;
+                ShowInTaskbar = false;
+                BackColor = Color.FromArgb(0x25, 0x25, 0x28);
+
+                content.Dock = DockStyle.Fill;
+                Controls.Add(content);                                   // Fill first, then the strip on top
+
+                var strip = new Panel { Dock = DockStyle.Top, Height = 26, BackColor = Color.FromArgb(0x1E, 0x1E, 0x1E) };
+                var lbl = new Label
+                {
+                    Dock = DockStyle.Fill,
+                    Text = title + "   -   F11 to exit fullscreen",
+                    ForeColor = Color.Gray,
+                    TextAlign = ContentAlignment.MiddleLeft,
+                    Padding = new Padding(8, 0, 0, 0),
+                };
+                var btn = new Button
+                {
+                    Dock = DockStyle.Right,
+                    Width = 120,
+                    Text = "Exit Fullscreen",
+                    FlatStyle = FlatStyle.Flat,
+                    ForeColor = Color.FromArgb(0xF2, 0xF2, 0xF2),
+                    BackColor = Color.FromArgb(0x25, 0x25, 0x28),
+                };
+                btn.FlatAppearance.BorderColor = Color.FromArgb(0x3A, 0x3A, 0x40);
+                btn.Click += (s, e) => _exit();
+                strip.Controls.Add(lbl);
+                strip.Controls.Add(btn);
+                Controls.Add(strip);
+            }
+
+            protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+            {
+                if (keyData == Keys.F11) { _exit(); return true; }
+                // the menu's Ctrl+S belongs to the main form, so the editor saves itself here
+                if (keyData == (Keys.Control | Keys.S) && _save != null) { _save(); return true; }
+                return base.ProcessCmdKey(ref msg, keyData);
+            }
+
+            protected override void OnFormClosing(FormClosingEventArgs e)
+            {
+                if (!Leaving && e.CloseReason == CloseReason.UserClosing) { e.Cancel = true; _exit(); return; }   // Alt+F4 leaves fullscreen
+                base.OnFormClosing(e);
+            }
+        }
+
+        private FullscreenHost? _fs;
+        private Control? _fsContent, _fsParent;
+        private int _fsIndex;
+        private DockStyle _fsDockStyle;
+
+        private void ToggleEditorFullscreen(Control content, string title, Action? save)
+        {
+            if (_fs != null) { ExitEditorFullscreen(); return; }
+            Control? parent = content.Parent;
+            if (parent == null) return;
+
+            _fsContent = content; _fsParent = parent;
+            _fsIndex = parent.Controls.GetChildIndex(content);
+            _fsDockStyle = content.Dock;
+
+            Rectangle bounds = Screen.FromControl(_form).Bounds;          // whole monitor, borderless
+            parent.Controls.Remove(content);
+            _fs = new FullscreenHost(content, title, bounds, ExitEditorFullscreen, save);
+            _fs.Show(_form);
+            content.Focus();
+        }
+
+        private void ExitEditorFullscreen()
+        {
+            if (_fs == null || _fsContent == null || _fsParent == null) return;
+            FullscreenHost fs = _fs;
+            Control content = _fsContent, parent = _fsParent;
+            _fs = null; _fsContent = null; _fsParent = null;
+
+            fs.Leaving = true;
+            fs.Controls.Remove(content);
+            content.Dock = _fsDockStyle;
+            parent.Controls.Add(content);
+            parent.Controls.SetChildIndex(content, _fsIndex);
+            fs.Close();
+            content.Focus();
+        }
+
+        // F11: whichever editor window has focus goes fullscreen (or leaves it)
+        private bool ToggleFullscreenForFocus()
+        {
+            if (_fs != null) { ExitEditorFullscreen(); return true; }
+            for (Control? c = Control.FromHandle(GhostShell.Win32.GetFocus()); c != null; c = c.Parent)
+            {
+                if (c == _designer) { ToggleEditorFullscreen(_designer, "UI Designer", () => _designer.Save()); return true; }
+                if (c == _animEditor) { ToggleEditorFullscreen(_animEditor, "Animation Editor", () => _animEditor.Save()); return true; }
+                if (c == _mixer) { ToggleEditorFullscreen(_mixer, "Audio Mixer", null); return true; }
+            }
+            return false;
+        }
+
 
         private void DoUndo() { GhostEngine.GhostEngine_Undo(); Sync(); }
         private void DoRedo() { GhostEngine.GhostEngine_Redo(); Sync(); }
@@ -2093,6 +2279,7 @@ namespace GhostShell
         // Called from the form's FormClosing event
         public void SaveLayout()
         {
+            ExitEditorFullscreen();
             if (_hiddenByToggle.Count > 0) ToggleVisible();               // don't save a layout with everything hidden
             try
             {
@@ -2104,6 +2291,7 @@ namespace GhostShell
 
         private void ResetLayout()
         {
+            ExitEditorFullscreen();
             _hiddenByToggle.Clear();
             foreach (PanelDock d in _tools) d.DockPanel = null!;
             if (_dockDesigner.DockPanel != null) _dockDesigner.DockPanel = null!;
@@ -2213,6 +2401,15 @@ namespace GhostShell
             var mixItem = new ToolStripMenuItem("Audio Mixer");
             mixItem.Click += (s, e) => OpenMixer();
             menu.DropDownItems.Add(mixItem);
+            var fsMenu = new ToolStripMenuItem("Fullscreen Editor");
+            var fsUi = new ToolStripMenuItem("UI Designer") { ShortcutKeyDisplayString = "F11" };
+            fsUi.Click += (s, e) => { OpenDesigner(null); ToggleEditorFullscreen(_designer, "UI Designer", () => _designer.Save()); };
+            var fsAnim = new ToolStripMenuItem("Animation Editor") { ShortcutKeyDisplayString = "F11" };
+            fsAnim.Click += (s, e) => { OpenAnimEditor(null); ToggleEditorFullscreen(_animEditor, "Animation Editor", () => _animEditor.Save()); };
+            var fsMix = new ToolStripMenuItem("Audio Mixer") { ShortcutKeyDisplayString = "F11" };
+            fsMix.Click += (s, e) => { OpenMixer(); ToggleEditorFullscreen(_mixer, "Audio Mixer", null); };
+            fsMenu.DropDownItems.AddRange(new ToolStripItem[] { fsUi, fsAnim, fsMix });
+            menu.DropDownItems.Add(fsMenu);
             menu.DropDownItems.Add(new ToolStripSeparator());
             var reset = new ToolStripMenuItem("Reset Layout");
             reset.Click += (s, e) => ResetLayout();
@@ -2259,6 +2456,7 @@ namespace GhostShell
                     Add("Directional Light", "light", 0);
                     Add("Point Light", "light", 1);
                     Add("Rect Area Light", "light", 2);
+                    Add("Spot Light", "light", 3);
                     break;
                 case 1:
                     Add("Cube", "obj", 0);
@@ -2541,6 +2739,7 @@ namespace GhostShell
                 {
                     if (l.type == 0) proxy = new DirectionalLightProxy(id);
                     else if (l.type == 1) proxy = new PointLightProxy(id);
+                    else if (l.type == 3) proxy = new SpotLightProxy(id);
                     else proxy = new RectLightProxy(id);
                 }
                 else

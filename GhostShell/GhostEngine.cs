@@ -22,6 +22,9 @@ namespace GhostShell
         public float r, g, b;
         public float intensity, range;
         public float width, height;
+        public float innerDeg, outerDeg;
+        public int shadowObjects, shadowLandscape;
+        public float spinYaw, spinPitch;
     }
     [StructLayout(LayoutKind.Sequential)]
     internal struct GhostEntityInfo { public int id, kind, subtype; }
@@ -161,6 +164,7 @@ namespace GhostShell
         public int shadowLightId;
         public int layerCount;
         public int subdiv;
+        public int autoCollider;
     }
     [StructLayout(LayoutKind.Sequential)]
     internal struct GhostPaintInfo
@@ -644,6 +648,9 @@ namespace GhostShell
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern int GhostEngine_AnimRequestState(int objectId, [MarshalAs(UnmanagedType.LPUTF8Str)] string state);
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern void GhostEngine_AnimResetRuntime(int objectId);
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetLoadProgress(GhostLoadProgressFn? fn);
 
     }
 }

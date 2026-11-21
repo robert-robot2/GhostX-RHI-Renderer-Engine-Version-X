@@ -307,6 +307,11 @@ float ShadowFactor(Light L, float3 worldPos, float3 N, int type, float2 pixelPos
         clip = mul(shadowVP[(int)slice], float4(p, 1.0f));
         refDepth = min(clip.z, 1.0f) - bias;
     }
+    else if (type == 3)                                      // spot: one perspective map, depth = distance / far
+    {
+        clip = mul(shadowVP[(int)slice], float4(p, 1.0f));
+        refDepth = length(p - L.posRange.xyz) / farW - bias;
+    }
     else                                                     // point / rect: pick the cube face, depth = distance / far
     {
         float3 a = abs(rel);
@@ -470,6 +475,14 @@ float4 PSMain(PSInput input, bool isFront : SV_IsFrontFace) : SV_TARGET
             toLight = d / max(dist, 1e-4f);
             atten = RangeFalloff(dist, L.posRange.w);
         }
+        else if (type == 3)                                    // spot: cone from rectRight.w (cos outer) to rectUp.w (cos inner)
+        {
+            float3 d = L.posRange.xyz - input.worldPos;
+            float  dist = length(d);
+            toLight = d / max(dist, 1e-4f);
+            float  cd = dot(-toLight, normalize(L.dirType.xyz));
+            atten = RangeFalloff(dist, L.posRange.w) * smoothstep(L.rectRight.w, L.rectUp.w, cd);
+        }
         else
         {
             float3 center = L.posRange.xyz;
@@ -601,6 +614,12 @@ float4 IconPS(IconPSInput input) : SV_TARGET
         bool c4 = abs(p.x - 0.08f) < 0.72f && p.y > -0.38f && p.y < 0.0f;
         inside = c1 || c2 || c3 || c4;
     }
+    else if (type == 6)               // spot light: lamp head + cone
+    {
+        bool head = abs(p.x) < 0.30f && p.y > 0.25f && p.y < 0.85f;
+        bool beam = p.y <= 0.25f && p.y > -0.9f && abs(p.x) < 0.30f + (0.25f - p.y) * 0.55f;
+        inside = head || beam;
+    }
     else                              // arrow: u = p.x along the arrow, v = p.y across
     {
         bool shaft = p.x < 0.3f && abs(p.y) < 0.15f;
@@ -692,7 +711,8 @@ float4 SkyPS(SkyPSInput input) : SV_TARGET
     float groundAmt = showGround ? 1.0f - smoothstep(hh - gb, hh, d.y) : 0.0f;
     const float dyEff = showGround ? d.y : hh + abs(d.y - hh);       // no ground: the sky mirrors below the horizon
 
-    if (sky[12].x < 0.5f)
+    const int kind = (int)(sky[12].x + 0.5f);       // 0 gradient, 1 layer, 2 sun sprite, 3 moon sprite, 4 clouds
+    if (kind == 0)
     {
         // ---- gradient, dusk band, sun, moon, ground ----
         float t = saturate((dyEff - hh) / max(sky[2].w, 0.01f));
@@ -709,14 +729,70 @@ float4 SkyPS(SkyPSInput input) : SV_TARGET
         float sd = dot(d, sky[0].xyz);
         float sunDisc = smoothstep(0.0f, 0.08f, (sd - sky[5].w) / max(1.0f - sky[5].w, 1e-6f));
         float glow = pow(saturate(sd), sky[8].y) * sky[8].x;
-        col += sky[5].rgb * (sunDisc * sky[8].z + glow);
+        col += sky[5].rgb * (sunDisc * sky[8].z * sky[14].z + glow);
 
         float md = dot(d, sky[6].xyz);
         float moonDisc = smoothstep(0.0f, 0.1f, (md - sky[6].w) / max(1.0f - sky[6].w, 1e-6f));
-        col += sky[7].rgb * moonDisc;
+        float moonGlow = pow(saturate(md), sky[14].y) * sky[14].x * (1.0f - sky[0].w);   // glow only at night
+        col += sky[7].rgb * (moonDisc * sky[14].w + moonGlow);
 
         col = lerp(col, sky[3].rgb, groundAmt);
         return float4(saturate(col * sky[8].w), 1.0f);
+    }
+
+    if (kind == 2 || kind == 3)          // sun / moon texture + thin halo ring
+    {
+        float3 sd = normalize(sky[13].xyz);
+        float3 upRef = (abs(sd.y) > 0.99f) ? float3(0, 0, 1) : float3(0, 1, 0);
+        float3 sr = normalize(cross(upRef, sd));
+        float3 su = cross(sd, sr);
+        float  z = dot(d, sd);
+        float2 pr = float2(dot(d, sr), dot(d, su)) / (max(z, 1e-3f) * tan(max(sky[13].w, 1e-4f)));
+        float  r = length(pr);                                       // 1.0 = the texture's edge
+
+        float haloStr = sky[11].x;
+        float haloW = max(sky[11].y, 0.005f);
+        float haloOv = sky[11].z;
+        float haloC = 1.0f - haloOv + haloW * 0.5f;                // ring centre: starts haloOv inside the edge
+        float ext = max(1.0f, 1.0f - haloOv + haloW) + 0.02f;    // the quad grows to hold the ring
+
+        float  rc = cos(sky[10].y), rs = sin(sky[10].y);
+        float2 p = float2(rc * pr.x - rs * pr.y, rs * pr.x + rc * pr.y);
+        float2 uv = float2(p.x * 0.5f + 0.5f, 0.5f - p.y * 0.5f);
+        float2 gx = ddx(uv), gy = ddy(uv);                           // before the discard
+        if (z <= 0.0f || r > ext) discard;
+
+        float4 t = float4(0, 0, 0, 0);
+        if (abs(p.x) <= 1.0f && abs(p.y) <= 1.0f) t = gTexture.SampleGrad(sLinClamp, uv, gx, gy);
+        float3 enc = pow(saturate(t.rgb), 1.0f / 2.2f);
+        float  m = max(enc.r, max(enc.g, enc.b));
+        float  mask = lerp(1.0f, smoothstep(0.02f, 0.25f, m), sky[10].w);
+        float  aT = t.a * mask * sky[9].w;                           // texture alpha x opacity x visibility
+
+        float ring = 1.0f - smoothstep(0.0f, haloW * 0.5f, abs(r - haloC));
+        float aH = saturate(ring * haloStr * sky[11].w);             // halo drawn over the texture edge
+
+        float  a = aH + aT * (1.0f - aH);
+        float3 rgb = (sky[15].rgb * aH + enc * sky[9].rgb * aT * (1.0f - aH)) / max(a, 1e-4f);
+        return float4(rgb, a * (1.0f - groundAmt));
+    }
+
+    if (kind == 4)                       // clouds: a texture on a plane overhead, scrolled in U / V
+    {
+        float  h = d.y;
+        float2 cuv = d.xz / (max(h, 0.0f) + 0.12f) * sky[11].x + sky[10].yz;
+        float2 cgx = ddx(cuv), cgy = ddy(cuv);
+        float4 t = gTexture.SampleGrad(sLinWrap, cuv, cgx, cgy);
+        float  v = (sky[10].x < 0.5f) ? t.a
+            : pow(saturate(dot(t.rgb, float3(0.2126f, 0.7152f, 0.0722f))), 1.0f / 2.2f);
+        float  cut = 1.0f - saturate(sky[10].w);                 // coverage
+        float  dens = smoothstep(cut, cut + 0.4f, v);
+        // translucency changes as the clouds move: sky-fixed bands that also drift with the scroll
+        float  ph = dot(d.xz, float2(1.3f, 0.9f)) * sky[11].w + (sky[10].y + sky[10].z) * 0.5f;
+        float  trans = lerp(1.0f, 0.5f + 0.5f * sin(6.2831853f * ph), sky[11].z);
+        float  horizon = smoothstep(0.0f, max(sky[11].y, 1e-3f), h);
+        float3 enc = pow(saturate(t.rgb), 1.0f / 2.2f);
+        return float4(enc * sky[9].rgb, dens * sky[9].w * trans * horizon * (1.0f - groundAmt));
     }
 
     // ---- a texture layer: black becomes transparent ----

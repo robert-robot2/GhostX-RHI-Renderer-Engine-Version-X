@@ -50,6 +50,47 @@ int QueryBody(const Body& b, int* ids, int maxCount)
         if (tmp[i] != b.id) ids[c++] = tmp[i];
     return c;
 }
+// ============================================================
+//  Terrain (floor Tile Maps): solid below the surface, not as one box up to the highest vertex
+// ============================================================
+static const float kStepUp = 0.06f;   // ledge walked up without a slope check
+static const float kMaxSlope = 1.2f;    // rise / run you can walk up (1.2 = about 50 degrees)
+static const float kSnapDown = 0.5f;    // walking downhill stays glued to the surface within this drop
+
+bool Terrain_Is(int id) { return G->IsTerrain && G->IsTerrain(id) != 0; }
+
+// Highest terrain surface under the body's centre. false = no terrain here.
+static bool TerrainGround(const Body& b, float& outY)
+{
+    if (!G->IsTerrain || !G->GetTerrainHeight) return false;
+    const float mn[3] = { b.pos[0] - b.half[0], b.pos[1] - b.half[1] - 1.0f, b.pos[2] - b.half[2] };
+    const float mx[3] = { b.pos[0] + b.half[0], b.pos[1] + b.half[1],        b.pos[2] + b.half[2] };
+    int ids[64];
+    const int n = G->QueryBox(mn, mx, ids, 64);
+    bool any = false;
+    float best = -1e30f;
+    for (int i = 0; i < n; i++)
+    {
+        if (ids[i] == b.id || !Terrain_Is(ids[i])) continue;
+        float y;
+        if (G->GetTerrainHeight(ids[i], b.pos[0], b.pos[2], &y) && y > best) { best = y; any = true; }
+    }
+    if (any) outY = best;
+    return any;
+}
+
+// After a horizontal move: is the terrain ahead a wall (too steep / too high)? Undoes the move if so.
+static bool TerrainBlocks(Body& b, int axis, float before)
+{
+    float gy;
+    if (!TerrainGround(b, gy)) return false;
+    const float rise = gy - (b.pos[1] - b.half[1]);
+    if (rise <= kStepUp) return false;                               // at or below the surface: fine
+    const float run = fabsf(b.pos[axis] - before);
+    if (rise <= kStepUp + run * kMaxSlope) return false;             // gentle slope: the Y pass lifts the body onto it
+    b.pos[axis] = before;
+    return true;
+}
 
 // Moves along one axis and pushes the body out of any solid it ends up inside
 static bool ResolveAxis(Body& b, int axis, float delta, int* hitId)
@@ -66,7 +107,7 @@ static bool ResolveAxis(Body& b, int axis, float delta, int* hitId)
 
     for (int i = 0; i < n; i++)
     {
-        if (ids[i] == b.id || !IsSolid(ids[i])) continue;
+        if (ids[i] == b.id || !IsSolid(ids[i]) || Terrain_Is(ids[i])) continue;   // terrain is handled separately
         float omn[3], omx[3];
         if (!G->GetBounds(ids[i], omn, omx)) continue;
 
@@ -86,16 +127,43 @@ static bool ResolveAxis(Body& b, int axis, float delta, int* hitId)
 MoveResult MoveBody(Body& b, float dt)
 {
     MoveResult r;
-    if (ResolveAxis(b, 0, b.vel[0] * dt, nullptr)) { r.hitX = true; b.vel[0] = 0.0f; }
-    if (ResolveAxis(b, 2, b.vel[2] * dt, nullptr)) { r.hitZ = true; b.vel[2] = 0.0f; }
 
-    float dy = b.vel[1] * dt;
+    float g0 = 0.0f;                                                      // was the body standing on terrain?
+    const bool onTerrain = TerrainGround(b, g0) && fabsf((b.pos[1] - b.half[1]) - g0) < 0.06f;
+
+    for (int axis = 0; axis < 3; axis += 2)                               // X, then Z
+    {
+        const float before = b.pos[axis];
+        bool hit = ResolveAxis(b, axis, b.vel[axis] * dt, nullptr);
+        if (!hit && b.vel[axis] != 0.0f) hit = TerrainBlocks(b, axis, before);
+        if (hit) { (axis == 0 ? r.hitX : r.hitZ) = true; b.vel[axis] = 0.0f; }
+    }
+
+    const float vy0 = b.vel[1];
+    const float dy = vy0 * dt;
     int hid = 0;
+    bool solidFloor = false;
     if (ResolveAxis(b, 1, dy, &hid))
     {
-        if (dy < 0.0f) r.hitFloor = true;
+        if (dy < 0.0f) { r.hitFloor = true; solidFloor = true; }
         else { r.hitCeiling = true; r.ceilingId = hid; }
         b.vel[1] = 0.0f;
+    }
+
+    float gy;
+    if (!solidFloor && TerrainGround(b, gy))
+    {
+        const float feet = b.pos[1] - b.half[1];
+        if (feet < gy)                                        // sunk into the surface: stand on it
+        {
+            b.pos[1] += gy - feet;
+            if (vy0 <= 0.0f) { r.hitFloor = true; b.vel[1] = 0.0f; }
+        }
+        else if (onTerrain && vy0 <= 0.0f && feet - gy < kSnapDown)   // walking downhill: don't go airborne
+        {
+            b.pos[1] -= feet - gy;
+            r.hitFloor = true; b.vel[1] = 0.0f;
+        }
     }
     return r;
 }

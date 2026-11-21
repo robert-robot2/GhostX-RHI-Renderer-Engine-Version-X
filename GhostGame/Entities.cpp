@@ -715,7 +715,17 @@ static bool GroundAhead(const Body& b, float dx, float dz, float ledgeLead, floa
     const float mx[3] = { cx + 0.05f, feet - 0.05f,      cz + 0.05f };
     int ids[16];
     const int n = G->QueryBox(mn, mx, ids, 16);
-    for (int i = 0; i < n; i++) if (ids[i] != b.id && IsSolid(ids[i])) return true;
+    for (int i = 0; i < n; i++)
+    {
+        if (ids[i] == b.id || !IsSolid(ids[i])) continue;
+        if (Terrain_Is(ids[i]))                                            // real surface height, not the box
+        {
+            float y;
+            if (G->GetTerrainHeight(ids[i], cx, cz, &y) && y >= feet - ledgeDepth) return true;
+            continue;
+        }
+        return true;
+    }
     return false;
 }
 

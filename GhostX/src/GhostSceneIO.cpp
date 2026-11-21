@@ -337,7 +337,7 @@ bool GhostScene_Save(const GhostScene& s, const std::string& root, const std::st
                 const GhostTileMap& t = o.tileMap;
                 json jt = json{ { "tileSize", t.tileSize },{ "gridX", t.gridX },{ "gridY", t.gridY },{ "gridZ", t.gridZ },
                                 { "direction", t.direction },{ "shadowLight", t.shadowLightId },{ "layers", t.layerCount },
-                                { "subdiv", t.subdiv } };
+                                { "subdiv", t.subdiv },{ "autoCollider", t.autoCollider } };
                 std::vector<unsigned char> rle;
                 bool flat = true;
                 for (float h : t.height) if (h != 0.0f) { flat = false; break; }
@@ -415,6 +415,12 @@ bool GhostScene_Save(const GhostScene& s, const std::string& root, const std::st
             jl["width"] = l.width;
             jl["height"] = l.height;
             jl["castShadows"] = l.castShadows;
+            jl["innerCone"] = l.innerDeg;
+            jl["outerCone"] = l.outerDeg;
+            jl["shadowObjects"] = l.shadowObjects;
+            jl["shadowLandscape"] = l.shadowLandscape;
+            jl["spinYaw"] = l.spinYaw;
+            jl["spinPitch"] = l.spinPitch;
             lights.push_back(jl);
         }
         j["lights"] = lights;
@@ -691,6 +697,7 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
                     t.shadowLightId = jt.value("shadowLight", 0);
                     t.layerCount = jt.value("layers", 0);
                     t.subdiv = jt.value("subdiv", 4);
+                    t.autoCollider = jt.value("autoCollider", true);
                     GhostTileMap_Clamp(t);
                     GhostTileMap_EnsureTiles(t);
 
@@ -786,7 +793,7 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
                 if (s.lights.size() >= GHOST_MAX_LIGHTS) { warn += "Too many lights: the rest were skipped.\n"; break; }
                 GhostLight l;
                 l.id = takeId(jl.value("id", 0));
-                l.type = (GhostLightType)Clampi(jl.value("type", 1), 0, 2);
+                l.type = (GhostLightType)Clampi(jl.value("type", 1), 0, 3);
                 l.name = jl.value("name", std::string("Light"));
                 ReadV3(jl, "position", l.position);
                 l.yawDeg = jl.value("yaw", 0.0f);
@@ -797,6 +804,14 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
                 l.width = jl.value("width", 1.0f);
                 l.height = jl.value("height", 1.0f);
                 l.castShadows = jl.value("castShadows", true);
+                l.outerDeg = jl.value("outerCone", 35.0f);
+                l.outerDeg = l.outerDeg < 1.0f ? 1.0f : (l.outerDeg > 89.0f ? 89.0f : l.outerDeg);
+                l.innerDeg = jl.value("innerCone", 20.0f);
+                l.innerDeg = l.innerDeg < 0.0f ? 0.0f : (l.innerDeg > l.outerDeg ? l.outerDeg : l.innerDeg);
+                l.shadowObjects = jl.value("shadowObjects", true);
+                l.shadowLandscape = jl.value("shadowLandscape", true);
+                l.spinYaw = jl.value("spinYaw", 0.0f);
+                l.spinPitch = jl.value("spinPitch", 0.0f);
                 s.lights.push_back(l);
             }
 
@@ -968,6 +983,7 @@ unsigned int GhostScene_Hash(const GhostScene& s)
         F(l.color[0]); F(l.color[1]); F(l.color[2]);
         F(l.intensity); F(l.range); F(l.width); F(l.height);
         I(l.castShadows ? 1 : 0);
+        F(l.innerDeg); F(l.outerDeg); I(l.shadowObjects ? 1 : 0); I(l.shadowLandscape ? 1 : 0); F(l.spinYaw); F(l.spinPitch);
     }
     for (const GhostCamera& c : s.cameras)
     {

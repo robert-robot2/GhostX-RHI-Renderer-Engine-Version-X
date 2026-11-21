@@ -21,12 +21,15 @@ struct GhostObjectInfo
 
 struct GhostLightInfo
 {
-    int   id, type;         // 0 directional, 1 point, 2 rect
+    int   id, type;         // 0 directional, 1 point, 2 rect, 3 spot
     float px, py, pz;
     float yawDeg, pitchDeg;
     float r, g, b;
     float intensity, range;
     float width, height;
+    float innerDeg, outerDeg;                 // spot cone
+    int   shadowObjects, shadowLandscape;     // spot shadow toggles
+    float spinYaw, spinPitch;                 // deg/sec while playing
 };
 
 struct GhostEntityInfo { int id; int kind; int subtype; };   // kind: 0 object, 1 light, 2 camera, 3 mod
@@ -128,10 +131,13 @@ struct GhostSoundInfo
     char  name[48];
     char  file[260];
 };
+
 typedef int(__cdecl* GhostFontProviderFn)(const char* utf8AbsPath);   // returns a font slot, 0 = failed
+typedef void(__cdecl* GhostLoadProgressFn)(const char* utf8Kind, const char* utf8Name);
 struct GhostShadowTuning { int filter; float softness, bias, normalBias, distance; };
 
 struct GhostMapInfo { int textureId; float amount; int channel; int invert; };
+
 struct GhostSurfaceInfo
 {
     int   twoSided;
@@ -151,6 +157,7 @@ struct GhostTileMapInfo
     int   shadowLightId;        // 0 = all lights, otherwise a directional light's id
     int   layerCount;           // read-only here: use Add / RemoveTileLayer
     int   subdiv;               // terrain quads per tile side
+    int   autoCollider;
 };
 struct GhostPaintInfo
 {

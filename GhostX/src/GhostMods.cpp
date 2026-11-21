@@ -70,6 +70,75 @@ static const GhostParamDesc kSkyParams[] =
     P_FLOAT("Ambient Night End (hour)",   "Ambient", 6.0f, 0.0f, 24.0f),
     P_FLOAT("Ambient Fade Length (hours)","Ambient", 2.0f, 0.1f, 12.0f),
     P_FLOAT("Night Ambient Intensity",    "Ambient", 0.05f, 0.0f, 1.0f),
+        P_BOOL("Auto Ambience By Hour",   "Ambient Hours", 0.0f),
+    P_FLOAT("Ambient Hour 00", "Ambient Hours", 0.0500f, 0.0f, 2.0f),
+    P_FLOAT("Ambient Hour 01", "Ambient Hours", 0.0625f, 0.0f, 2.0f),
+    P_FLOAT("Ambient Hour 02", "Ambient Hours", 0.0750f, 0.0f, 2.0f),
+    P_FLOAT("Ambient Hour 03", "Ambient Hours", 0.0875f, 0.0f, 2.0f),
+    P_FLOAT("Ambient Hour 04", "Ambient Hours", 0.1000f, 0.0f, 2.0f),
+    P_FLOAT("Ambient Hour 05", "Ambient Hours", 0.1125f, 0.0f, 2.0f),
+    P_FLOAT("Ambient Hour 06", "Ambient Hours", 0.1250f, 0.0f, 2.0f),
+    P_FLOAT("Ambient Hour 07", "Ambient Hours", 0.1375f, 0.0f, 2.0f),
+    P_FLOAT("Ambient Hour 08", "Ambient Hours", 0.1500f, 0.0f, 2.0f),
+    P_FLOAT("Ambient Hour 09", "Ambient Hours", 0.1625f, 0.0f, 2.0f),
+    P_FLOAT("Ambient Hour 10", "Ambient Hours", 0.1750f, 0.0f, 2.0f),
+    P_FLOAT("Ambient Hour 11", "Ambient Hours", 0.1875f, 0.0f, 2.0f),
+    P_FLOAT("Ambient Hour 12", "Ambient Hours", 0.2000f, 0.0f, 2.0f),
+    P_FLOAT("Ambient Hour 13", "Ambient Hours", 0.1875f, 0.0f, 2.0f),
+    P_FLOAT("Ambient Hour 14", "Ambient Hours", 0.1750f, 0.0f, 2.0f),
+    P_FLOAT("Ambient Hour 15", "Ambient Hours", 0.1625f, 0.0f, 2.0f),
+    P_FLOAT("Ambient Hour 16", "Ambient Hours", 0.1500f, 0.0f, 2.0f),
+    P_FLOAT("Ambient Hour 17", "Ambient Hours", 0.1375f, 0.0f, 2.0f),
+    P_FLOAT("Ambient Hour 18", "Ambient Hours", 0.1250f, 0.0f, 2.0f),
+    P_FLOAT("Ambient Hour 19", "Ambient Hours", 0.1125f, 0.0f, 2.0f),
+    P_FLOAT("Ambient Hour 20", "Ambient Hours", 0.1000f, 0.0f, 2.0f),
+    P_FLOAT("Ambient Hour 21", "Ambient Hours", 0.0875f, 0.0f, 2.0f),
+    P_FLOAT("Ambient Hour 22", "Ambient Hours", 0.0750f, 0.0f, 2.0f),
+    P_FLOAT("Ambient Hour 23", "Ambient Hours", 0.0625f, 0.0f, 2.0f),
+
+    P_FLOAT("Moon Glow",      "Moon", 0.2f, 0.0f, 3.0f),
+    P_FLOAT("Moon Glow Size", "Moon", 0.08f, 0.005f, 1.0f),
+
+    P_TEX("Sun Texture",                     "Sun Texture"),
+    P_FLOAT("Sun Texture Size (deg)",        "Sun Texture", 8.0f, 0.1f, 90.0f),
+    P_FLOAT("Sun Texture Brightness",        "Sun Texture", 1.0f, 0.0f, 8.0f),
+    P_FLOAT("Sun Texture Rotation (deg)",    "Sun Texture", 0.0f, -360.0f, 360.0f),
+    P_BOOL("Sun Texture Black Is Transparent", "Sun Texture", 1.0f),
+    P_BOOL("Sun Texture Replaces Disc",      "Sun Texture", 1.0f),
+
+    P_TEX("Moon Texture",                    "Moon Texture"),
+    P_FLOAT("Moon Texture Size (deg)",       "Moon Texture", 6.0f, 0.1f, 90.0f),
+    P_FLOAT("Moon Texture Brightness",       "Moon Texture", 1.0f, 0.0f, 8.0f),
+    P_FLOAT("Moon Texture Rotation (deg)",   "Moon Texture", 0.0f, -360.0f, 360.0f),
+    P_BOOL("Moon Texture Black Is Transparent", "Moon Texture", 1.0f),
+    P_BOOL("Moon Texture Replaces Disc",     "Moon Texture", 1.0f),
+
+    P_TEX("Cloud Texture",                   "Clouds"),
+    P_FLOAT("Cloud Translucency (1 = solid)", "Clouds", 0.8f, 0.0f, 1.0f),
+    P_FLOAT("Cloud Coverage",                "Clouds", 0.5f, 0.0f, 1.0f),
+    P_ENUM("Cloud Density From",             "Clouds", 1.0f, "Alpha|Brightness"),
+    P_FLOAT("Cloud Brightness",              "Clouds", 1.0f, 0.0f, 4.0f),
+    P_COLOR("Cloud Tint",                    "Clouds", 1.0f, 1.0f, 1.0f),
+    P_FLOAT("Cloud Tiling",                  "Clouds", 1.0f, 0.05f, 20.0f),
+    P_FLOAT("Cloud Horizon Fade",            "Clouds", 0.25f, 0.01f, 1.0f),
+    P_FLOAT("Cloud Move U (per sec)",        "Cloud Movement", 0.01f, -1.0f, 1.0f),
+    P_FLOAT("Cloud Move V (per sec)",        "Cloud Movement", 0.0f, -1.0f, 1.0f),
+    P_FLOAT("Cloud Translucency Variation",  "Cloud Movement", 0.0f, 0.0f, 1.0f),
+    P_FLOAT("Cloud Variation Frequency",     "Cloud Movement", 2.0f, 0.1f, 20.0f),
+    P_BOOL("Cloud Blend With Night Stars",   "Clouds", 1.0f),
+    P_FLOAT("Cloud Night Brightness",        "Clouds", 0.15f, 0.0f, 1.0f),
+
+        P_FLOAT("Sun Texture Opacity", "Sun Texture", 1.0f, 0.0f, 1.0f),
+        P_FLOAT("Sun Halo Strength", "Sun Texture", 0.6f, 0.0f, 2.0f),
+        P_FLOAT("Sun Halo Thickness", "Sun Texture", 0.06f, 0.005f, 0.5f),
+        P_FLOAT("Sun Halo Overlap", "Sun Texture", 0.03f, 0.0f, 0.5f),
+        P_COLOR("Sun Halo Color", "Sun Texture", 1.0f, 0.85f, 0.5f),
+
+        P_FLOAT("Moon Texture Opacity", "Moon Texture", 1.0f, 0.0f, 1.0f),
+        P_FLOAT("Moon Halo Strength", "Moon Texture", 0.6f, 0.0f, 2.0f),
+        P_FLOAT("Moon Halo Thickness", "Moon Texture", 0.06f, 0.005f, 0.5f),
+        P_FLOAT("Moon Halo Overlap", "Moon Texture", 0.03f, 0.0f, 0.5f),
+        P_COLOR("Moon Halo Color", "Moon Texture", 0.8f, 0.9f, 1.0f),
 
 
 };
@@ -230,10 +299,26 @@ void GhostSky_Speeds(const GhostModEntity& e, float& day, float& night)
     if ((size_t)b < e.values.size()) night = e.values[(size_t)b];
 }
 
+void GhostSky_CloudSpeeds(const GhostModEntity& e, float& u, float& v)
+{
+    u = v = 0.0f;
+    const int a = GhostMods_ParamOffset(GHOST_MOD_SKY, SKY_CLOUD_SCROLL_U);
+    const int b = GhostMods_ParamOffset(GHOST_MOD_SKY, SKY_CLOUD_SCROLL_V);
+    if ((size_t)a < e.values.size()) u = e.values[(size_t)a];
+    if ((size_t)b < e.values.size()) v = e.values[(size_t)b];
+}
+
 float GhostSky_AmbientIntensity(const GhostModEntity& e, float base)
 {
     if (e.values.size() < (size_t)GhostMods_ValueCount(GHOST_MOD_SKY)) return base;
     auto V = [&](int p) { return e.values[(size_t)GhostMods_ParamOffset(GHOST_MOD_SKY, p)]; };
+    if (V(SKY_AMB_AUTO) > 0.5f)                          // per-hour table, linear between hours, 24 wraps to 0
+    {
+        float th = fmodf(GhostSky_GetTime(e), 24.0f);
+        if (th < 0.0f) th += 24.0f;
+        const int h0 = (int)floorf(th) % 24, h1 = (h0 + 1) % 24;
+        return Mix(V(SKY_AMB_HOUR0 + h0), V(SKY_AMB_HOUR0 + h1), th - floorf(th));
+    }
     if (V(SKY_AMB_ENABLE) < 0.5f) return base;
 
     float t = fmodf(GhostSky_GetTime(e), 24.0f);
@@ -254,7 +339,7 @@ float GhostSky_AmbientIntensity(const GhostModEntity& e, float base)
 }
 
 int GhostSky_Build(const GhostModEntity& e, const std::vector<GhostTextureInfo>& textures,
-    float dayScroll, float nightScroll, GhostSkyDraw out[3])
+    float dayScroll, float nightScroll, float cloudU, float cloudV, GhostSkyDraw out[6])
 {
     if (e.values.size() < (size_t)GhostMods_ValueCount(GHOST_MOD_SKY)) return 0;
     auto V = [&](int p) { return e.values[(size_t)GhostMods_ParamOffset(GHOST_MOD_SKY, p)]; };
@@ -299,6 +384,11 @@ int GhostSky_Build(const GhostModEntity& e, const std::vector<GhostTextureInfo>&
     const float glowSize = V(SKY_SUN_GLOW_SIZE) < 0.005f ? 0.005f : V(SKY_SUN_GLOW_SIZE);
     F4(8, V(SKY_SUN_GLOW), 2.0f / glowSize, V(SKY_SUN_INTENSITY), bright);
     F4(12, 0.0f, V(SKY_SHOW_GROUND) > 0.5f ? 1.0f : 0.0f, 0.0f, 0.0f);
+    auto texOk = [&](int p) { const int t = (int)floorf(V(p) + 0.5f); return t > 0 && t < (int)textures.size(); };
+    const float sunDiscOn = (texOk(SKY_SUN_TEX) && V(SKY_SUN_TEX_REPLACE) > 0.5f) ? 0.0f : 1.0f;
+    const float moonDiscOn = (texOk(SKY_MOON_TEX) && V(SKY_MOON_TEX_REPLACE) > 0.5f) ? 0.0f : 1.0f;
+    const float moonGlowSize = V(SKY_MOON_GLOW_SIZE) < 0.005f ? 0.005f : V(SKY_MOON_GLOW_SIZE);
+    F4(14, V(SKY_MOON_GLOW), 2.0f / moonGlowSize, sunDiscOn, moonDiscOn);
     int n = 0;
     memcpy(out[n].sky, common, sizeof common);                     // pass 0 (common[12].x is already 0)
     out[n].textureId = 0;
@@ -334,6 +424,31 @@ int GhostSky_Build(const GhostModEntity& e, const std::vector<GhostTextureInfo>&
             d.textureId = tex;
             n++;
         };
+    auto sprite = [&](int kind, int texP, int sizeP, int brP, int rotP, int blkP,
+        int opP, int haloP, int hsP, int hoP, int hcP, const GhostVec3& dir, float weight)
+        {
+            const int tex = (int)floorf(V(texP) + 0.5f);
+            if (tex <= 0 || tex >= (int)textures.size() || weight <= 0.002f) return;
+            GhostSkyDraw& d = out[n];
+            memcpy(d.sky, common, sizeof common);
+            float* L = d.sky;
+            const float br = V(brP) * bright;
+            const float w = weight > 1.0f ? 1.0f : weight;
+            L[9 * 4 + 0] = br; L[9 * 4 + 1] = br; L[9 * 4 + 2] = br;
+            L[9 * 4 + 3] = Sat(w * V(opP));                           // texture opacity
+            L[10 * 4 + 1] = V(rotP) * d2r;
+            L[10 * 4 + 3] = V(blkP) > 0.5f ? 1.0f : 0.0f;
+            L[11 * 4 + 0] = V(haloP);                                 // halo strength
+            L[11 * 4 + 1] = V(hsP);                                   // halo thickness
+            L[11 * 4 + 2] = V(hoP);                                   // halo overlap (inward)
+            L[11 * 4 + 3] = w;                                        // visibility, independent of the texture opacity
+            L[12 * 4 + 0] = (float)kind;                              // 2 sun sprite, 3 moon sprite
+            L[13 * 4 + 0] = dir.x; L[13 * 4 + 1] = dir.y; L[13 * 4 + 2] = dir.z;
+            L[13 * 4 + 3] = V(sizeP) * 0.5f * d2r;                    // half size in radians
+            C(hcP, L + 15 * 4);                                       // halo color
+            d.textureId = tex;
+            n++;
+        };
 
     // stars: fade out as the sun comes up. clouds: fade in with the day, warmed by dusk light
     const float nightW = 1.0f - Smooth(-tw, tw * 0.5f, elev);
@@ -343,7 +458,49 @@ int GhostSky_Build(const GhostModEntity& e, const std::vector<GhostTextureInfo>&
 
     layer(SKY_NIGHT_TEX, SKY_NIGHT_LAYOUT, SKY_NIGHT_OPACITY, SKY_NIGHT_BRIGHT, SKY_NIGHT_TINT, SKY_NIGHT_YAW, nightScroll,
         SKY_NIGHT_BLACK, SKY_NIGHT_CUTOFF, SKY_NIGHT_SOFT, SKY_NIGHT_FLIP, nightW, one);
+
+    sprite(2, SKY_SUN_TEX, SKY_SUN_TEX_SIZE, SKY_SUN_TEX_BRIGHT, SKY_SUN_TEX_ROT, SKY_SUN_TEX_BLACK,
+        SKY_SUN_TEX_OPACITY, SKY_SUN_HALO, SKY_SUN_HALO_SIZE, SKY_SUN_HALO_OVERLAP, SKY_SUN_HALO_COLOR,
+        sunDir, Smooth(-0.2f, 0.05f, elev));
+    sprite(3, SKY_MOON_TEX, SKY_MOON_TEX_SIZE, SKY_MOON_TEX_BRIGHT, SKY_MOON_TEX_ROT, SKY_MOON_TEX_BLACK,
+        SKY_MOON_TEX_OPACITY, SKY_MOON_HALO, SKY_MOON_HALO_SIZE, SKY_MOON_HALO_OVERLAP, SKY_MOON_HALO_COLOR,
+        moonDir, Smooth(0.2f, -0.05f, elev));
+
     layer(SKY_DAY_TEX, SKY_DAY_LAYOUT, SKY_DAY_OPACITY, SKY_DAY_BRIGHT, SKY_DAY_TINT, SKY_DAY_YAW, dayScroll,
         SKY_DAY_BLACK, SKY_DAY_CUTOFF, SKY_DAY_SOFT, SKY_DAY_FLIP, dayAmt, cloudTint);
+
+    // ---- clouds: drawn last, so they cover the stars, sun and moon ----
+    const int ctex = (int)floorf(V(SKY_CLOUD_TEX) + 0.5f);
+    if (ctex > 0 && ctex < (int)textures.size())
+    {
+        const bool  nightBlend = V(SKY_CLOUD_NIGHT_BLEND) > 0.5f;     // on: stay visible at night (dimmed) and cover the stars
+        const float cw = nightBlend ? 1.0f : dayAmt;                  // off: fade out with the day
+        const float dim = nightBlend ? Mix(V(SKY_CLOUD_NIGHT_BRIGHT), 1.0f, dayAmt) : 1.0f;
+        const float op = V(SKY_CLOUD_OPACITY) * cw;
+        if (op > 0.002f)
+        {
+            float tint[3];
+            C(SKY_CLOUD_TINT, tint);
+            const float br = V(SKY_CLOUD_BRIGHT) * bright * dim;
+            GhostSkyDraw& d = out[n];
+            memcpy(d.sky, common, sizeof common);
+            float* L = d.sky;
+            L[9 * 4 + 0] = tint[0] * cloudTint[0] * br;
+            L[9 * 4 + 1] = tint[1] * cloudTint[1] * br;
+            L[9 * 4 + 2] = tint[2] * cloudTint[2] * br;
+            L[9 * 4 + 3] = op > 1.0f ? 1.0f : op;
+            L[10 * 4 + 0] = floorf(V(SKY_CLOUD_DENSITY_SRC) + 0.5f);
+            L[10 * 4 + 1] = cloudU;
+            L[10 * 4 + 2] = cloudV;
+            L[10 * 4 + 3] = V(SKY_CLOUD_COVERAGE);
+            L[11 * 4 + 0] = V(SKY_CLOUD_TILING);
+            L[11 * 4 + 1] = V(SKY_CLOUD_HORIZON);
+            L[11 * 4 + 2] = V(SKY_CLOUD_VARIATION);
+            L[11 * 4 + 3] = V(SKY_CLOUD_VAR_FREQ);
+            L[12 * 4 + 0] = 4.0f;                                      // cloud pass
+            d.textureId = ctex;
+            n++;
+        }
+    }
     return n;
 }

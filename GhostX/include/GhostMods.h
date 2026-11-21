@@ -1,6 +1,8 @@
 #pragma once
 #include "GhostScene.h"
 
+//GhostMods.h
+
 enum GhostModTypeId { GHOST_MOD_SKY = 0, GHOST_MOD_COUNT };
 
 // Order must match the table in GhostMods.cpp
@@ -18,7 +20,19 @@ enum SkyParam
     SKY_NIGHT_TEX, SKY_NIGHT_LAYOUT, SKY_NIGHT_OPACITY, SKY_NIGHT_BRIGHT, SKY_NIGHT_TINT, SKY_NIGHT_YAW,
     SKY_NIGHT_SCROLL, SKY_NIGHT_BLACK, SKY_NIGHT_CUTOFF, SKY_NIGHT_SOFT, SKY_NIGHT_FLIP,
     SKY_SHOW_GROUND,
-    SKY_AMB_ENABLE, SKY_AMB_START, SKY_AMB_END, SKY_AMB_FADE, SKY_AMB_LEVEL,
+    SKY_AMB_ENABLE, SKY_AMB_START, SKY_AMB_END, SKY_AMB_FADE,
+    SKY_AMB_LEVEL,
+    SKY_AMB_AUTO,
+    SKY_AMB_HOUR0,
+    SKY_AMB_HOUR23 = SKY_AMB_HOUR0 + 23,          // 24 consecutive hour values
+    SKY_MOON_GLOW, SKY_MOON_GLOW_SIZE,
+    SKY_SUN_TEX, SKY_SUN_TEX_SIZE, SKY_SUN_TEX_BRIGHT, SKY_SUN_TEX_ROT, SKY_SUN_TEX_BLACK, SKY_SUN_TEX_REPLACE,
+    SKY_MOON_TEX, SKY_MOON_TEX_SIZE, SKY_MOON_TEX_BRIGHT, SKY_MOON_TEX_ROT, SKY_MOON_TEX_BLACK, SKY_MOON_TEX_REPLACE,
+    SKY_CLOUD_TEX, SKY_CLOUD_OPACITY, SKY_CLOUD_COVERAGE, SKY_CLOUD_DENSITY_SRC, SKY_CLOUD_BRIGHT, SKY_CLOUD_TINT,
+    SKY_CLOUD_TILING, SKY_CLOUD_HORIZON, SKY_CLOUD_SCROLL_U, SKY_CLOUD_SCROLL_V,
+    SKY_CLOUD_VARIATION, SKY_CLOUD_VAR_FREQ, SKY_CLOUD_NIGHT_BLEND, SKY_CLOUD_NIGHT_BRIGHT,
+    SKY_SUN_TEX_OPACITY, SKY_SUN_HALO, SKY_SUN_HALO_SIZE, SKY_SUN_HALO_OVERLAP, SKY_SUN_HALO_COLOR,
+    SKY_MOON_TEX_OPACITY, SKY_MOON_HALO, SKY_MOON_HALO_SIZE, SKY_MOON_HALO_OVERLAP, SKY_MOON_HALO_COLOR,
     SKY_PARAM_COUNT
 };
 
@@ -43,12 +57,14 @@ inline int GhostParam_Count(const GhostParamDesc& d) { return d.kind == GHOST_PA
 GhostModEntity* GhostScene_AddMod(GhostScene& s, int typeId);
 
 // ---- Sky ----
-struct GhostSkyDraw { float sky[64]; int textureId; };          // 16 float4, copied into the draw's constant buffer
+struct GhostSkyDraw { float sky[64]; int textureId; };
 
-// Fills up to 3 draws: [0] gradient + sun + moon, then the night layer, then the day layer.
-// Returns how many to draw (0 when the sky is disabled).
+// Up to 6 draws: gradient, stars, sun sprite, moon sprite, day layer, clouds
 int   GhostSky_Build(const GhostModEntity& e, const std::vector<GhostTextureInfo>& textures,
-    float dayScrollDeg, float nightScrollDeg, GhostSkyDraw out[3]);
+    float dayScrollDeg, float nightScrollDeg, float cloudU, float cloudV, GhostSkyDraw out[6]);
+void  GhostSky_CloudSpeeds(const GhostModEntity& e, float& uPerSec, float& vPerSec);
+
+
 float GhostSky_GetTime(const GhostModEntity& e);
 void  GhostSky_SetTime(GhostModEntity& e, float hours);
 void  GhostSky_AdvanceTime(GhostModEntity& e, float dtSeconds);

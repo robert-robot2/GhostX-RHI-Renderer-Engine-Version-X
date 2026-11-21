@@ -104,12 +104,21 @@ namespace GhostShell
             Scale = new Vec3Edit(
                 () => { var i = GetObj(); return (i.sx, i.sy, i.sz); },
                 (x, y, z) => { var i = GetObj(); i.sx = x; i.sy = y; i.sz = z; SetObj(i); });
+            ColliderSize = new Vec3Edit(
+    () => { var g = GetG(); return (g.csx, g.csy, g.csz); },
+    (x, y, z) => { var g = GetG(); g.csx = x; g.csy = y; g.csz = z; SetG(g); });
+            ColliderOffset = new Vec3Edit(
+                () => { var g = GetG(); return (g.cox, g.coy, g.coz); },
+                (x, y, z) => { var g = GetG(); g.cox = x; g.coy = y; g.coz = z; SetG(g); });
         }
 
         private GhostObjectInfo GetObj() { var i = new GhostObjectInfo(); GhostEngine.GhostEngine_GetObject(_id, ref i); return i; }
         private void SetObj(GhostObjectInfo i) => GhostEngine.GhostEngine_SetObject(ref i);
         protected GhostTileMapInfo Get() { var t = new GhostTileMapInfo(); GhostEngine.GhostEngine_GetTileMap(_id, ref t); return t; }
         protected void Set(GhostTileMapInfo t) => GhostEngine.GhostEngine_SetTileMap(ref t);
+
+        protected GhostGameplayInfo GetG() { var g = new GhostGameplayInfo(); GhostEngine.GhostEngine_GetGameplay(_id, ref g); return g; }
+        protected void SetG(GhostGameplayInfo g) => GhostEngine.GhostEngine_SetGameplay(ref g);
 
         [Browsable(false)] public virtual bool HasLayers => false;
         internal bool LayersOutOfDate() => HasLayers != (Get().layerCount > 0);   // the editor rebuilds the panel when this flips
@@ -252,6 +261,28 @@ namespace GhostShell
             get => GhostShadowUI.GetCast(_id);
             set => GhostShadowUI.SetCast(_id, value);
         }
+
+        // ---- Collision ----
+        [Category("Collision")]
+        public bool Collider
+        {
+            get => GetG().collider != 0;
+            set { var g = GetG(); g.collider = value ? 1 : 0; SetG(g); }
+        }
+
+        [Category("Collision"), DisplayName("Auto-Fit To Terrain (follows sculpting)")]
+        public bool AutoFitCollider
+        {
+            get => Get().autoCollider != 0;
+            set { var t = Get(); t.autoCollider = value ? 1 : 0; Set(t); }
+        }
+
+        [Category("Collision"), DisplayName("Collider Size (Auto-Fit off)")]
+        public Vec3Edit ColliderSize { get; }
+
+        [Category("Collision"), DisplayName("Collider Offset (Auto-Fit off)")]
+        public Vec3Edit ColliderOffset { get; }
+
     }
 
     // ============================================================
