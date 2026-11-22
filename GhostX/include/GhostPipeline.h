@@ -12,6 +12,8 @@
 #include <wrl/client.h>
 
 constexpr DXGI_FORMAT GHOST_HDR_FORMAT = DXGI_FORMAT_R16G16B16A16_FLOAT;   // scene color: gamma-encoded floats, values above 1.0 are kept
+constexpr unsigned int GHOST_MAX_PROBES = 8;                                // Reflection Captures sampled by the scene shader at once
+
 
 using Microsoft::WRL::ComPtr;
 
@@ -57,6 +59,14 @@ struct GhostGPULight                // matches struct Light in GhostPS.hlsl
     float shadow[4];                // x first map slice (-1 = no shadow), y far (world units), z texel size, w unused
 };                                  // 96 bytes
 
+struct GhostGPUProbe                // matches struct Probe in GhostPS.hlsl (96 bytes)
+{
+    float row0[4], row1[4], row2[4];   // world -> volume space: xyz = rotation row, w = translation
+    float shape[4];                    // x 0 box / 1 sphere, yzw = half extents (sphere: y = radius)
+    float params[4];                   // x blend distance, y intensity, z last mip index, w ambient diffuse amount
+    float misc[4];                     // x parallax correction (0/1), y cube slot
+};
+
 struct GhostSceneCB                 // matches cbuffer SceneBuffer (b1)
 {
     float        ambient[4];        // rgb = color * intensity
@@ -68,6 +78,8 @@ struct GhostSceneCB                 // matches cbuffer SceneBuffer (b1)
     float        shadowVP[GHOST_SHADOW_SLICES][16];     // (existing)
     float        flickGlobal[4];                        // x = time (s)
     float        flick[GHOST_MAX_LIGHTS * GHOST_FLICKER_LAYERS * 3][4];   // per light, per layer: colour+intensity / texture / surface response
+    float        probeInfo[4];                          // x = probe count
+    GhostGPUProbe probes[GHOST_MAX_PROBES];
 
 };                               // 32 + 16*80 = 1312 bytes
 
@@ -89,7 +101,9 @@ constexpr unsigned int GHOST_TILE_MESH_BASE = GHOST_MAX_MESHES + GHOST_MAX_SKINS
 constexpr unsigned int GHOST_MAX_SHADOW_CASTERS = 512;          // was 256: this is also the object limit
 constexpr unsigned int GHOST_SHADOW_SRV_INDEX = GHOST_MAX_TEXTURES + GHOST_MAX_SURFACES;   // last slot of the SRV heap
 
-constexpr unsigned int GHOST_DATA_SRV_BASE = GHOST_SHADOW_SRV_INDEX + 1;   // linear (UNORM) view of every texture, same order as the ids
+constexpr unsigned int GHOST_PROBE_SRV_BASE = GHOST_SHADOW_SRV_INDEX + 1;                  // probe cubemaps: heap slots right after the shadow map (t2..t9)
+constexpr unsigned int GHOST_DATA_SRV_BASE = GHOST_PROBE_SRV_BASE + GHOST_MAX_PROBES;      // linear (UNORM) view of every texture, same order as the ids
+
 
 struct GhostMesh
 {

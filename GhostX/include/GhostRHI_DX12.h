@@ -29,6 +29,8 @@ public:
     void ResolveToBackBuffer(ID3D12Resource* msaaSource, DXGI_FORMAT format) override;
     GhostResult ExecuteOneShot(
         const std::function<void(ID3D12GraphicsCommandList*)>& record) override;
+    void BeginOffscreenFrame() override;
+    void EndOffscreenFrame() override;
     int          CreateSurface(HWND hwnd, unsigned int width, unsigned int height) override;
     void         DestroySurface(int id) override;
     GhostResult  RebindSurface(int id, HWND hwnd, unsigned int width, unsigned int height) override;

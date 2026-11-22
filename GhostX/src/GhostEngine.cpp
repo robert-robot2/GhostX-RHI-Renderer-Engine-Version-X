@@ -23,6 +23,7 @@
 #include "../include/GhostVideoSettings.h"
 #include "../include/GhostParticleMan.h"
 #include "../include/GhostPost.h"
+#include "../include/GhostProbe.h"
 #include <memory>
 #include <string.h>
 #include <filesystem>
@@ -44,6 +45,10 @@ static GhostTAA   g_taa;
 static int        g_taaOn = 0;
 static float      g_taaSpeed = 1.0f;
 static GhostPost  g_post;
+static GhostProbeSys g_probe;
+struct ProbeRt { int slot = -1; unsigned int sig = 0; float stable = 0.0f, timer = 0.0f; bool dirty = true, request = false, seen = false; };
+static std::map<int, ProbeRt> g_probeRt;                   // key = volume id
+
 
 // ---- Camera state ----
 static GhostVec3 g_eye = { 0.0f, 0.75f, -2.0f };
@@ -419,6 +424,7 @@ int GhostEngine_Init(HWND hwnd, unsigned int width, unsigned int height)
     GhostMSAA_Init(g_rhi, g_msaa);
     GhostTAA_Init(g_rhi, g_taa);                  // failure is not fatal: TAA just stays unavailable
     if (GhostPost_Init(g_rhi, g_post) != GHOST_OK) return -1;     // the HDR path is not optional
+    GhostProbe_Init(g_rhi, g_probe);                          // not fatal: without it reflection captures stay unavailable
     GhostAudio_Init();                            // not fatal: with no sound device every audio call does nothing
     if (GhostAudioBank_Count() == 0) GhostAudioBank_Load(g_projectRoot);
     // ---- Built-in textures: id 0 = white (untextured draws), id 1 = checkerboard (UV debugging) ----
@@ -2326,7 +2332,18 @@ static void OverlayVolumes()
             const float inner[4] = { b[0], b[1], b[2], alpha * 0.5f };
             OverlayVolumeShape(v, M, v.blend, inner, 1.0f, false);
         }
-        if (sel) g_ov.Label(v.position, kVolLabel[v.type], col, 15.0f, 0.0f, 26.0f);
+        if (sel)
+        {
+            char t[80];
+            bool ok = true;
+            if (v.type == GHOST_VOL_REFLECTION)
+            {
+                auto it = g_probeRt.find(v.id);
+                ok = it != g_probeRt.end() && it->second.slot >= 0 && GhostProbe_Valid(g_probe, it->second.slot);
+            }
+            snprintf(t, sizeof t, "%s%s", kVolLabel[v.type], ok ? "" : "  (not captured)");
+            g_ov.Label(v.position, t, col, 15.0f, 0.0f, 26.0f);
+        }
     }
 }
 
@@ -2497,124 +2514,13 @@ static void BuildPreviewSceneCB(GhostSceneCB& out)
 
 
 
-
-
-
-// ============================================================
-//  One viewport = one surface + one camera. The GPU is idle between viewports
-//  (EndFrame waits), so the constant buffer slots are simply reused.
-// ============================================================
-static void RenderViewport(int vp)
+// The sky and every object, drawn with the given camera into whatever target is currently set.
+// Used by the viewports and by Reflection Capture. slot = the next free draw slot (in / out).
+static void DrawSceneColor(const GhostMat4& view, const GhostMat4& proj, const GhostVec3& eye,
+    bool drawObjects, bool overlays, bool preview, int soloId, unsigned int& slot)
 {
-    GhostCamera* cam = ViewportCamera(vp);
-    static GhostCamera s_previewCam;
-    const bool preview = g_vp[vp].preview;
-    if (preview) cam = BuildPreviewCamera(vp, s_previewCam) ? &s_previewCam : nullptr;
-    if (!cam || !g_vp[vp].visible) return;
-
-
-    if (!g_rhi->SetCurrentSurface(vp)) return;
-
-    const unsigned int w = g_rhi->GetSurfaceWidth();
-    const unsigned int h = g_rhi->GetSurfaceHeight();
-    if (w == 0 || h == 0) return;
-
-    const bool  mainView = (vp == 0);
-    const bool overlays = mainView && g_playState == GhostPlayState::Editing;   // no icons or selection while playing
     const float d2r = GHOST_PI / 180.0f;
-    const GhostColor clr = preview ? GhostColor{ 0.15f, 0.16f, 0.19f, 1.0f } : g_clearColor;
-    // ---- Render resolution: the global main-view setting wins on viewport 0, otherwise the camera's own ----
-    int wantW = cam->resW, wantH = cam->resH;
-    if (mainView && g_video.resW > 0 && g_video.resH > 0) { wantW = g_video.resW; wantH = g_video.resH; }
-    const bool         custom = (wantW > 0 && wantH > 0);
-    const unsigned int rw = custom ? (unsigned int)wantW : w;
-    const unsigned int rh = custom ? (unsigned int)wantH : h;
 
-    // Where the image sits in the window
-    float fx = 0.0f, fy = 0.0f, fw = (float)w, fh = (float)h;
-    if (custom && g_video.fit != GHOST_FIT_STRETCH)
-    {
-        float s = fminf((float)w / (float)rw, (float)h / (float)rh);
-        if (g_video.fit == GHOST_FIT_INTEGER && s >= 1.0f) s = floorf(s);
-        fw = fmaxf(floorf((float)rw * s), 1.0f);
-        fh = fmaxf(floorf((float)rh * s), 1.0f);
-        fx = floorf(((float)w - fw) * 0.5f);
-        fy = floorf(((float)h - fh) * 0.5f);
-    }
-
-    // GPU targets follow the render size (between frames the GPU is idle)
-    if (custom) { if (GhostEnsureOffscreen(g_rhi, g_pipeline, vp, rw, rh) != GHOST_OK) return; }
-    else        GhostReleaseOffscreen(g_pipeline, vp);
-    if (GhostEnsureDepth(g_rhi, g_pipeline, vp, rw, rh) != GHOST_OK) return;
-    // MSAA targets follow the render size (freed again when MSAA is off)
-    const bool msaa = g_msaa.active > 1;
-    if (msaa) { if (GhostMSAA_Ensure(g_rhi, g_msaa, vp, rw, rh) != GHOST_OK) return; }
-    else      GhostMSAA_Release(g_msaa, vp);
-    // TAA targets follow the render size (freed again when TAA is off)
-    bool taa = g_taaOn && !msaa && g_taa.ready && !preview;
-    if (taa && GhostTAA_Ensure(g_rhi, g_taa, vp, rw, rh) != GHOST_OK) taa = false;
-    if (g_lastRW[vp] != rw || g_lastRH[vp] != rh)      // resolution changed: the old TAA history is the wrong size/content
-    {
-        if (taa) GhostTAA_ResetHistory(g_taa, vp);
-        g_lastRW[vp] = rw; g_lastRH[vp] = rh;
-    }
-    if (!taa) GhostTAA_Release(g_taa, vp);
-    if (GhostPost_Ensure(g_rhi, g_post, vp, rw, rh) != GHOST_OK) return;    // 1x HDR scene color for this viewport
-
-    float jx = 0.0f, jy = 0.0f;
-    // ---- Matrices ----
-    GhostVec3 eye = cam->position;
-    GhostVec3 forward = AnglesToDir(cam->yawDeg, cam->pitchDeg);
-    GhostVec3 worldUp = { 0.0f, 1.0f, 0.0f };
-    GhostVec3 right = worldUp.Cross(forward).Normalize();
-    GhostMat4 view = GhostMat4::LookAtLH(eye, eye + forward, worldUp);
-    const GhostMat4 projClean = GhostMat4::PerspectiveFovLH(cam->fovDeg * d2r, (float)rw / (float)rh, 0.1f, 100.0f);
-    GhostMat4 proj = projClean;                       // what gets drawn with: jittered while TAA is on
-    if (taa)
-    {
-        GhostTAA_NextJitter(g_taa, vp, g_taaSpeed, jx, jy);
-        proj.m[0][2] += jx * 2.0f / (float)rw;        // shifts clip x by jx pixels (clip.w = view z)
-        proj.m[1][2] += jy * 2.0f / (float)rh;
-    }
-
-    if (mainView)                                   // picking and dragging use the main view only
-    {
-        g_view = view;
-        g_proj = projClean;                           // picking never sees the jitter
-        g_mainEye = eye;
-        g_camR = right;
-        g_camU = forward.Cross(right);
-        g_camF = forward;
-        g_haveCam = true;
-        g_mainRW = (int)rw;  g_mainRH = (int)rh;
-        g_fitX = fx;  g_fitY = fy;  g_fitW = fw;  g_fitH = fh;
-    }
-
-    
-      // ---- Begin frame ----
-    D3D12_CPU_DESCRIPTOR_HANDLE dsv = GhostGetDSV(g_pipeline, vp);
-    if (custom)
-    {
-        const GhostColor bars = { 0.06f, 0.06f, 0.07f, 1.0f };
-        g_rhi->BeginFrame(&bars, dsv);                          // window (the bars) + depth. The offscreen target is used after the scene
-    }
-    else
-    {
-        g_rhi->BeginFrame(&clr, dsv);
-    }
-
-    // The scene itself draws into an HDR target: multisampled, TAA, or the plain 1x one
-    if (msaa)      GhostMSAA_Begin(g_rhi, g_pipeline, g_msaa, vp, &clr, rw, rh);
-    else if (taa)  GhostTAA_Begin(g_rhi, g_pipeline, g_taa, vp, &clr, rw, rh);
-    else           GhostPost_BeginScene(g_rhi, g_pipeline, g_post, vp, &clr, dsv, rw, rh);
-    GhostSceneCB sceneCB;
-    if (preview) BuildPreviewSceneCB(sceneCB);
-    else { BuildSceneCB(g_scene, sceneCB, g_timeSec); RenderShadowPass(sceneCB, eye, forward, rw, rh); }
-    GhostUpdateSceneCB(g_pipeline, &sceneCB);
-
-    // ---- Draw scene objects (one draw per run of faces that share a material) ----
-    // ---- Sky: drawn first, everything else draws over it ----
-    unsigned int slot = 0;
     for (const GhostModEntity& m : g_scene.mods)
     {
         if (preview || m.typeId != GHOST_MOD_SKY) continue;
@@ -2633,10 +2539,13 @@ static void RenderViewport(int vp)
         }
         break;                                       // one sky per scene
     }
+
+    if (!drawObjects) return;
+
     g_translucent.clear();
     for (const GhostObject& o : g_scene.objects)
     {
-        if (preview && o.id != g_vp[vp].solo) continue;
+        if (preview && o.id != soloId) continue;
         if (!o.visible && g_playState != GhostPlayState::Editing) continue;   // hidden in game
 
         const int       faceCount = GhostObject_DrawFaces(o);
@@ -2758,6 +2667,302 @@ static void RenderViewport(int vp)
         [](const TransDraw& a, const TransDraw& b) { return a.dist2 > b.dist2; });
     for (const TransDraw& t : g_translucent)
         GhostDrawMesh(g_rhi, g_pipeline, t.meshId, t.slot, t.tex, t.first, t.count, true);
+   
+}
+
+// ============================================================
+//  Reflection Capture (Utilities > Reflection Capture)
+// ============================================================
+static void FreeAllProbes()
+{
+    for (auto& kv : g_probeRt) if (kv.second.slot >= 0) GhostProbe_ReleaseSlot(g_rhi, g_pipeline, g_probe, kv.second.slot);
+    g_probeRt.clear();
+}
+
+static unsigned int ProbeSignature(const GhostVolume& v)        // everything that changes what a capture looks like
+{
+    unsigned int h = 2166136261u;
+    auto mix = [&](float f) { unsigned int u; memcpy(&u, &f, 4); h ^= u; h *= 16777619u; };
+    mix(v.position.x); mix(v.position.y); mix(v.position.z);
+    mix(v.p[PROBE_RES]); mix(v.p[PROBE_NEAR]); mix(v.p[PROBE_FAR]); mix(v.p[PROBE_SOURCE]); mix(v.p[PROBE_ENV_YAW]);
+    mix((float)v.tex[0]);
+    return h;
+}
+
+static bool CaptureProbe(const GhostVolume& v, int slot)
+{
+    static const unsigned int kRes[3] = { 64, 128, 256 };
+    int ri = (int)(v.p[PROBE_RES] + 0.5f);
+    ri = ri < 0 ? 0 : (ri > 2 ? 2 : ri);
+    const unsigned int res = kRes[ri];
+    const int source = (int)(v.p[PROBE_SOURCE] + 0.5f);          // 0 scene, 1 sky only, 2 custom texture
+    if (GhostProbe_EnsureSlot(g_rhi, g_pipeline, g_probe, slot, res) != GHOST_OK) return false;
+    GhostProbe_SetValid(g_probe, slot, false);
+
+    if (source == 2)                                              // a lat-long texture: no scene drawing at all
+    {
+        const int tex = v.tex[0];
+        if (tex <= 0 || tex >= (int)g_scene.textures.size()) return false;
+        g_rhi->BeginOffscreenFrame();
+        for (int f = 0; f < 6; f++)
+            GhostProbe_EquirectFace(g_rhi, g_pipeline, g_probe, slot, f, tex, v.p[PROBE_ENV_YAW] * (GHOST_PI / 180.0f));
+        GhostProbe_Prefilter(g_rhi, g_probe, slot);
+        g_rhi->EndOffscreenFrame();
+        GhostProbe_SetValid(g_probe, slot, true);
+        return true;
+    }
+
+    if (GhostProbe_EnsureScratch(g_rhi, g_probe, res, g_pipeline->sampleCount) != GHOST_OK) return false;
+
+    static const GhostVec3 kDir[6] = { { 1, 0, 0 },{ -1, 0, 0 },{ 0, 1, 0 },{ 0, -1, 0 },{ 0, 0, 1 },{ 0, 0, -1 } };
+    static const GhostVec3 kUp[6] = { { 0, 1, 0 },{ 0, 1, 0 },{ 0, 0, -1 },{ 0, 0, 1 },{ 0, 1, 0 },{ 0, 1, 0 } };   // the D3D cube face orientation
+    const GhostVec3 eye = v.position;
+    const GhostMat4 proj = GhostMat4::PerspectiveFovLH(GHOST_PI * 0.5f, 1.0f, v.p[PROBE_NEAR], v.p[PROBE_FAR]);
+    const GhostColor clr = g_clearColor;
+
+    GhostSceneCB cb;
+    BuildSceneCB(g_scene, cb, g_timeSec);                                    // lights + ambient. No probes: they never see each other
+
+    for (int f = 0; f < 6; f++)
+    {
+        g_rhi->BeginOffscreenFrame();                             // one submission per face, so draw slots and the scene buffer can be reused
+        if (f == 0 && source == 0)                                // one shadow pass, centred on the probe, shared by all six faces
+        {
+            const float fitR = g_scene.shadowDistance * 0.5f;
+            RenderShadowPass(cb, eye - GhostVec3(0, 0, 1) * fitR, GhostVec3(0, 0, 1), res, res);
+            GhostUpdateSceneCB(g_pipeline, &cb);
+        }
+        GhostProbe_BeginFace(g_rhi, g_pipeline, g_probe, &clr, res);
+        const GhostMat4 view = GhostMat4::LookAtLH(eye, eye + kDir[f], kUp[f]);
+        unsigned int slotCB = 0;
+        DrawSceneColor(view, proj, eye, source == 0, false, false, 0, slotCB);
+        GhostProbe_EndFace(g_rhi, g_pipeline, g_probe, slot, f);
+        g_rhi->EndOffscreenFrame();
+    }
+
+    g_rhi->BeginOffscreenFrame();
+    GhostProbe_Prefilter(g_rhi, g_probe, slot);
+    g_rhi->EndOffscreenFrame();
+    GhostProbe_SetValid(g_probe, slot, true);
+    return true;
+}
+
+// Between frames, before any viewport renders. One capture per tick at most.
+static void UpdateProbes(float dt)
+{
+    if (!g_rhi || !g_pipeline || !g_probe.ready) return;
+    for (auto& kv : g_probeRt) kv.second.seen = false;
+
+    const bool busy = g_gizmo.active || g_dragging || ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0);
+    bool didOne = false;
+
+    for (const GhostVolume& v : g_scene.volumes)
+    {
+        if (v.type != GHOST_VOL_REFLECTION || !v.enabled) continue;
+        ProbeRt& r = g_probeRt[v.id];
+        r.seen = true;
+        if (r.slot < 0)
+        {
+            r.slot = GhostProbe_AllocSlot(g_probe);
+            if (r.slot < 0) continue;                             // all 8 slots are taken: shown in Details > Status
+            r.dirty = true; r.stable = 0.0f; r.sig = ProbeSignature(v);
+        }
+
+        const unsigned int sig = ProbeSignature(v);
+        if (sig != r.sig) { r.sig = sig; r.dirty = true; r.stable = 0.0f; }
+
+        const bool realtime = v.p[PROBE_MODE] > 0.5f;
+        bool go = false;
+        if (r.request) go = true;
+        else if (realtime)
+        {
+            r.timer += dt;
+            go = r.timer >= v.p[PROBE_INTERVAL] || !GhostProbe_Valid(g_probe, r.slot);
+        }
+        else if (r.dirty)
+        {
+            if (!busy) r.stable += dt;                            // baked: wait until you stop dragging / typing
+            go = r.stable >= 0.35f;
+        }
+
+        if (go && !didOne)
+        {
+            CaptureProbe(v, r.slot);
+            didOne = true;
+            r.request = false; r.dirty = false; r.timer = 0.0f; r.stable = 0.0f;
+        }
+    }
+
+    for (auto it = g_probeRt.begin(); it != g_probeRt.end(); )    // deleted or disabled volumes give their slot back
+    {
+        if (!it->second.seen)
+        {
+            if (it->second.slot >= 0) GhostProbe_ReleaseSlot(g_rhi, g_pipeline, g_probe, it->second.slot);
+            it = g_probeRt.erase(it);
+        }
+        else ++it;
+    }
+}
+
+// Valid probes into the scene buffer, lowest priority first (the shader blends them in this order, so the last one wins)
+static void FillProbeCB(GhostSceneCB& cb)
+{
+    cb.probeInfo[0] = 0.0f;
+    struct Item { const GhostVolume* v; int slot; };
+    std::vector<Item> items;
+    for (const GhostVolume& v : g_scene.volumes)
+    {
+        if (v.type != GHOST_VOL_REFLECTION || !v.enabled) continue;
+        auto it = g_probeRt.find(v.id);
+        if (it == g_probeRt.end() || !GhostProbe_Valid(g_probe, it->second.slot)) continue;
+        items.push_back({ &v, it->second.slot });
+    }
+    auto size = [](const GhostVolume& v) { return v.shape == GHOST_VOLSHAPE_SPHERE ? v.radius * v.radius * v.radius * 4.19f : v.size.x * v.size.y * v.size.z; };
+    std::stable_sort(items.begin(), items.end(), [&](const Item& a, const Item& b)
+        { return a.v->priority != b.v->priority ? a.v->priority < b.v->priority : size(*a.v) > size(*b.v); });
+
+    const float d2r = GHOST_PI / 180.0f;
+    int n = 0;
+    for (const Item& it : items)
+    {
+        if (n >= (int)GHOST_MAX_PROBES) break;
+        const GhostVolume& v = *it.v;
+        GhostGPUProbe& g = cb.probes[n++];
+        const GhostMat4 inv = GhostMat4::RotationZ(-v.rotationDeg.z * d2r) * GhostMat4::RotationX(-v.rotationDeg.x * d2r)
+            * GhostMat4::RotationY(-v.rotationDeg.y * d2r) * GhostMat4::Translation(-v.position.x, -v.position.y, -v.position.z);
+        for (int c = 0; c < 4; c++) { g.row0[c] = inv.m[0][c]; g.row1[c] = inv.m[1][c]; g.row2[c] = inv.m[2][c]; }
+        if (v.shape == GHOST_VOLSHAPE_SPHERE) { g.shape[0] = 1.0f; g.shape[1] = v.radius; g.shape[2] = g.shape[3] = 0.0f; }
+        else { g.shape[0] = 0.0f; g.shape[1] = v.size.x * 0.5f; g.shape[2] = v.size.y * 0.5f; g.shape[3] = v.size.z * 0.5f; }
+        g.params[0] = v.blend;
+        g.params[1] = v.p[PROBE_INTENSITY];
+        g.params[2] = (float)GhostProbe_Mips(g_probe, it.slot) - 1.0f;
+        g.params[3] = v.p[PROBE_DIFFUSE];
+        g.misc[0] = v.p[PROBE_PARALLAX];
+        g.misc[1] = (float)it.slot;
+    }
+    cb.probeInfo[0] = (float)n;
+}
+
+
+// ============================================================
+//  One viewport = one surface + one camera. The GPU is idle between viewports
+//  (EndFrame waits), so the constant buffer slots are simply reused.
+// ============================================================
+static void RenderViewport(int vp)
+{
+    GhostCamera* cam = ViewportCamera(vp);
+    static GhostCamera s_previewCam;
+    const bool preview = g_vp[vp].preview;
+    if (preview) cam = BuildPreviewCamera(vp, s_previewCam) ? &s_previewCam : nullptr;
+    if (!cam || !g_vp[vp].visible) return;
+
+
+    if (!g_rhi->SetCurrentSurface(vp)) return;
+
+    const unsigned int w = g_rhi->GetSurfaceWidth();
+    const unsigned int h = g_rhi->GetSurfaceHeight();
+    if (w == 0 || h == 0) return;
+
+    const bool  mainView = (vp == 0);
+    const bool overlays = mainView && g_playState == GhostPlayState::Editing;   // no icons or selection while playing
+    const float d2r = GHOST_PI / 180.0f;
+    const GhostColor clr = preview ? GhostColor{ 0.15f, 0.16f, 0.19f, 1.0f } : g_clearColor;
+    // ---- Render resolution: the global main-view setting wins on viewport 0, otherwise the camera's own ----
+    int wantW = cam->resW, wantH = cam->resH;
+    if (mainView && g_video.resW > 0 && g_video.resH > 0) { wantW = g_video.resW; wantH = g_video.resH; }
+    const bool         custom = (wantW > 0 && wantH > 0);
+    const unsigned int rw = custom ? (unsigned int)wantW : w;
+    const unsigned int rh = custom ? (unsigned int)wantH : h;
+
+    // Where the image sits in the window
+    float fx = 0.0f, fy = 0.0f, fw = (float)w, fh = (float)h;
+    if (custom && g_video.fit != GHOST_FIT_STRETCH)
+    {
+        float s = fminf((float)w / (float)rw, (float)h / (float)rh);
+        if (g_video.fit == GHOST_FIT_INTEGER && s >= 1.0f) s = floorf(s);
+        fw = fmaxf(floorf((float)rw * s), 1.0f);
+        fh = fmaxf(floorf((float)rh * s), 1.0f);
+        fx = floorf(((float)w - fw) * 0.5f);
+        fy = floorf(((float)h - fh) * 0.5f);
+    }
+
+    // GPU targets follow the render size (between frames the GPU is idle)
+    if (custom) { if (GhostEnsureOffscreen(g_rhi, g_pipeline, vp, rw, rh) != GHOST_OK) return; }
+    else        GhostReleaseOffscreen(g_pipeline, vp);
+    if (GhostEnsureDepth(g_rhi, g_pipeline, vp, rw, rh) != GHOST_OK) return;
+    // MSAA targets follow the render size (freed again when MSAA is off)
+    const bool msaa = g_msaa.active > 1;
+    if (msaa) { if (GhostMSAA_Ensure(g_rhi, g_msaa, vp, rw, rh) != GHOST_OK) return; }
+    else      GhostMSAA_Release(g_msaa, vp);
+    // TAA targets follow the render size (freed again when TAA is off)
+    bool taa = g_taaOn && !msaa && g_taa.ready && !preview;
+    if (taa && GhostTAA_Ensure(g_rhi, g_taa, vp, rw, rh) != GHOST_OK) taa = false;
+    if (g_lastRW[vp] != rw || g_lastRH[vp] != rh)      // resolution changed: the old TAA history is the wrong size/content
+    {
+        if (taa) GhostTAA_ResetHistory(g_taa, vp);
+        g_lastRW[vp] = rw; g_lastRH[vp] = rh;
+    }
+    if (!taa) GhostTAA_Release(g_taa, vp);
+    if (GhostPost_Ensure(g_rhi, g_post, vp, rw, rh) != GHOST_OK) return;    // 1x HDR scene color for this viewport
+
+    float jx = 0.0f, jy = 0.0f;
+    // ---- Matrices ----
+    GhostVec3 eye = cam->position;
+    GhostVec3 forward = AnglesToDir(cam->yawDeg, cam->pitchDeg);
+    GhostVec3 worldUp = { 0.0f, 1.0f, 0.0f };
+    GhostVec3 right = worldUp.Cross(forward).Normalize();
+    GhostMat4 view = GhostMat4::LookAtLH(eye, eye + forward, worldUp);
+    const GhostMat4 projClean = GhostMat4::PerspectiveFovLH(cam->fovDeg * d2r, (float)rw / (float)rh, 0.1f, 100.0f);
+    GhostMat4 proj = projClean;                       // what gets drawn with: jittered while TAA is on
+    if (taa)
+    {
+        GhostTAA_NextJitter(g_taa, vp, g_taaSpeed, jx, jy);
+        proj.m[0][2] += jx * 2.0f / (float)rw;        // shifts clip x by jx pixels (clip.w = view z)
+        proj.m[1][2] += jy * 2.0f / (float)rh;
+    }
+
+    if (mainView)                                   // picking and dragging use the main view only
+    {
+        g_view = view;
+        g_proj = projClean;                           // picking never sees the jitter
+        g_mainEye = eye;
+        g_camR = right;
+        g_camU = forward.Cross(right);
+        g_camF = forward;
+        g_haveCam = true;
+        g_mainRW = (int)rw;  g_mainRH = (int)rh;
+        g_fitX = fx;  g_fitY = fy;  g_fitW = fw;  g_fitH = fh;
+    }
+
+    
+      // ---- Begin frame ----
+    D3D12_CPU_DESCRIPTOR_HANDLE dsv = GhostGetDSV(g_pipeline, vp);
+    if (custom)
+    {
+        const GhostColor bars = { 0.06f, 0.06f, 0.07f, 1.0f };
+        g_rhi->BeginFrame(&bars, dsv);                          // window (the bars) + depth. The offscreen target is used after the scene
+    }
+    else
+    {
+        g_rhi->BeginFrame(&clr, dsv);
+    }
+
+    // The scene itself draws into an HDR target: multisampled, TAA, or the plain 1x one
+    if (msaa)      GhostMSAA_Begin(g_rhi, g_pipeline, g_msaa, vp, &clr, rw, rh);
+    else if (taa)  GhostTAA_Begin(g_rhi, g_pipeline, g_taa, vp, &clr, rw, rh);
+    else           GhostPost_BeginScene(g_rhi, g_pipeline, g_post, vp, &clr, dsv, rw, rh);
+    GhostSceneCB sceneCB;
+    if (preview) BuildPreviewSceneCB(sceneCB);
+    else { BuildSceneCB(g_scene, sceneCB,g_timeSec); FillProbeCB(sceneCB); RenderShadowPass(sceneCB, eye, forward, rw, rh); }
+    GhostUpdateSceneCB(g_pipeline, &sceneCB);
+
+    // ---- Draw scene objects (one draw per run of faces that share a material) ----
+    // ---- Sky: drawn first, everything else draws over it ----
+    unsigned int slot = 0;
+
+
+DrawSceneColor(view, proj, eye, true, overlays, preview, preview ? g_vp[vp].solo : 0, slot);
+
 
     // ---- Particles: after opaque + translucent objects, before the editor icons ----
     if (!preview)

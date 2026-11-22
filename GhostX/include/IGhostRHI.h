@@ -63,6 +63,11 @@ public:
 // Records into a private list, submits, and waits for the GPU. Call between frames only.
     virtual GhostResult ExecuteOneShot(
         const std::function<void(ID3D12GraphicsCommandList*)>& record) = 0;
+
+    // ---- Offscreen frames (probe captures): a command list with no swap chain. Between frames only ----
+    virtual void BeginOffscreenFrame() = 0;   // resets the command list; the normal draw functions record into it
+    virtual void EndOffscreenFrame() = 0;     // closes, submits and waits for the GPU
+
     // ---- Surfaces (one swap chain per viewport window) ----
     virtual int          CreateSurface(HWND hwnd, unsigned int width, unsigned int height) = 0;   // id >= 1, or -1
     virtual void         DestroySurface(int id) = 0;

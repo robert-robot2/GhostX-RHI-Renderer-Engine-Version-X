@@ -225,6 +225,9 @@ extern "C"
     GHOST_API int  GhostEngine_GetVolume(int id, GhostVolumeInfo* out);         // 0 = not a volume
     GHOST_API void GhostEngine_SetVolume(const GhostVolumeInfo* in);
 
+    GHOST_API void GhostEngine_CaptureProbe(int volumeId);     // Reflection Capture: capture now (works for baked and realtime)
+    GHOST_API int  GhostEngine_GetProbeStatus(int volumeId);   // -1 not a probe, 0 waiting, 1 captured, 2 no free slot (max 8), 3 unavailable, 4 disabled
+
     GHOST_API int  GhostEngine_GetTileMap(int objectId, GhostTileMapInfo* out);   // 0 = not a Tile Map
     GHOST_API void GhostEngine_SetTileMap(const GhostTileMapInfo* in);
     GHOST_API int  GhostEngine_AddTileLayer(int objectId);                        // new layer index, -1 = refused (limit / not a Tile Map)
@@ -510,4 +513,6 @@ extern "C"
     GHOST_API void GhostEngine_SetPostSettings(const GhostPostInfo* in);
 
     GHOST_API void GhostEngine_SetLoadProgress(GhostLoadProgressFn fn);
+
+
 }

@@ -707,6 +707,44 @@ struct GhostVolume
     int         tex[GHOST_VOL_TEXTURES] = {};
 };
 
+// Reflection Capture parameter slots (GhostVolume::p). tex[0] = the custom environment texture.
+enum GhostProbeParam
+{
+    PROBE_MODE = 0,       // 0 baked (on demand), 1 realtime
+    PROBE_RES,            // 0 = 64, 1 = 128, 2 = 256
+    PROBE_INTERVAL,       // realtime: seconds between captures
+    PROBE_INTENSITY,
+    PROBE_NEAR, PROBE_FAR,
+    PROBE_PARALLAX,       // 1 = parallax correction against the volume's shape
+    PROBE_SOURCE,         // 0 scene (sky + objects), 1 sky only, 2 custom texture
+    PROBE_ENV_YAW,        // custom texture rotation, degrees
+    PROBE_DIFFUSE,        // 0..1: how much the probe also lights surfaces (ambient diffuse)
+    PROBE_VERSION = 15    // 0 = never initialized (a Phase 1 volume): gets the defaults below
+};
+
+inline void GhostProbeParams_Fix(GhostVolume& v)
+{
+    float* p = v.p;
+    auto cf = [](float x, float lo, float hi) { return x != x ? lo : (x < lo ? lo : (x > hi ? hi : x)); };
+    if (p[PROBE_VERSION] < 0.5f)
+    {
+        p[PROBE_MODE] = 0.0f; p[PROBE_RES] = 1.0f; p[PROBE_INTERVAL] = 1.0f; p[PROBE_INTENSITY] = 1.0f;
+        p[PROBE_NEAR] = 0.1f; p[PROBE_FAR] = 100.0f; p[PROBE_PARALLAX] = 0.0f; p[PROBE_SOURCE] = 0.0f;
+        p[PROBE_ENV_YAW] = 0.0f; p[PROBE_DIFFUSE] = 0.0f; p[PROBE_VERSION] = 1.0f;
+    }
+    p[PROBE_MODE] = p[PROBE_MODE] > 0.5f ? 1.0f : 0.0f;
+    p[PROBE_RES] = (float)(int)(cf(p[PROBE_RES], 0.0f, 2.0f) + 0.5f);
+    p[PROBE_INTERVAL] = cf(p[PROBE_INTERVAL], 0.05f, 3600.0f);
+    p[PROBE_INTENSITY] = cf(p[PROBE_INTENSITY], 0.0f, 10.0f);
+    p[PROBE_NEAR] = cf(p[PROBE_NEAR], 0.01f, 100.0f);
+    p[PROBE_FAR] = cf(p[PROBE_FAR], p[PROBE_NEAR] + 0.1f, 10000.0f);
+    p[PROBE_PARALLAX] = p[PROBE_PARALLAX] > 0.5f ? 1.0f : 0.0f;
+    p[PROBE_SOURCE] = (float)(int)(cf(p[PROBE_SOURCE], 0.0f, 2.0f) + 0.5f);
+    p[PROBE_ENV_YAW] = cf(p[PROBE_ENV_YAW], -360.0f, 360.0f);
+    p[PROBE_DIFFUSE] = cf(p[PROBE_DIFFUSE], 0.0f, 1.0f);
+}
+
+
 inline void GhostVolume_Clamp(GhostVolume& v)
 {
     auto cf = [](float x, float lo, float hi) { return x != x ? lo : (x < lo ? lo : (x > hi ? hi : x)); };
@@ -719,6 +757,7 @@ inline void GhostVolume_Clamp(GhostVolume& v)
     v.blend = cf(v.blend, 0.0f, 1000.f);
     v.priority = v.priority < -100 ? -100 : (v.priority > 100 ? 100 : v.priority);
     for (int i = 0; i < GHOST_VOL_PARAMS; i++) if (v.p[i] != v.p[i]) v.p[i] = 0.0f;
+    if (v.type == GHOST_VOL_REFLECTION) GhostProbeParams_Fix(v);
 }
 
 // ---- Post processing (scene settings) ----
@@ -849,6 +888,7 @@ inline GhostVolume* GhostScene_AddVolume(GhostScene& s, int type)
     v.name = std::string(names[type]) + " " + std::to_string(v.id);
     if (type == GHOST_VOL_REFLECTION) { v.shape = GHOST_VOLSHAPE_SPHERE; v.radius = 5.0f; }
     else { v.shape = GHOST_VOLSHAPE_BOX; v.size = { 10, 5, 10 }; }
+    if (type == GHOST_VOL_REFLECTION) GhostProbeParams_Fix(v);                 // defaults
     s.volumes.push_back(v);
     s.version++;
     return &s.volumes.back();

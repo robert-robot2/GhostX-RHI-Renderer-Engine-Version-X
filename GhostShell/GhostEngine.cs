@@ -330,6 +330,11 @@ namespace GhostShell
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern void GhostEngine_SetVolume(ref GhostVolumeInfo info);
 
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_CaptureProbe(int volumeId);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetProbeStatus(int volumeId);
+
 
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern int GhostEngine_AddTileLayer(int objectId);

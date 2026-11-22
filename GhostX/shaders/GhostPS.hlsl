@@ -1,4 +1,15 @@
 #define MAX_LIGHTS 16
+#define MAX_PROBES 8
+
+struct Probe
+{
+    float4 row0;    // world -> volume space: xyz = rotation row, w = translation
+    float4 row1;
+    float4 row2;
+    float4 shp;     // x 0 box / 1 sphere, yzw = half extents (sphere: y = radius)
+    float4 prm;     // x blend distance, y intensity, z last mip index, w ambient diffuse amount
+    float4 misc;    // x parallax correction, y cube slot
+};
 
 struct Light
 {
@@ -21,6 +32,8 @@ cbuffer SceneBuffer : register(b1)
     row_major float4x4 shadowVP[MAX_LIGHTS];
     float4 flickGlobal;               // x = time (s)
     float4 flick[MAX_LIGHTS * 6];     // per light, 2 layers x 3 float4: colour+intensity / texture id, speed, tiling, amount / diffuse, specular, roughness, metallic
+    float4 probeInfo;       // x = probe count
+    Probe  probes[MAX_PROBES];
 };
 
 Texture2D    gTexture : register(t0);
@@ -29,6 +42,7 @@ SamplerState sLinClamp : register(s1);
 SamplerState sPtWrap : register(s2);
 SamplerState sPtClamp : register(s3);
 Texture2DArray<float> gShadowMap : register(t1);
+TextureCube<float4> gProbe[MAX_PROBES] : register(t2);      // Reflection Captures (descriptor table is contiguous with the shadow map)
 
 cbuffer ObjectBuffer : register(b0)       // same layout as MVPBuffer in GhostVS.hlsl
 {
@@ -361,6 +375,58 @@ float ShadowFactor(Light L, float3 worldPos, float3 N, int type, float2 pixelPos
     }
     return lit / 16.0f;
 }
+
+float3 ProbeSafeDir(float3 v)
+{
+    return float3(abs(v.x) < 1e-5f ? (v.x < 0.0f ? -1e-5f : 1e-5f) : v.x,
+        abs(v.y) < 1e-5f ? (v.y < 0.0f ? -1e-5f : 1e-5f) : v.y,
+        abs(v.z) < 1e-5f ? (v.z < 0.0f ? -1e-5f : 1e-5f) : v.z);
+}
+
+// Blends the reflection probes in order (the last one in the list wins where they overlap).
+// diffuseLookup = 1: the blurriest mip, weighted by each probe's Ambient Diffuse amount.
+float3 ProbeLookup(float3 dirW, float3 posW, float rough, float3 fallback, float diffuseLookup)
+{
+    float3 result = fallback;
+    const int count = min((int)(probeInfo.x + 0.5f), MAX_PROBES);
+    [loop] for (int i = 0; i < count; i++)
+    {
+        Probe P = probes[i];
+        float3 lp = float3(dot(P.row0.xyz, posW) + P.row0.w, dot(P.row1.xyz, posW) + P.row1.w, dot(P.row2.xyz, posW) + P.row2.w);
+        const float blend = max(P.prm.x, 0.001f);
+        float w;
+        if (P.shp.x < 0.5f) { float3 dIn = P.shp.yzw - abs(lp); w = saturate(min(dIn.x, min(dIn.y, dIn.z)) / blend); }
+        else                  w = saturate((P.shp.y - length(lp)) / blend);
+        if (diffuseLookup > 0.5f) w *= P.prm.w;
+        if (w <= 0.0f) continue;
+
+        float3 d = dirW;
+        if (diffuseLookup < 0.5f && P.misc.x > 0.5f)             // parallax correction against the volume's shape
+        {
+            float3 lr = ProbeSafeDir(float3(dot(P.row0.xyz, dirW), dot(P.row1.xyz, dirW), dot(P.row2.xyz, dirW)));
+            float t;
+            if (P.shp.x < 0.5f)
+            {
+                float3 t1 = (P.shp.yzw - lp) / lr, t2 = (-P.shp.yzw - lp) / lr;
+                float3 tf = max(t1, t2);
+                t = min(tf.x, min(tf.y, tf.z));
+            }
+            else
+            {
+                float bq = dot(lp, lr), cq = dot(lp, lp) - P.shp.y * P.shp.y;
+                t = -bq + sqrt(max(bq * bq - cq, 0.0f));
+            }
+            float3 hitL = lp + lr * t;                            // the probe sits at the volume's centre
+            d = normalize(P.row0.xyz * hitL.x + P.row1.xyz * hitL.y + P.row2.xyz * hitL.z);
+        }
+
+        const float lod = (diffuseLookup > 0.5f) ? P.prm.z : saturate((sqrt(saturate(rough)) - 0.2f) / 0.8f) * P.prm.z;
+        float3 c = pow(max(gProbe[(int)(P.misc.y + 0.5f)].SampleLevel(sLinClamp, d, lod).rgb, 0.0f), 2.2f) * P.prm.y;
+        result = lerp(result, c, w);
+    }
+    return result;
+}
+
 float4 PSMain(PSInput input, bool isFront : SV_IsFrontFace) : SV_TARGET
 {
     // gradients for the extra maps, computed before any branch
@@ -585,10 +651,16 @@ float4 PSMain(PSInput input, bool isFront : SV_IsFrontFace) : SV_TARGET
             float3 env = pow(saturate(gTex[rid].SampleLevel(sLinWrap, euv, rough * (float)(lv - 1)).rgb), 2.2f);
             envRefl = env * maps[MAP_REFLECTION].y;
         }
+        else if (probeInfo.x > 0.5f)                              // no Reflection map on the material: use the probes
+            envRefl = ProbeLookup(reflect(-V, N), input.worldPos, rough, ambientColor.rgb, 0.0f);
+        float3 ambDiff = ambientColor.rgb;
+        if (probeInfo.x > 0.5f) ambDiff = ProbeLookup(N, input.worldPos, 1.0f, ambientColor.rgb, 1.0f);
+
         float3 ambSpec = envRefl * EnvBRDFApprox(f0, rough, NoV) * ao;
-        float3 diff = albedo * (1.0f - metallic) * (ambientColor.rgb * ao + diffuseSum);
+        float3 diff = albedo * (1.0f - metallic) * (ambDiff * ao + diffuseSum);
 
         float3 emissive = pow(saturate(pbrB.rgb), 2.2f) * pbrA.w;
+
         if (HasMap(MAP_EMISSIVE))
         {
             float3 em = pow(saturate(FetchMap(MAP_EMISSIVE, mu).rgb), 2.2f);

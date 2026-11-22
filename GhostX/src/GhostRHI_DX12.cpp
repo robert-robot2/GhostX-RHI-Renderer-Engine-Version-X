@@ -297,6 +297,21 @@ GhostResult GhostRHI_DX12::ExecuteOneShot(
     return GHOST_OK;
 }
 
+void GhostRHI_DX12::BeginOffscreenFrame()
+{
+    m_cmdAllocator->Reset();                                  // the GPU is idle between frames
+    m_cmdList->Reset(m_cmdAllocator.Get(), nullptr);
+}
+
+void GhostRHI_DX12::EndOffscreenFrame()
+{
+    m_cmdList->Close();
+    ID3D12CommandList* lists[] = { m_cmdList.Get() };
+    m_cmdQueue->ExecuteCommandLists(1, lists);
+    FlushGPU();
+}
+
+
 int GhostRHI_DX12::GetDisplayModes(unsigned int* outWH, int maxPairs)
 {
     if (!outWH || maxPairs <= 0) return 0;

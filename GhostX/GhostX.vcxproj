@@ -179,6 +179,7 @@ xcopy /Y /E /I "$(ProjectDir)shaders" "$(SolutionDir)GhostShell\bin\x64\Release\
     <ClInclude Include="include\GhostParticleMan.h" />
     <ClInclude Include="include\GhostPipeline.h" />
     <ClInclude Include="include\GhostPost.h" />
+    <ClInclude Include="include\GhostProbe.h" />
     <ClInclude Include="include\GhostRHI_DX12.h" />
     <ClInclude Include="include\GhostRoleParams.h" />
     <ClInclude Include="include\GhostRuntime.h" />
@@ -212,6 +213,7 @@ xcopy /Y /E /I "$(ProjectDir)shaders" "$(SolutionDir)GhostShell\bin\x64\Release\
     <ClCompile Include="src\GhostParticleMan.cpp" />
     <ClCompile Include="src\GhostPipeline.cpp" />
     <ClCompile Include="src\GhostPost.cpp" />
+    <ClCompile Include="src\GhostProbe.cpp" />
     <ClCompile Include="src\GhostRHI_DX12.cpp" />
     <ClCompile Include="src\GhostRuntime.cpp" />
     <ClCompile Include="src\GhostSceneIO.cpp" />

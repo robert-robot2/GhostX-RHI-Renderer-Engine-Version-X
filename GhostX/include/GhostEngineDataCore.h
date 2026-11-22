@@ -190,6 +190,7 @@ void GhostEngine_Tick()
         if (GhostSetShadowSize(g_rhi, g_pipeline, (unsigned int)g_scene.shadowRes) != GHOST_OK)
             g_scene.shadowRes = (int)g_pipeline->shadowSize;              // could not allocate: keep what works
     GhostMSAA_Apply(g_rhi, g_pipeline, g_msaa, g_taaOn ? 1 : g_msaaWanted);   // TAA and MSAA are exclusive
+    UpdateProbes(dt);
     // ---- Render: camera windows first, the main view last (it carries the vsync) ----
     for (int vp = 1; vp < GHOST_MAX_SURFACES; vp++)
         if (g_vp[vp].alive) RenderViewport(vp);
@@ -217,6 +218,7 @@ void GhostEngine_Shutdown()
     GhostAudio_Shutdown();
     GhostMSAA_Shutdown(g_msaa);
     GhostTAA_Shutdown(g_taa);
+    GhostProbe_Shutdown(g_probe);
     GhostPost_Shutdown(g_post);
 
     GhostPipelineDestroy(g_pipeline);
@@ -708,6 +710,7 @@ int GhostEngine_LoadScene(const char* path, char* msg, int msgSize)
     warn += g_modelWarn;
     g_hoverId = 0; g_dragging = false; g_dragId = 0; g_inputCameraId = 0;
     FreeAllTileInstances();
+    FreeAllProbes();
     g_scenePath = GhostPath_Normalize(path);
     GhostParticles_ResetAll();
     g_scene.version++;
@@ -722,6 +725,7 @@ void GhostEngine_ClearScene()
     g_animRt.clear();
     g_scene.objects.clear(); g_scenePath.clear();
     FreeAllTileInstances();
+    FreeAllProbes();
     g_scene.lights.clear();
     g_scene.cameras.clear(); g_scene.mods.clear(); g_scene.volumes.clear(); g_scene.particles.clear();
     GhostParticles_ResetAll();
@@ -1935,6 +1939,7 @@ static void PerformSceneSwitch()
     g_scenePath = abs;
     GhostParticles_ResetAll();
     FreeAllTileInstances();
+    FreeAllProbes();
     g_scene.version++;
     if (g_scene.gameStartCameraId && FindCamera(g_scene.gameStartCameraId))
         g_scene.activeCameraId = g_scene.gameStartCameraId;
@@ -3848,4 +3853,26 @@ void GhostEngine_SetFlickerText(int lightId, int layer, const char* text)
     }
     if (s.size() > 63) s.resize(63);
     l->flicker[layer].custom = s;
+}
+
+void GhostEngine_CaptureProbe(int id)
+{
+    for (const GhostVolume& v : g_scene.volumes)
+        if (v.id == id && v.type == GHOST_VOL_REFLECTION) { g_probeRt[id].request = true; return; }
+}
+
+int GhostEngine_GetProbeStatus(int id)
+{
+    for (const GhostVolume& v : g_scene.volumes)
+        if (v.id == id)
+        {
+            if (v.type != GHOST_VOL_REFLECTION) return -1;
+            if (!g_probe.ready) return 3;
+            if (!v.enabled) return 4;
+            auto it = g_probeRt.find(id);
+            if (it == g_probeRt.end()) return 0;
+            if (it->second.slot < 0) return 2;
+            return GhostProbe_Valid(g_probe, it->second.slot) ? 1 : 0;
+        }
+    return -1;
 }

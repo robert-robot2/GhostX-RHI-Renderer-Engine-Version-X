@@ -2980,7 +2980,8 @@ namespace GhostShell
             if (GhostEngine.GhostEngine_GetCamera(id, ref c) != 0) return c;
             if (GhostEngine.GhostEngine_GetVolume(id, out GhostVolumeInfo vol) != 0)
                 return (vol.shape, vol.enabled, vol.priority, vol.px, vol.py, vol.pz, vol.rx, vol.ry, vol.rz,
-                        vol.sx, vol.sy, vol.sz, vol.radius, vol.blend, string.Join(",", vol.p), string.Join(",", vol.tex));
+                        vol.sx, vol.sy, vol.sz, vol.radius, vol.blend, string.Join(",", vol.p), string.Join(",", vol.tex),
+                        GhostEngine.GhostEngine_GetProbeStatus(id));
             if (GhostModProxy.Exists(id)) return GhostMods.Signature(id);
             return null;
         }

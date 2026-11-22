@@ -1063,7 +1063,7 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
     // add after SRV range block this may be incorrrect
     D3D12_DESCRIPTOR_RANGE shadowRange = {};
     shadowRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-    shadowRange.NumDescriptors = 1;
+    shadowRange.NumDescriptors = 1 + GHOST_MAX_PROBES;       // t1 = shadow maps, t2..t9 = reflection probes
     shadowRange.BaseShaderRegister = 1;                       // t1
     shadowRange.RegisterSpace = 0;
     shadowRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
@@ -1479,7 +1479,16 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
         nh.ptr += (SIZE_T)GHOST_DATA_SRV_BASE * p->srvIncrement;
         for (unsigned int i = 0; i < GHOST_MAX_TEXTURES; i++) { device->CreateShaderResourceView(nullptr, &nd, nh); nh.ptr += p->srvIncrement; }
     }
-
+    {   // probe slots: null cube descriptors, so the shadow/probe table is always fully valid
+        D3D12_SHADER_RESOURCE_VIEW_DESC cd = {};
+        cd.Format = GHOST_HDR_FORMAT;
+        cd.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
+        cd.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        cd.TextureCube.MipLevels = 1;
+        D3D12_CPU_DESCRIPTOR_HANDLE ch = p->cbvHeap->GetCPUDescriptorHandleForHeapStart();
+        ch.ptr += (SIZE_T)GHOST_PROBE_SRV_BASE * p->srvIncrement;
+        for (unsigned int i = 0; i < GHOST_MAX_PROBES; i++) { device->CreateShaderResourceView(nullptr, &cd, ch); ch.ptr += p->srvIncrement; }
+    }
     // ---- DSV Heap + Depth Buffer ----
     D3D12_DESCRIPTOR_HEAP_DESC dsvHeapDesc = {};
     dsvHeapDesc.NumDescriptors = GHOST_MAX_SURFACES;
