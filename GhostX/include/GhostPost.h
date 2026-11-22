@@ -1,18 +1,28 @@
-// GhostPost.h — HDR scene targets and the post-process chain (Phase 2: tone mapping. Bloom, SSAO, SSR, SSGI follow)
+// GhostPost.h — HDR scene targets and the post-process chain (tone mapping, bloom. SSAO, SSR, SSGI follow)
 #pragma once
 #include "GhostPipeline.h"
 #include "IGhostRHI.h"
 
+constexpr unsigned int GHOST_BLOOM_MAX_MIPS = 6;
+constexpr unsigned int GHOST_POST_SRV_STRIDE = 1 + GHOST_BLOOM_MAX_MIPS;   // per surface: [hdr, bloom mip 0..5]. Same layout in the RTV heap
+
 struct GhostPost
 {
     bool ready = false;
-    ComPtr<ID3D12RootSignature>  rootSig;
-    ComPtr<ID3D12PipelineState>  tonemapPso;                 // HDR -> RGBA8 destination
-    ComPtr<ID3D12DescriptorHeap> rtvHeap, srvHeap;           // one slot per surface
+
+    ComPtr<ID3D12RootSignature>  rootSig;                    // tone map
+    ComPtr<ID3D12PipelineState>  tonemapPso;                 // HDR (+ bloom) -> RGBA8 destination
+    ComPtr<ID3D12RootSignature>  bloomRootSig;
+    ComPtr<ID3D12PipelineState>  bloomPrefilterPso, bloomDownPso, bloomUpPso;
+    ComPtr<ID3D12DescriptorHeap> rtvHeap, srvHeap;
     unsigned int                 rtvInc = 0, srvInc = 0;
 
     ComPtr<ID3D12Resource>       hdr[GHOST_MAX_SURFACES];    // 1x RGBA16F scene color. Rests in PIXEL_SHADER_RESOURCE
     unsigned int                 w[GHOST_MAX_SURFACES] = {}, h[GHOST_MAX_SURFACES] = {};
+
+    ComPtr<ID3D12Resource>       bloom[GHOST_MAX_SURFACES];  // half-res RGBA16F mip chain, every mip rests in PIXEL_SHADER_RESOURCE
+    unsigned int                 bloomW[GHOST_MAX_SURFACES] = {}, bloomH[GHOST_MAX_SURFACES] = {}, bloomLevels[GHOST_MAX_SURFACES] = {};
+    bool                         bloomValid[GHOST_MAX_SURFACES] = {};     // the chain was produced this frame: the tone map adds it
 };
 
 GhostResult GhostPost_Init(IGhostRHI* rhi, GhostPost& t);
@@ -30,6 +40,9 @@ void GhostPost_BeginScene(IGhostRHI* rhi, GhostPipeline* p, GhostPost& t, int id
     D3D12_CPU_DESCRIPTOR_HANDLE dsv, unsigned int w, unsigned int h);
 void GhostPost_EndScene(IGhostRHI* rhi, GhostPipeline* p, GhostPost& t, int id);
 
-// HDR -> destination (backbuffer or offscreen RTV, RGBA8, in RENDER_TARGET state)
+// Bloom: HDR (resting in PIXEL_SHADER_RESOURCE) -> half-res chain. Call before the tone map. Returns true if a chain was produced.
+bool GhostPost_Bloom(IGhostRHI* rhi, GhostPost& t, int id, unsigned int w, unsigned int h, const GhostPostSettings& s);
+
+// HDR (+ bloom) -> destination (backbuffer or offscreen RTV, RGBA8, in RENDER_TARGET state)
 void GhostPost_Tonemap(IGhostRHI* rhi, GhostPost& t, int id, D3D12_CPU_DESCRIPTOR_HANDLE dest,
     unsigned int w, unsigned int h, const GhostPostSettings& s);

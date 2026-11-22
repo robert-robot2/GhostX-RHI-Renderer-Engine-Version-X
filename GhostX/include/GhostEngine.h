@@ -33,6 +33,16 @@ struct GhostLightInfo
     float spinYaw, spinPitch;                 // deg/sec while playing
 };
 
+struct GhostFlickerInfo
+{
+    int   enabled, pattern, smoothSteps, textureId;
+    float speed, minLevel, baseInfluence, brightness;
+    float r, g, b;
+    float texSpeed, texTiling, texAmount;
+    float diffuse, specular, roughness, metallic;
+    float seed;
+};
+
 struct GhostEntityInfo { int id; int kind; int subtype; };   // kind: 0 object, 1 light, 2 camera, 3 mod
 struct GhostMaterialInfo
 {
@@ -138,7 +148,15 @@ typedef void(__cdecl* GhostLoadProgressFn)(const char* utf8Kind, const char* utf
 struct GhostShadowTuning { int filter; float softness, bias, normalBias, distance; };
 
 struct GhostMapInfo { int textureId; float amount; int channel; int invert; };
-struct GhostPostInfo { int toneMode; float exposureEV, whitePoint; };   // toneMode: 0 none, 1 Reinhard, 2 ACES, 3 Neutral
+struct GhostPostInfo
+{
+    int   toneMode;                                   // 0 none, 1 Reinhard, 2 ACES, 3 Neutral
+    float exposureEV, whitePoint;
+    int   bloomEnabled;
+    float bloomThreshold, bloomKnee, bloomIntensity, bloomScatter;
+    int   bloomMips;
+    float bloomTintR, bloomTintG, bloomTintB;
+};
 
 struct GhostSurfaceInfo
 {
@@ -241,6 +259,12 @@ extern "C"
     GHOST_API void GhostEngine_SetObject(const GhostObjectInfo* in);
     GHOST_API int  GhostEngine_GetLight(int id, GhostLightInfo* out);
     GHOST_API void GhostEngine_SetLight(const GhostLightInfo* in);
+
+    GHOST_API int  GhostEngine_GetFlicker(int lightId, int layer, GhostFlickerInfo* out);        // layer 0 or 1
+    GHOST_API void GhostEngine_SetFlicker(int lightId, int layer, const GhostFlickerInfo* in);
+    GHOST_API int  GhostEngine_GetFlickerText(int lightId, int layer, char* buf, int bufSize);   // custom pattern letters
+    GHOST_API void GhostEngine_SetFlickerText(int lightId, int layer, const char* utf8);
+
     GHOST_API void GhostEngine_GetAmbient(float* r, float* g, float* b, float* intensity);
     GHOST_API void GhostEngine_SetAmbient(float r, float g, float b, float intensity);
     // ---- Textures ----

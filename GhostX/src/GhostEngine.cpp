@@ -337,7 +337,8 @@ static void SpawnCoords(int& sx, int& sy)
 static const float ICON_HALF_PX = 18.0f;
 static const float ICON_PICK_PX = ICON_HALF_PX + 4.0f;
 // the last 2 * GHOST_MAX_LIGHTS constant-buffer slots are reserved for light icons + arrows
-static const unsigned int MAX_SCENE_OBJECTS = GHOST_MAX_OBJECTS - 2 * GHOST_MAX_LIGHTS - 2 * GHOST_MAX_CAMERAS - GHOST_MAX_MODS - GHOST_MAX_VOLUMES - 8 - GHOST_PFX_MAX_DRAWS;
+static const unsigned int MAX_SCENE_OBJECTS = GHOST_MAX_OBJECTS - 2 * GHOST_MAX_LIGHTS - 2 * GHOST_MAX_CAMERAS - GHOST_MAX_MODS - GHOST_MAX_VOLUMES - 12 - GHOST_PFX_MAX_DRAWS;
+
 
 
 // Hard cap on objects (shadow casters are limited to the same number)
@@ -531,10 +532,56 @@ int GhostEngine_Init(HWND hwnd, unsigned int width, unsigned int height)
 
     return 0;
 }
-static void BuildSceneCB(const GhostScene& s, GhostSceneCB& out)
+
+// ---- Flicker patterns ----
+static unsigned int FlHash(unsigned int n) { n = (n << 13) ^ n; return n * (n * n * 15731u + 789221u) + 1376312589u; }
+static float FlRand(unsigned int n) { return (float)(FlHash(n) & 0x7fffffffu) / 2147483647.0f; }
+static float FlNoise(float x, unsigned int seed)
+{
+    const float fl = floorf(x);
+    float f = x - fl;
+    f = f * f * (3.0f - 2.0f * f);
+    const unsigned int i = (unsigned int)(int)fl;
+    return FlRand(i * 2654435761u + seed) * (1.0f - f) + FlRand((i + 1u) * 2654435761u + seed) * f;
+}
+static float FlString(const char* s, float step, bool smooth)
+{
+    const int n = (int)strlen(s);
+    if (n <= 0) return 1.0f;
+    auto val = [&](int i) { const char c = s[i]; return (float)(c < 'a' ? 0 : (c > 'z' ? 25 : c - 'a')) / 25.0f; };
+    const int i0 = (((int)floorf(step)) % n + n) % n;
+    const float a = val(i0);
+    if (!smooth) return a;
+    return a + (val((i0 + 1) % n) - a) * (step - floorf(step));
+}
+
+// 0..1 pattern value mapped to [minLevel, 1]
+static float GhostFlicker_Level(const GhostFlickerLayer& f, float t, int lightId)
+{
+    const unsigned int seed = (unsigned int)(lightId * 7919) + (unsigned int)(int)(f.seed * 131.0f);
+    const float x = t * f.speed + f.seed * 0.37f + (float)lightId * 1.618f;     // offset, so identical lights don't flicker in sync
+    float v = 1.0f;
+    switch (f.pattern)
+    {
+    case 0: v = FlRand((unsigned int)(int)floorf(x) * 2654435761u + seed); break;                 // random steps
+    case 1: v = FlNoise(x, seed); break;                                                           // smooth noise
+    case 2: v = 0.5f + 0.5f * sinf(2.0f * GHOST_PI * x); break;                                    // sine pulse
+    case 3:                                                                                        // telephone: ring-ring, short gap, long pause
+        v = FlString("zazazazazaza" "aaaa" "zazazazazaza" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", x, f.smoothSteps); break;
+    case 4: v = FlString("zzzzzazzzzzzzzazazzzzzzzzzzzzzzazaaazzzzzzzzzzzazzzzzz", x, f.smoothSteps); break;   // broken bulb
+    case 5: v = 0.6f * FlNoise(x, seed) + 0.4f * FlNoise(x * 2.7f + 11.0f, seed + 1u); break;     // candle: two octaves
+    default: v = FlString(f.custom.c_str(), x, f.smoothSteps); break;                              // custom letters
+    }
+    v = v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
+    return f.minLevel + (1.0f - f.minLevel) * v;
+}
+
+
+static void BuildSceneCB(const GhostScene& s, GhostSceneCB& out, float timeSec)
 {
     const float d2r = GHOST_PI / 180.0f;
     out = {};
+    out.flickGlobal[0] = timeSec;
 
     float amb = s.ambientIntensity;
     for (const GhostModEntity& m : s.mods)
@@ -553,14 +600,31 @@ static void BuildSceneCB(const GhostScene& s, GhostSceneCB& out)
         GhostVec3 fwd = { cosf(pitch) * sinf(yaw), sinf(pitch), cosf(pitch) * cosf(yaw) };
         GhostVec3 right = { cosf(yaw), 0.0f, -sinf(yaw) };    // yaw only, so it never degenerates when facing straight down
         GhostVec3 up = fwd.Cross(right);
-
+        const unsigned int li = out.lightCount;
+        float inten = l.intensity;
+        if (l.type == GhostLightType::Point)
+            for (int k = 0; k < GHOST_FLICKER_LAYERS; k++)
+            {
+                const GhostFlickerLayer& f = l.flicker[k];
+                if (!f.enabled) continue;
+                const float lv = GhostFlicker_Level(f, timeSec, l.id);
+                inten *= 1.0f + (lv - 1.0f) * f.baseInfluence;                  // dims or pulses the main light
+                const unsigned int e = li * (GHOST_FLICKER_LAYERS * 3) + (unsigned int)k * 3;
+                out.flick[e][0] = f.color[0]; out.flick[e][1] = f.color[1]; out.flick[e][2] = f.color[2];
+                out.flick[e][3] = f.brightness * lv;                             // this layer's own light
+                const bool texOk = f.textureId > 0 && f.textureId < (int)s.textures.size() && f.textureId < (int)GHOST_MAX_TEXTURES;
+                out.flick[e + 1][0] = texOk ? (float)f.textureId : 0.0f;
+                out.flick[e + 1][1] = f.texSpeed; out.flick[e + 1][2] = f.texTiling; out.flick[e + 1][3] = f.texAmount;
+                out.flick[e + 2][0] = f.diffuse; out.flick[e + 2][1] = f.specular;
+                out.flick[e + 2][2] = f.roughness; out.flick[e + 2][3] = f.metallic;
+            }
         GhostGPULight& g = out.lights[out.lightCount++];
         g.posRange[0] = l.position.x; g.posRange[1] = l.position.y; g.posRange[2] = l.position.z;
         g.posRange[3] = l.range;
         g.dirType[0] = fwd.x; g.dirType[1] = fwd.y; g.dirType[2] = fwd.z;
         g.dirType[3] = (float)(int)l.type;
         g.colorIntensity[0] = l.color[0]; g.colorIntensity[1] = l.color[1];
-        g.colorIntensity[2] = l.color[2]; g.colorIntensity[3] = l.intensity;
+        g.colorIntensity[2] = l.color[2]; g.colorIntensity[3] = inten;
         g.rectRight[0] = right.x; g.rectRight[1] = right.y; g.rectRight[2] = right.z;
         g.rectRight[3] = l.width * 0.5f;
         g.rectUp[0] = up.x; g.rectUp[1] = up.y; g.rectUp[2] = up.z;
@@ -2526,7 +2590,7 @@ static void RenderViewport(int vp)
         g_fitX = fx;  g_fitY = fy;  g_fitW = fw;  g_fitH = fh;
     }
 
-    // ---- Begin frame ----
+    
       // ---- Begin frame ----
     D3D12_CPU_DESCRIPTOR_HANDLE dsv = GhostGetDSV(g_pipeline, vp);
     if (custom)
@@ -2545,7 +2609,7 @@ static void RenderViewport(int vp)
     else           GhostPost_BeginScene(g_rhi, g_pipeline, g_post, vp, &clr, dsv, rw, rh);
     GhostSceneCB sceneCB;
     if (preview) BuildPreviewSceneCB(sceneCB);
-    else { BuildSceneCB(g_scene, sceneCB); RenderShadowPass(sceneCB, eye, forward, rw, rh); }
+    else { BuildSceneCB(g_scene, sceneCB, g_timeSec); RenderShadowPass(sceneCB, eye, forward, rw, rh); }
     GhostUpdateSceneCB(g_pipeline, &sceneCB);
 
     // ---- Draw scene objects (one draw per run of faces that share a material) ----
@@ -2554,9 +2618,9 @@ static void RenderViewport(int vp)
     for (const GhostModEntity& m : g_scene.mods)
     {
         if (preview || m.typeId != GHOST_MOD_SKY) continue;
-        GhostSkyDraw draws[6];
+        GhostSkyDraw draws[9];
         const int n = GhostSky_Build(m, g_scene.textures, g_skyScroll[0], g_skyScroll[1],
-            g_cloudScroll[0], g_cloudScroll[1], draws);
+            g_cloudScroll[0], g_cloudScroll[1], g_timeSec, draws);
         for (int i = 0; i < n && slot < MAX_SCENE_OBJECTS; i++)
         {
             GhostObjectCB cb = {};
@@ -2746,7 +2810,8 @@ static void RenderViewport(int vp)
         }
         else
             GhostPost_EndScene(g_rhi, g_pipeline, g_post, vp);
-
+        const GhostPostSettings postCfg = preview ? GhostPostSettings() : g_scene.post;     // the preview window never blooms
+        GhostPost_Bloom(g_rhi, g_post, vp, rw, rh, postCfg);                                // HDR -> bloom chain (only if enabled)
         // ---- Tone map into the destination (offscreen image, or the window back buffer) ----
         D3D12_CPU_DESCRIPTOR_HANDLE destRTV;
         if (custom)
@@ -2755,7 +2820,7 @@ static void RenderViewport(int vp)
             destRTV = GhostGetOffscreenRTV(g_pipeline, vp);
         }
         else destRTV = g_rhi->GetRTV();
-        GhostPost_Tonemap(g_rhi, g_post, vp, destRTV, rw, rh, preview ? GhostPostSettings() : g_scene.post);
+        GhostPost_Tonemap(g_rhi, g_post, vp, destRTV, rw, rh, postCfg);
 
         // Everything below draws display-space colors on the destination: icons, overlays, game UI.
         // Depth-tested overlays use the depth the scene was drawn with (TAA has its own; with MSAA there is none yet).

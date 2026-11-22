@@ -26,6 +26,18 @@ namespace GhostShell
         public int shadowObjects, shadowLandscape;
         public float spinYaw, spinPitch;
     }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GhostFlickerInfo
+    {
+        public int enabled, pattern, smoothSteps, textureId;
+        public float speed, minLevel, baseInfluence, brightness;
+        public float r, g, b;
+        public float texSpeed, texTiling, texAmount;
+        public float diffuse, specular, roughness, metallic;
+        public float seed;
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     internal struct GhostEntityInfo { public int id, kind, subtype; }
     [StructLayout(LayoutKind.Sequential)]
@@ -229,7 +241,15 @@ namespace GhostShell
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = 4)] public int[] tex;
     }
     [StructLayout(LayoutKind.Sequential)]
-    internal struct GhostPostInfo { public int toneMode; public float exposureEV, whitePoint; }
+    internal struct GhostPostInfo
+    {
+        public int toneMode;
+        public float exposureEV, whitePoint;
+        public int bloomEnabled;
+        public float bloomThreshold, bloomKnee, bloomIntensity, bloomScatter;
+        public int bloomMips;
+        public float bloomTintR, bloomTintG, bloomTintB;
+    }
 
     [StructLayout(LayoutKind.Sequential)]
     internal struct GhostParticleParams
@@ -718,6 +738,15 @@ namespace GhostShell
         public static extern void GhostEngine_GetPostSettings(out GhostPostInfo p);
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern void GhostEngine_SetPostSettings(ref GhostPostInfo p);
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetFlicker(int lightId, int layer, ref GhostFlickerInfo info);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetFlicker(int lightId, int layer, ref GhostFlickerInfo info);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetFlickerText(int lightId, int layer, [Out] byte[] buf, int bufSize);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetFlickerText(int lightId, int layer, [MarshalAs(UnmanagedType.LPUTF8Str)] string text);
 
     }
 }

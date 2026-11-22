@@ -3775,14 +3775,77 @@ void GhostEngine_SetVolume(const GhostVolumeInfo* in)
 void GhostEngine_GetPostSettings(GhostPostInfo* out)
 {
     if (!out) return;
-    *out = { g_scene.post.toneMode, g_scene.post.exposureEV, g_scene.post.whitePoint };
+    const GhostPostSettings& p = g_scene.post;
+    *out = { p.toneMode, p.exposureEV, p.whitePoint,
+             p.bloomEnabled, p.bloomThreshold, p.bloomKnee, p.bloomIntensity, p.bloomScatter, p.bloomMips,
+             p.bloomTint[0], p.bloomTint[1], p.bloomTint[2] };
 }
 
 void GhostEngine_SetPostSettings(const GhostPostInfo* in)
 {
     if (!in) return;
-    g_scene.post.toneMode = in->toneMode;
-    g_scene.post.exposureEV = in->exposureEV;
-    g_scene.post.whitePoint = in->whitePoint;
-    GhostPostSettings_Clamp(g_scene.post);
+    GhostPostSettings& p = g_scene.post;
+    p.toneMode = in->toneMode; p.exposureEV = in->exposureEV; p.whitePoint = in->whitePoint;
+    p.bloomEnabled = in->bloomEnabled; p.bloomThreshold = in->bloomThreshold; p.bloomKnee = in->bloomKnee;
+    p.bloomIntensity = in->bloomIntensity; p.bloomScatter = in->bloomScatter; p.bloomMips = in->bloomMips;
+    p.bloomTint[0] = in->bloomTintR; p.bloomTint[1] = in->bloomTintG; p.bloomTint[2] = in->bloomTintB;
+    GhostPostSettings_Clamp(p);
+}
+
+
+// ============================================================
+//  Exported: point light flicker
+// ============================================================
+int GhostEngine_GetFlicker(int lightId, int layer, GhostFlickerInfo* out)
+{
+    GhostLight* l = FindLight(lightId);
+    if (!l || !out || layer < 0 || layer >= GHOST_FLICKER_LAYERS) return 0;
+    const GhostFlickerLayer& f = l->flicker[layer];
+    *out = { f.enabled ? 1 : 0, f.pattern, f.smoothSteps ? 1 : 0, f.textureId,
+             f.speed, f.minLevel, f.baseInfluence, f.brightness,
+             f.color[0], f.color[1], f.color[2],
+             f.texSpeed, f.texTiling, f.texAmount,
+             f.diffuse, f.specular, f.roughness, f.metallic, f.seed };
+    return 1;
+}
+
+void GhostEngine_SetFlicker(int lightId, int layer, const GhostFlickerInfo* in)
+{
+    GhostLight* l = FindLight(lightId);
+    if (!l || !in || layer < 0 || layer >= GHOST_FLICKER_LAYERS) return;
+    GhostFlickerLayer& f = l->flicker[layer];
+    f.enabled = in->enabled != 0;
+    f.pattern = in->pattern;
+    f.smoothSteps = in->smoothSteps != 0;
+    f.textureId = (in->textureId >= 0 && in->textureId < (int)g_scene.textures.size()) ? in->textureId : 0;
+    f.speed = in->speed; f.minLevel = in->minLevel; f.baseInfluence = in->baseInfluence; f.brightness = in->brightness;
+    f.color[0] = in->r; f.color[1] = in->g; f.color[2] = in->b;
+    f.texSpeed = in->texSpeed; f.texTiling = in->texTiling; f.texAmount = in->texAmount;
+    f.diffuse = in->diffuse; f.specular = in->specular; f.roughness = in->roughness; f.metallic = in->metallic;
+    f.seed = in->seed;
+    GhostFlicker_Clamp(f);
+}
+
+int GhostEngine_GetFlickerText(int lightId, int layer, char* buf, int size)
+{
+    if (!buf || size <= 0) return 0;
+    buf[0] = 0;
+    GhostLight* l = FindLight(lightId);
+    if (!l || layer < 0 || layer >= GHOST_FLICKER_LAYERS) return 0;
+    CopyMsg(l->flicker[layer].custom, buf, size);
+    return 1;
+}
+
+void GhostEngine_SetFlickerText(int lightId, int layer, const char* text)
+{
+    GhostLight* l = FindLight(lightId);
+    if (!l || layer < 0 || layer >= GHOST_FLICKER_LAYERS) return;
+    std::string s;
+    for (const char* p = text ? text : ""; *p; p++)
+    {
+        const char c = (char)tolower((unsigned char)*p);
+        if (c >= 'a' && c <= 'z') s.push_back(c);                  // only letters a..z make a pattern
+    }
+    if (s.size() > 63) s.resize(63);
+    l->flicker[layer].custom = s;
 }

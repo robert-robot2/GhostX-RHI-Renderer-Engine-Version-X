@@ -579,7 +579,47 @@ inline int GhostObject_DrawRuns(const GhostObject& o)
     return runs;
 }
 
+constexpr int GHOST_FLICKER_LAYERS = 2;
 
+struct GhostFlickerLayer
+{
+    bool  enabled = false;
+    int   pattern = 0;              // 0 Random, 1 Smooth Noise, 2 Sine, 3 Telephone Ring, 4 Broken Bulb, 5 Candle, 6 Custom
+    std::string custom = "zazzzazzzzaz";   // pattern 6: letters a..z, a = dark, z = bright
+    float speed = 8.0f;             // steps (or cycles) per second
+    float minLevel = 0.2f;          // the dark end of the pattern (0 = fully off)
+    bool  smoothSteps = false;      // blend between pattern steps
+    float baseInfluence = 0.0f;     // how much the pattern also modulates the main light
+    float brightness = 2.0f;        // intensity of this layer's own added light
+    float color[3] = { 1.0f, 0.6f, 0.25f };
+    int   textureId = 0;            // colour / brightness strip, scrolled over time
+    float texSpeed = 0.5f, texTiling = 1.0f, texAmount = 1.0f;
+    float diffuse = 1.0f, specular = 1.0f;   // surface response of this layer's light
+    float roughness = -1.0f;        // -1 = use the material's
+    float metallic = 0.0f;          // pushes the specular toward a metal response
+    float seed = 0.0f;
+};
+
+inline float GhostFl_C(float v, float lo, float hi) { return v != v ? lo : (v < lo ? lo : (v > hi ? hi : v)); }
+inline void GhostFlicker_Clamp(GhostFlickerLayer& f)
+{
+    f.pattern = f.pattern < 0 ? 0 : (f.pattern > 6 ? 6 : f.pattern);
+    f.speed = GhostFl_C(f.speed, 0.05f, 60.0f);
+    f.minLevel = GhostFl_C(f.minLevel, 0.0f, 1.0f);
+    f.baseInfluence = GhostFl_C(f.baseInfluence, 0.0f, 1.0f);
+    f.brightness = GhostFl_C(f.brightness, 0.0f, 50.0f);
+    for (int i = 0; i < 3; i++) f.color[i] = GhostFl_C(f.color[i], 0.0f, 1.0f);
+    f.texSpeed = GhostFl_C(f.texSpeed, -20.0f, 20.0f);
+    f.texTiling = GhostFl_C(f.texTiling, 0.05f, 16.0f);
+    f.texAmount = GhostFl_C(f.texAmount, 0.0f, 1.0f);
+    f.diffuse = GhostFl_C(f.diffuse, 0.0f, 4.0f);
+    f.specular = GhostFl_C(f.specular, 0.0f, 8.0f);
+    f.roughness = (f.roughness != f.roughness || f.roughness < 0.0f) ? -1.0f : GhostFl_C(f.roughness, 0.06f, 1.0f);
+    f.metallic = GhostFl_C(f.metallic, 0.0f, 1.0f);
+    f.seed = GhostFl_C(f.seed, 0.0f, 1000.0f);
+    if (f.textureId < 0) f.textureId = 0;
+    if (f.custom.size() > 63) f.custom.resize(63);
+}
 
 struct GhostLight
 {
@@ -597,6 +637,8 @@ struct GhostLight
     bool           shadowObjects = true;                 // spot: objects cast shadows from this light
     bool           shadowLandscape = true;               // spot: Tile Maps cast shadows from this light
     float          spinYaw = 0.0f, spinPitch = 0.0f;     // deg/sec, applied while playing
+    GhostFlickerLayer flicker[GHOST_FLICKER_LAYERS];     // Point lights
+    GhostLight() { flicker[0].baseInfluence = 1.0f; flicker[0].brightness = 0.0f; }   // layer 1 = flicker the main light
 };
 struct GhostCamera
 {
@@ -687,6 +729,15 @@ struct GhostPostSettings
     int   toneMode = GHOST_TONE_NONE;      // None = the old clamp, so existing scenes look the same until you pick a curve
     float exposureEV = 0.0f;               // stops, -5 .. +5
     float whitePoint = 4.0f;               // Reinhard: the brightness that maps to white
+
+    // ---- Bloom (Phase 3) ----
+    int   bloomEnabled = 0;
+    float bloomThreshold = 1.0f;           // linear brightness (after exposure) where the glow starts
+    float bloomKnee = 0.5f;                // 0 = hard cutoff, 1 = very soft start
+    float bloomIntensity = 0.5f;
+    float bloomScatter = 0.7f;             // 0.1 tight .. 0.95 wide
+    int   bloomMips = 5;                   // blur levels, 2 .. 6 (more = bigger glow)
+    float bloomTint[3] = { 1.0f, 1.0f, 1.0f };
 };
 
 inline void GhostPostSettings_Clamp(GhostPostSettings& p)
@@ -695,6 +746,13 @@ inline void GhostPostSettings_Clamp(GhostPostSettings& p)
     p.toneMode = p.toneMode < 0 ? 0 : (p.toneMode >= GHOST_TONE_COUNT ? GHOST_TONE_COUNT - 1 : p.toneMode);
     p.exposureEV = cf(p.exposureEV, -5.0f, 5.0f);
     p.whitePoint = cf(p.whitePoint, 1.0f, 16.0f);
+    p.bloomEnabled = p.bloomEnabled ? 1 : 0;
+    p.bloomThreshold = cf(p.bloomThreshold, 0.0f, 20.0f);
+    p.bloomKnee = cf(p.bloomKnee, 0.0f, 1.0f);
+    p.bloomIntensity = cf(p.bloomIntensity, 0.0f, 10.0f);
+    p.bloomScatter = cf(p.bloomScatter, 0.1f, 0.95f);
+    p.bloomMips = p.bloomMips < 2 ? 2 : (p.bloomMips > 6 ? 6 : p.bloomMips);       // 6 = GHOST_BLOOM_MAX_MIPS
+    for (int i = 0; i < 3; i++) p.bloomTint[i] = cf(p.bloomTint[i], 0.0f, 1.0f);
 }
 
 struct GhostScene

@@ -65,7 +65,10 @@ struct GhostSceneCB                 // matches cbuffer SceneBuffer (b1)
     float        shadowGlobal[4];   // x strength (0 = off), y map size
     float        shadowTune[4];     // x filter mode, y softness (texels), z depth bias scale, w normal bias scale
     GhostGPULight lights[GHOST_MAX_LIGHTS];
-    float        shadowVP[GHOST_SHADOW_SLICES][16];     // light view-projection per slice
+    float        shadowVP[GHOST_SHADOW_SLICES][16];     // (existing)
+    float        flickGlobal[4];                        // x = time (s)
+    float        flick[GHOST_MAX_LIGHTS * GHOST_FLICKER_LAYERS * 3][4];   // per light, per layer: colour+intensity / texture / surface response
+
 };                               // 32 + 16*80 = 1312 bytes
 
 

@@ -16,6 +16,14 @@ static const GhostParamDesc kSkyParams[] =
     P_FLOAT("Twilight Width",             "Time", 0.25f, 0.02f, 0.8f),
     P_FLOAT("Sun Path Direction (deg)",   "Time", 90.0f, -360.0f, 360.0f),
 
+        P_BOOL("Hide Sun At Times",        "Time", 0.0f),
+    P_FLOAT("Hide Sun From (hour)",    "Time", 12.0f, 0.0f, 24.0f),
+    P_FLOAT("Hide Sun Until (hour)",   "Time", 14.0f, 0.0f, 24.0f),
+    P_BOOL("Hide Moon At Times",       "Time", 0.0f),
+    P_FLOAT("Hide Moon From (hour)",   "Time", 0.0f, 0.0f, 24.0f),
+    P_FLOAT("Hide Moon Until (hour)",  "Time", 2.0f, 0.0f, 24.0f),
+    P_FLOAT("Hide Fade (hours)",       "Time", 0.25f, 0.0f, 6.0f),
+
     P_COLOR("Day Zenith",                 "Sky Gradient", 0.18f, 0.40f, 0.80f),
     P_COLOR("Day Horizon",                "Sky Gradient", 0.62f, 0.78f, 0.95f),
     P_COLOR("Night Zenith",               "Sky Gradient", 0.01f, 0.02f, 0.08f),
@@ -140,6 +148,48 @@ static const GhostParamDesc kSkyParams[] =
         P_FLOAT("Moon Halo Overlap", "Moon Texture", 0.03f, 0.0f, 0.5f),
         P_COLOR("Moon Halo Color", "Moon Texture", 0.8f, 0.9f, 1.0f),
 
+        P_FLOAT("Sun Glare Strength", "Sun Glare", 0.8f, 0.0f, 4.0f),
+        P_FLOAT("Sun Glare Size (deg)", "Sun Glare", 10.0f, 1.0f, 90.0f),
+        P_FLOAT("Sun Glare Overexposure", "Sun Glare", 2.5f, 1.0f, 30.0f),
+        P_FLOAT("Sun Glare Look Boost", "Sun Glare", 0.7f, 0.0f, 1.0f),
+        P_COLOR("Sun Glare Color", "Sun Glare", 1.0f, 0.95f, 0.8f),
+
+        P_FLOAT("Moon Glare Strength", "Moon Glare", 0.4f, 0.0f, 4.0f),
+        P_FLOAT("Moon Glare Size (deg)", "Moon Glare", 6.0f, 1.0f, 90.0f),
+        P_FLOAT("Moon Glare Overexposure", "Moon Glare", 2.0f, 1.0f, 30.0f),
+        P_FLOAT("Moon Glare Look Boost", "Moon Glare", 0.5f, 0.0f, 1.0f),
+        P_COLOR("Moon Glare Color", "Moon Glare", 0.85f, 0.92f, 1.0f),
+
+        P_TEX("Moon Cutoff Texture", "Moon Eclipse"),
+        P_ENUM("Moon Phase Source", "Moon Eclipse", 0.0f, "Manual|Day Of Month (placeholder)"),
+        P_FLOAT("Moon Cutoff Amount", "Moon Eclipse", 0.0f, 0.0f, 1.0f),
+        P_FLOAT("Moon Cutoff Angle (deg)", "Moon Eclipse", 0.0f, -180.0f, 180.0f),
+        P_FLOAT("Moon Cutoff Softness", "Moon Eclipse", 0.03f, 0.0f, 0.5f),
+        P_FLOAT("Moon Day Of Month (placeholder)", "Moon Eclipse", 15.0f, 1.0f, 30.0f),
+
+        P_BOOL("Sun Body Enabled", "Sun Body", 0.0f),
+        P_FLOAT("Sun Body Size (deg)", "Sun Body", 6.0f, 0.5f, 60.0f),
+        P_FLOAT("Sun Body Brightness", "Sun Body", 1.2f, 0.0f, 8.0f),
+        P_FLOAT("Sun Body Edge Softness", "Sun Body", 0.06f, 0.005f, 0.5f),
+        P_FLOAT("Sun Limb Darkening", "Sun Body", 0.35f, 0.0f, 1.0f),
+        P_TEX("Sun Heat Texture", "Sun Body"),
+        P_FLOAT("Sun Heat Texture Strength", "Sun Body", 0.6f, 0.0f, 1.0f),
+        P_FLOAT("Sun Heat Texture Tiling", "Sun Body", 1.5f, 0.1f, 8.0f),
+
+        P_FLOAT("Plasma Turbulence", "Sun Plasma", 0.8f, 0.0f, 2.0f),
+        P_FLOAT("Plasma Speed", "Sun Plasma", 0.15f, 0.0f, 2.0f),
+        P_FLOAT("Plasma Scale", "Sun Plasma", 2.5f, 0.5f, 12.0f),
+
+        P_FLOAT("Volumetric Scattering", "Sun Volume", 0.7f, 0.0f, 2.0f),
+        P_FLOAT("Volume Density", "Sun Volume", 1.5f, 0.1f, 6.0f),
+        P_FLOAT("Refractive Distortion", "Sun Refraction", 0.35f, 0.0f, 1.0f),
+
+        P_FLOAT("Caustics Strength", "Sun Caustics", 0.5f, 0.0f, 2.0f),
+        P_FLOAT("Caustics Scale", "Sun Caustics", 2.0f, 0.5f, 10.0f),
+        P_FLOAT("Caustics Speed", "Sun Caustics", 0.4f, 0.0f, 3.0f),
+
+        P_FLOAT("Subsurface Scattering", "Sun Subsurface", 0.6f, 0.0f, 2.0f),
+        P_COLOR("Subsurface Color", "Sun Subsurface", 1.0f, 0.25f, 0.05f),
 
 };
 static_assert(sizeof(kSkyParams) / sizeof(kSkyParams[0]) == SKY_PARAM_COUNT, "SkyParam enum and kSkyParams are out of sync");
@@ -266,6 +316,17 @@ GhostModEntity* GhostScene_AddMod(GhostScene& s, int typeId)
 static float Sat(float x) { return x < 0.0f ? 0.0f : (x > 1.0f ? 1.0f : x); }
 static float Smooth(float a, float b, float x) { float t = Sat((x - a) / (b - a)); return t * t * (3.0f - 2.0f * t); }
 static float Mix(float a, float b, float t) { return a + (b - a) * t; }
+// 1 = visible, 0 = hidden. A window [start, end) in hours that may wrap past midnight, with a fade at both edges.
+static float HideWindowVis(float t, float start, float end, float fade)
+{
+    const float len = fmodf(end - start + 24.0f, 24.0f);
+    if (len < 0.01f) return 1.0f;                           // start == end: nothing is hidden
+    const float pos = fmodf(t - start + 24.0f, 24.0f);
+    if (pos >= len) return 1.0f;
+    fade = fade < 0.01f ? 0.01f : (fade > len * 0.5f ? len * 0.5f : fade);
+    return 1.0f - fminf(Smooth(0.0f, fade, pos), Smooth(0.0f, fade, len - pos));
+}
+
 
 float GhostSky_GetTime(const GhostModEntity& e)
 {
@@ -339,7 +400,7 @@ float GhostSky_AmbientIntensity(const GhostModEntity& e, float base)
 }
 
 int GhostSky_Build(const GhostModEntity& e, const std::vector<GhostTextureInfo>& textures,
-    float dayScroll, float nightScroll, float cloudU, float cloudV, GhostSkyDraw out[6])
+    float dayScroll, float nightScroll, float cloudU, float cloudV, float timeSec, GhostSkyDraw out[9])
 {
     if (e.values.size() < (size_t)GhostMods_ValueCount(GHOST_MOD_SKY)) return 0;
     auto V = [&](int p) { return e.values[(size_t)GhostMods_ParamOffset(GHOST_MOD_SKY, p)]; };
@@ -383,12 +444,27 @@ int GhostSky_Build(const GhostModEntity& e, const std::vector<GhostTextureInfo>&
     F4(7, moonC[0] * mi, moonC[1] * mi, moonC[2] * mi, V(SKY_GRAD_EXP));
     const float glowSize = V(SKY_SUN_GLOW_SIZE) < 0.005f ? 0.005f : V(SKY_SUN_GLOW_SIZE);
     F4(8, V(SKY_SUN_GLOW), 2.0f / glowSize, V(SKY_SUN_INTENSITY), bright);
-    F4(12, 0.0f, V(SKY_SHOW_GROUND) > 0.5f ? 1.0f : 0.0f, 0.0f, 0.0f);
-    auto texOk = [&](int p) { const int t = (int)floorf(V(p) + 0.5f); return t > 0 && t < (int)textures.size(); };
-    const float sunDiscOn = (texOk(SKY_SUN_TEX) && V(SKY_SUN_TEX_REPLACE) > 0.5f) ? 0.0f : 1.0f;
-    const float moonDiscOn = (texOk(SKY_MOON_TEX) && V(SKY_MOON_TEX_REPLACE) > 0.5f) ? 0.0f : 1.0f;
+    const float sunVis  = V(SKY_HIDE_SUN)  > 0.5f ? HideWindowVis(t, V(SKY_HIDE_SUN_START),  V(SKY_HIDE_SUN_END),  V(SKY_HIDE_FADE)) : 1.0f;
+    const float moonVis = V(SKY_HIDE_MOON) > 0.5f ? HideWindowVis(t, V(SKY_HIDE_MOON_START), V(SKY_HIDE_MOON_END), V(SKY_HIDE_FADE)) : 1.0f;
+    F4(12, 0.0f, V(SKY_SHOW_GROUND) > 0.5f ? 1.0f : 0.0f, sunVis, moonVis);
+
+    auto texId = [&](int p) { const int x = (int)floorf(V(p) + 0.5f); return (x > 0 && x < (int)textures.size()) ? x : 0; };
+    const bool  bodyOn = V(SKY_BODY_ON) > 0.5f;
+    const float sunDiscOn  = (bodyOn || (texId(SKY_SUN_TEX) > 0 && V(SKY_SUN_TEX_REPLACE) > 0.5f)) ? 0.0f : 1.0f;
+    const float moonDiscOn = (texId(SKY_MOON_TEX) > 0 && V(SKY_MOON_TEX_REPLACE) > 0.5f) ? 0.0f : 1.0f;
     const float moonGlowSize = V(SKY_MOON_GLOW_SIZE) < 0.005f ? 0.005f : V(SKY_MOON_GLOW_SIZE);
     F4(14, V(SKY_MOON_GLOW), 2.0f / moonGlowSize, sunDiscOn, moonDiscOn);
+
+    // moon cutoff: manual, or the Day Of Month placeholder (a simple phase until the calendar exists)
+    float cutAmount = V(SKY_MOON_CUT_AMOUNT), cutAngle = V(SKY_MOON_CUT_ANGLE) * d2r;
+    if (V(SKY_MOON_PHASE_SRC) > 0.5f)
+    {
+        const float phase = fmodf(V(SKY_MOON_DAY) - 1.0f, 29.53f) / 29.53f;     // 0 new, 0.5 full
+        cutAmount = 0.5f + 0.5f * cosf(2.0f * GHOST_PI * phase);                 // 1 new, 0 full
+        cutAngle = (phase < 0.5f) ? GHOST_PI : 0.0f;                             // waxing: dark side on the left
+    }
+    const float cover = Sat(cutAmount);
+
     int n = 0;
     memcpy(out[n].sky, common, sizeof common);                     // pass 0 (common[12].x is already 0)
     out[n].textureId = 0;
@@ -425,28 +501,48 @@ int GhostSky_Build(const GhostModEntity& e, const std::vector<GhostTextureInfo>&
             n++;
         };
     auto sprite = [&](int kind, int texP, int sizeP, int brP, int rotP, int blkP,
-        int opP, int haloP, int hsP, int hoP, int hcP, const GhostVec3& dir, float weight)
+        int opP, int haloP, int hsP, int hoP, int hcP, const GhostVec3& dir, float weight) -> GhostSkyDraw*
         {
-            const int tex = (int)floorf(V(texP) + 0.5f);
-            if (tex <= 0 || tex >= (int)textures.size() || weight <= 0.002f) return;
+            const int tex = texId(texP);
+            if (tex <= 0 || weight <= 0.002f) return nullptr;
             GhostSkyDraw& d = out[n];
             memcpy(d.sky, common, sizeof common);
             float* L = d.sky;
             const float br = V(brP) * bright;
             const float w = weight > 1.0f ? 1.0f : weight;
             L[9 * 4 + 0] = br; L[9 * 4 + 1] = br; L[9 * 4 + 2] = br;
-            L[9 * 4 + 3] = Sat(w * V(opP));                           // texture opacity
+            L[9 * 4 + 3] = Sat(w * V(opP));
             L[10 * 4 + 1] = V(rotP) * d2r;
             L[10 * 4 + 3] = V(blkP) > 0.5f ? 1.0f : 0.0f;
-            L[11 * 4 + 0] = V(haloP);                                 // halo strength
-            L[11 * 4 + 1] = V(hsP);                                   // halo thickness
-            L[11 * 4 + 2] = V(hoP);                                   // halo overlap (inward)
-            L[11 * 4 + 3] = w;                                        // visibility, independent of the texture opacity
-            L[12 * 4 + 0] = (float)kind;                              // 2 sun sprite, 3 moon sprite
+            L[11 * 4 + 0] = V(haloP);
+            L[11 * 4 + 1] = V(hsP);
+            L[11 * 4 + 2] = V(hoP);
+            L[11 * 4 + 3] = w;
+            L[12 * 4 + 0] = (float)kind;
             L[13 * 4 + 0] = dir.x; L[13 * 4 + 1] = dir.y; L[13 * 4 + 2] = dir.z;
-            L[13 * 4 + 3] = V(sizeP) * 0.5f * d2r;                    // half size in radians
-            C(hcP, L + 15 * 4);                                       // halo color
+            L[13 * 4 + 3] = V(sizeP) * 0.5f * d2r;
+            L[14 * 4 + 0] = 99.0f; L[14 * 4 + 1] = 0.0f; L[14 * 4 + 2] = 0.03f; L[14 * 4 + 3] = 0.0f;   // no eclipse unless the caller sets one
+            C(hcP, L + 15 * 4);
             d.textureId = tex;
+            n++;
+            return &d;
+        };
+
+    auto glare = [&](int kind, int strP, int sizeP, int overP, int lookP, int colP, const GhostVec3& dir, float weight)
+        {
+            const float str = V(strP) * weight;
+            if (str <= 0.002f || n >= 9) return;
+            GhostSkyDraw& d = out[n];
+            memcpy(d.sky, common, sizeof common);
+            float* L = d.sky;
+            C(colP, L + 9 * 4);
+            L[9 * 4 + 3] = str;
+            L[10 * 4 + 0] = V(sizeP) * d2r;               // glare radius
+            L[10 * 4 + 1] = V(overP);                     // overexposure
+            L[10 * 4 + 2] = V(lookP);                     // look boost
+            L[12 * 4 + 0] = (float)kind;                  // 6 sun glare, 7 moon glare
+            L[13 * 4 + 0] = dir.x; L[13 * 4 + 1] = dir.y; L[13 * 4 + 2] = dir.z; L[13 * 4 + 3] = 0.0f;
+            d.textureId = 0;
             n++;
         };
 
@@ -459,22 +555,65 @@ int GhostSky_Build(const GhostModEntity& e, const std::vector<GhostTextureInfo>&
     layer(SKY_NIGHT_TEX, SKY_NIGHT_LAYOUT, SKY_NIGHT_OPACITY, SKY_NIGHT_BRIGHT, SKY_NIGHT_TINT, SKY_NIGHT_YAW, nightScroll,
         SKY_NIGHT_BLACK, SKY_NIGHT_CUTOFF, SKY_NIGHT_SOFT, SKY_NIGHT_FLIP, nightW, one);
 
+    const float sunW = Smooth(-0.2f, 0.05f, elev) * sunVis;
+    const float moonW = Smooth(0.2f, -0.05f, elev) * moonVis;
+
     sprite(2, SKY_SUN_TEX, SKY_SUN_TEX_SIZE, SKY_SUN_TEX_BRIGHT, SKY_SUN_TEX_ROT, SKY_SUN_TEX_BLACK,
-        SKY_SUN_TEX_OPACITY, SKY_SUN_HALO, SKY_SUN_HALO_SIZE, SKY_SUN_HALO_OVERLAP, SKY_SUN_HALO_COLOR,
-        sunDir, Smooth(-0.2f, 0.05f, elev));
-    sprite(3, SKY_MOON_TEX, SKY_MOON_TEX_SIZE, SKY_MOON_TEX_BRIGHT, SKY_MOON_TEX_ROT, SKY_MOON_TEX_BLACK,
-        SKY_MOON_TEX_OPACITY, SKY_MOON_HALO, SKY_MOON_HALO_SIZE, SKY_MOON_HALO_OVERLAP, SKY_MOON_HALO_COLOR,
-        moonDir, Smooth(0.2f, -0.05f, elev));
+        SKY_SUN_TEX_OPACITY, SKY_SUN_HALO, SKY_SUN_HALO_SIZE, SKY_SUN_HALO_OVERLAP, SKY_SUN_HALO_COLOR, sunDir, sunW);
+
+    if (bodyOn && sunW > 0.002f)                                  // sun body: plasma, volume, refraction, caustics, subsurface
+    {
+        GhostSkyDraw& d = out[n];
+        memcpy(d.sky, common, sizeof common);
+        float* L = d.sky;
+        const float br = V(SKY_BODY_BRIGHT) * bright;
+        L[9 * 4 + 0] = sunC[0] * br; L[9 * 4 + 1] = sunC[1] * br; L[9 * 4 + 2] = sunC[2] * br;
+        L[9 * 4 + 3] = sunW > 1.0f ? 1.0f : sunW;
+        L[10 * 4 + 0] = timeSec;
+        L[10 * 4 + 1] = V(SKY_PLASMA_SPEED);
+        L[10 * 4 + 2] = V(SKY_PLASMA);
+        L[10 * 4 + 3] = (float)texId(SKY_HEAT_TEX);
+        L[11 * 4 + 0] = V(SKY_SCATTER);
+        L[11 * 4 + 1] = V(SKY_SCATTER_DENSITY);
+        L[11 * 4 + 2] = V(SKY_REFRACT);
+        L[11 * 4 + 3] = V(SKY_CAUSTIC);
+        L[12 * 4 + 0] = 5.0f;
+        L[13 * 4 + 0] = sunDir.x; L[13 * 4 + 1] = sunDir.y; L[13 * 4 + 2] = sunDir.z;
+        L[13 * 4 + 3] = V(SKY_BODY_SIZE) * 0.5f * d2r;
+        L[14 * 4 + 0] = V(SKY_PLASMA_SCALE);
+        L[14 * 4 + 1] = V(SKY_CAUSTIC_SCALE);
+        L[14 * 4 + 2] = V(SKY_CAUSTIC_SPEED);
+        L[14 * 4 + 3] = V(SKY_HEAT_STRENGTH);
+        L[15 * 4 + 0] = V(SKY_HEAT_TILING);
+        L[15 * 4 + 1] = V(SKY_SSS);
+        L[15 * 4 + 2] = V(SKY_BODY_EDGE);
+        L[15 * 4 + 3] = V(SKY_BODY_LIMB);
+        C(SKY_SSS_COLOR, L + 8 * 4);
+        d.textureId = 0;
+        n++;
+    }
+
+    GhostSkyDraw* moonD = sprite(3, SKY_MOON_TEX, SKY_MOON_TEX_SIZE, SKY_MOON_TEX_BRIGHT, SKY_MOON_TEX_ROT, SKY_MOON_TEX_BLACK,
+        SKY_MOON_TEX_OPACITY, SKY_MOON_HALO, SKY_MOON_HALO_SIZE, SKY_MOON_HALO_OVERLAP, SKY_MOON_HALO_COLOR, moonDir, moonW);
+    if (moonD)                                                    // eclipse / phase cutoff
+    {
+        float* L = moonD->sky;
+        const float soft = V(SKY_MOON_CUT_SOFT);
+        L[14 * 4 + 0] = cutAmount <= 0.001f ? 99.0f : (1.0f - cover) * (2.0f + 2.0f * soft);   // occluder distance from the moon's centre
+        L[14 * 4 + 1] = cutAngle;
+        L[14 * 4 + 2] = soft;
+        L[14 * 4 + 3] = (float)texId(SKY_MOON_CUT_TEX);
+    }
 
     layer(SKY_DAY_TEX, SKY_DAY_LAYOUT, SKY_DAY_OPACITY, SKY_DAY_BRIGHT, SKY_DAY_TINT, SKY_DAY_YAW, dayScroll,
         SKY_DAY_BLACK, SKY_DAY_CUTOFF, SKY_DAY_SOFT, SKY_DAY_FLIP, dayAmt, cloudTint);
 
-    // ---- clouds: drawn last, so they cover the stars, sun and moon ----
+    // ---- clouds (unchanged) ----
     const int ctex = (int)floorf(V(SKY_CLOUD_TEX) + 0.5f);
     if (ctex > 0 && ctex < (int)textures.size())
     {
-        const bool  nightBlend = V(SKY_CLOUD_NIGHT_BLEND) > 0.5f;     // on: stay visible at night (dimmed) and cover the stars
-        const float cw = nightBlend ? 1.0f : dayAmt;                  // off: fade out with the day
+        const bool  nightBlend = V(SKY_CLOUD_NIGHT_BLEND) > 0.5f;
+        const float cw = nightBlend ? 1.0f : dayAmt;
         const float dim = nightBlend ? Mix(V(SKY_CLOUD_NIGHT_BRIGHT), 1.0f, dayAmt) : 1.0f;
         const float op = V(SKY_CLOUD_OPACITY) * cw;
         if (op > 0.002f)
@@ -497,10 +636,14 @@ int GhostSky_Build(const GhostModEntity& e, const std::vector<GhostTextureInfo>&
             L[11 * 4 + 1] = V(SKY_CLOUD_HORIZON);
             L[11 * 4 + 2] = V(SKY_CLOUD_VARIATION);
             L[11 * 4 + 3] = V(SKY_CLOUD_VAR_FREQ);
-            L[12 * 4 + 0] = 4.0f;                                      // cloud pass
+            L[12 * 4 + 0] = 4.0f;
             d.textureId = ctex;
             n++;
         }
     }
+
+    // ---- glares last, over everything (like bloom). An eclipsed moon glares less ----
+    glare(6, SKY_SUN_GLARE, SKY_SUN_GLARE_SIZE, SKY_SUN_GLARE_OVEREXP, SKY_SUN_GLARE_LOOK, SKY_SUN_GLARE_COLOR, sunDir, sunW);
+    glare(7, SKY_MOON_GLARE, SKY_MOON_GLARE_SIZE, SKY_MOON_GLARE_OVEREXP, SKY_MOON_GLARE_LOOK, SKY_MOON_GLARE_COLOR, moonDir, moonW * (1.0f - 0.8f * cover));
     return n;
 }

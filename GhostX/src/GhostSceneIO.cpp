@@ -174,6 +174,41 @@ static GhostMaterial MatFromJson(const json& j, const std::function<int(int)>& m
     return m;
 }
 
+static json FlickerToJson(const GhostFlickerLayer& f, const std::set<int>& savedTex)
+{
+    const int tex = (f.textureId < GHOST_FIRST_USER_TEXTURE || savedTex.count(f.textureId)) ? f.textureId : 0;
+    return json{ { "enabled", f.enabled },{ "pattern", f.pattern },{ "custom", f.custom },{ "speed", f.speed },
+                 { "minLevel", f.minLevel },{ "smooth", f.smoothSteps },{ "baseInfluence", f.baseInfluence },
+                 { "brightness", f.brightness },{ "color", F3(f.color) },{ "texture", tex },
+                 { "texSpeed", f.texSpeed },{ "texTiling", f.texTiling },{ "texAmount", f.texAmount },
+                 { "diffuse", f.diffuse },{ "specular", f.specular },{ "roughness", f.roughness },
+                 { "metallic", f.metallic },{ "seed", f.seed } };
+}
+
+static void FlickerFromJson(const json& j, GhostFlickerLayer& f, const std::function<int(int)>& mapTex)
+{
+    f.enabled = j.value("enabled", f.enabled);
+    f.pattern = j.value("pattern", f.pattern);
+    f.custom = j.value("custom", f.custom);
+    f.speed = j.value("speed", f.speed);
+    f.minLevel = j.value("minLevel", f.minLevel);
+    f.smoothSteps = j.value("smooth", f.smoothSteps);
+    f.baseInfluence = j.value("baseInfluence", f.baseInfluence);
+    f.brightness = j.value("brightness", f.brightness);
+    ReadF(j, "color", f.color, 3);
+    f.textureId = mapTex(j.value("texture", 0));
+    f.texSpeed = j.value("texSpeed", f.texSpeed);
+    f.texTiling = j.value("texTiling", f.texTiling);
+    f.texAmount = j.value("texAmount", f.texAmount);
+    f.diffuse = j.value("diffuse", f.diffuse);
+    f.specular = j.value("specular", f.specular);
+    f.roughness = j.value("roughness", f.roughness);
+    f.metallic = j.value("metallic", f.metallic);
+    f.seed = j.value("seed", f.seed);
+    GhostFlicker_Clamp(f);
+}
+
+
 // ---------------- Tile Map data: run-length + base64 ----------------
 static std::string B64Enc(const unsigned char* d, size_t n)
 {
@@ -262,7 +297,10 @@ bool GhostScene_Save(const GhostScene& s, const std::string& root, const std::st
             { "filter", s.shadowFilter },{ "softness", s.shadowSoftness },{ "bias", s.shadowBias },
             { "normalBias", s.shadowNormalBias },{ "distance", s.shadowDistance } };
         j["audio"] = json{ { "music", s.music },{ "ambience", s.ambience } };
-        j["post"] = json{ { "toneMode", s.post.toneMode },{ "exposure", s.post.exposureEV },{ "whitePoint", s.post.whitePoint } };
+        j["post"] = json{ { "toneMode", s.post.toneMode },{ "exposure", s.post.exposureEV },{ "whitePoint", s.post.whitePoint },
+         { "bloom", json{ { "enabled", s.post.bloomEnabled },{ "threshold", s.post.bloomThreshold },{ "knee", s.post.bloomKnee },
+                          { "intensity", s.post.bloomIntensity },{ "scatter", s.post.bloomScatter },{ "mips", s.post.bloomMips },
+                          { "tint", F3(s.post.bloomTint) } } } };
         std::set<int> saved;
         json texs = json::array();
         for (const GhostTextureInfo& t : s.textures)
@@ -422,6 +460,9 @@ bool GhostScene_Save(const GhostScene& s, const std::string& root, const std::st
             jl["shadowLandscape"] = l.shadowLandscape;
             jl["spinYaw"] = l.spinYaw;
             jl["spinPitch"] = l.spinPitch;
+            json fl = json::array();
+            for (int k = 0; k < GHOST_FLICKER_LAYERS; k++) fl.push_back(FlickerToJson(l.flicker[k], saved));
+            jl["flicker"] = fl;
             lights.push_back(jl);
         }
         j["lights"] = lights;
@@ -657,6 +698,17 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
             s.post.toneMode = jp.value("toneMode", 0);
             s.post.exposureEV = jp.value("exposure", 0.0f);
             s.post.whitePoint = jp.value("whitePoint", 4.0f);
+            if (jp.contains("bloom") && jp["bloom"].is_object())
+            {
+                const json& jb = jp["bloom"];
+                s.post.bloomEnabled = jb.value("enabled", 0);
+                s.post.bloomThreshold = jb.value("threshold", 1.0f);
+                s.post.bloomKnee = jb.value("knee", 0.5f);
+                s.post.bloomIntensity = jb.value("intensity", 0.5f);
+                s.post.bloomScatter = jb.value("scatter", 0.7f);
+                s.post.bloomMips = jb.value("mips", 5);
+                ReadF(jb, "tint", s.post.bloomTint, 3);
+            }
             GhostPostSettings_Clamp(s.post);
         }
         if (j.contains("objects") && j["objects"].is_array())
@@ -869,6 +921,9 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
                 l.shadowLandscape = jl.value("shadowLandscape", true);
                 l.spinYaw = jl.value("spinYaw", 0.0f);
                 l.spinPitch = jl.value("spinPitch", 0.0f);
+                if (jl.contains("flicker") && jl["flicker"].is_array())
+                    for (int k = 0; k < GHOST_FLICKER_LAYERS && k < (int)jl["flicker"].size(); k++)
+                        if (jl["flicker"][k].is_object()) FlickerFromJson(jl["flicker"][k], l.flicker[k], mapTex);
                 s.lights.push_back(l);
             }
 
@@ -1065,6 +1120,9 @@ unsigned int GhostScene_Hash(const GhostScene& s)
     S(s.music); S(s.ambience);
     F(s.ambientColor[0]); F(s.ambientColor[1]); F(s.ambientColor[2]); F(s.ambientIntensity);
     I(s.post.toneMode); F(s.post.exposureEV); F(s.post.whitePoint);
+    I(s.post.bloomEnabled); F(s.post.bloomThreshold); F(s.post.bloomKnee); F(s.post.bloomIntensity);
+    F(s.post.bloomScatter); I(s.post.bloomMips); F(s.post.bloomTint[0]); F(s.post.bloomTint[1]); F(s.post.bloomTint[2]);
+
     for (const GhostObject& o : s.objects)
     {
         I(o.id); I(o.meshId); S(o.name);
@@ -1102,6 +1160,14 @@ unsigned int GhostScene_Hash(const GhostScene& s)
         F(l.intensity); F(l.range); F(l.width); F(l.height);
         I(l.castShadows ? 1 : 0);
         F(l.innerDeg); F(l.outerDeg); I(l.shadowObjects ? 1 : 0); I(l.shadowLandscape ? 1 : 0); F(l.spinYaw); F(l.spinPitch);
+        for (int k = 0; k < GHOST_FLICKER_LAYERS; k++)
+        {
+            const GhostFlickerLayer& f = l.flicker[k];
+            I(f.enabled ? 1 : 0); I(f.pattern); S(f.custom); F(f.speed); F(f.minLevel); I(f.smoothSteps ? 1 : 0);
+            F(f.baseInfluence); F(f.brightness); F(f.color[0]); F(f.color[1]); F(f.color[2]);
+            I(f.textureId); F(f.texSpeed); F(f.texTiling); F(f.texAmount);
+            F(f.diffuse); F(f.specular); F(f.roughness); F(f.metallic); F(f.seed);
+        }
     }
     for (const GhostCamera& c : s.cameras)
     {

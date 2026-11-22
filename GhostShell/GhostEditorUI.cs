@@ -1365,6 +1365,99 @@ namespace GhostShell
 
     }
 
+    internal class FlickerPatternConverter : FixedListConverter
+    {
+        public static readonly string[] Names =
+            { "Random", "Smooth Noise", "Sine Pulse", "Telephone Ring (double burst)", "Broken Bulb", "Candle", "Custom String" };
+        protected override string[] Items => Names;
+    }
+
+    // One flicker layer of a Point light
+    [TypeConverter(typeof(ExpandableObjectConverter))]
+    internal sealed class FlickerEdit
+    {
+        private readonly int _id, _layer;
+        private delegate void FlChange(ref GhostFlickerInfo f);
+        public FlickerEdit(int id, int layer) { _id = id; _layer = layer; }
+
+        private GhostFlickerInfo Read() { var f = new GhostFlickerInfo(); GhostEngine.GhostEngine_GetFlicker(_id, _layer, ref f); return f; }
+        private void Change(FlChange c) { var f = Read(); c(ref f); GhostEngine.GhostEngine_SetFlicker(_id, _layer, ref f); }
+
+        [DisplayName("Enabled")]
+        public bool Enabled { get => Read().enabled != 0; set => Change((ref GhostFlickerInfo f) => f.enabled = value ? 1 : 0); }
+
+        [DisplayName("Pattern"), TypeConverter(typeof(FlickerPatternConverter))]
+        public string Pattern
+        {
+            get => FlickerPatternConverter.Names[Math.Clamp(Read().pattern, 0, FlickerPatternConverter.Names.Length - 1)];
+            set { int i = Array.IndexOf(FlickerPatternConverter.Names, value); if (i >= 0) Change((ref GhostFlickerInfo f) => f.pattern = i); }
+        }
+
+        [DisplayName("Custom Pattern (letters a-z: a dark, z bright)")]
+        public string CustomPattern
+        {
+            get
+            {
+                var b = new byte[64];
+                GhostEngine.GhostEngine_GetFlickerText(_id, _layer, b, b.Length);
+                int n = Array.IndexOf(b, (byte)0);
+                return Encoding.UTF8.GetString(b, 0, n < 0 ? b.Length : n);
+            }
+            set => GhostEngine.GhostEngine_SetFlickerText(_id, _layer, value ?? "");
+        }
+
+        [DisplayName("Speed (steps or cycles / sec)")]
+        public float Speed { get => Read().speed; set => Change((ref GhostFlickerInfo f) => f.speed = value); }
+        [DisplayName("Dark Level (0 = fully off)")]
+        public float MinLevel { get => Read().minLevel; set => Change((ref GhostFlickerInfo f) => f.minLevel = value); }
+        [DisplayName("Smooth Steps")]
+        public bool SmoothSteps { get => Read().smoothSteps != 0; set => Change((ref GhostFlickerInfo f) => f.smoothSteps = value ? 1 : 0); }
+        [DisplayName("Seed")]
+        public float Seed { get => Read().seed; set => Change((ref GhostFlickerInfo f) => f.seed = value); }
+
+        [DisplayName("Flicker Brightness (added light)")]
+        public float Brightness { get => Read().brightness; set => Change((ref GhostFlickerInfo f) => f.brightness = value); }
+        [DisplayName("Affect Main Light (0-1)")]
+        public float BaseInfluence { get => Read().baseInfluence; set => Change((ref GhostFlickerInfo f) => f.baseInfluence = value); }
+
+        [DisplayName("Flicker Color")]
+        public Color FlickerColor
+        {
+            get { var f = Read(); return GhostColorUtil.ToColor(f.r, f.g, f.b); }
+            set => Change((ref GhostFlickerInfo f) => { f.r = value.R / 255f; f.g = value.G / 255f; f.b = value.B / 255f; });
+        }
+
+        [DisplayName("Flicker Texture"), TypeConverter(typeof(TextureChoiceConverter))]
+        public string Texture
+        {
+            get => GhostTextures.DisplayName(Read().textureId);
+            set
+            {
+                int tex = (value == GhostTextures.ImportLabel) ? GhostTextures.ImportFromDisk() : GhostTextures.IdFromDisplay(value);
+                if (tex < 0) return;
+                Change((ref GhostFlickerInfo f) => f.textureId = tex);
+            }
+        }
+        [DisplayName("Texture Scroll Speed")]
+        public float TexSpeed { get => Read().texSpeed; set => Change((ref GhostFlickerInfo f) => f.texSpeed = value); }
+        [DisplayName("Texture Tiling")]
+        public float TexTiling { get => Read().texTiling; set => Change((ref GhostFlickerInfo f) => f.texTiling = value); }
+        [DisplayName("Texture Amount (0-1)")]
+        public float TexAmount { get => Read().texAmount; set => Change((ref GhostFlickerInfo f) => f.texAmount = value); }
+
+        [DisplayName("PBR Diffuse Response")]
+        public float Diffuse { get => Read().diffuse; set => Change((ref GhostFlickerInfo f) => f.diffuse = value); }
+        [DisplayName("PBR Specular Response")]
+        public float Specular { get => Read().specular; set => Change((ref GhostFlickerInfo f) => f.specular = value); }
+        [DisplayName("PBR Roughness (-1 = material)")]
+        public float Roughness { get => Read().roughness; set => Change((ref GhostFlickerInfo f) => f.roughness = value); }
+        [DisplayName("PBR Metallic Boost (0-1)")]
+        public float Metallic { get => Read().metallic; set => Change((ref GhostFlickerInfo f) => f.metallic = value); }
+
+        public override string ToString() { var f = Read(); return f.enabled == 0 ? "Off" : "On  -  " + FlickerPatternConverter.Names[Math.Clamp(f.pattern, 0, 6)]; }
+    }
+
+
     internal abstract class LightProxy
     {
         protected readonly int Id;
@@ -1421,10 +1514,20 @@ namespace GhostShell
 
     internal class PointLightProxy : LightProxy
     {
-        public PointLightProxy(int id) : base(id) { }
+        public PointLightProxy(int id) : base(id)
+        {
+            Flicker1 = new FlickerEdit(id, 0);
+            Flicker2 = new FlickerEdit(id, 1);
+        }
 
         [Category("Light")]
         public float Range { get => Get().range; set { var i = Get(); i.range = value; Set(i); } }
+
+        [Category("Flicker"), DisplayName("Flicker Layer 1 (modulates main light)")]
+        public FlickerEdit Flicker1 { get; }
+
+        [Category("Flicker"), DisplayName("Flicker Layer 2 (extra light layer)")]
+        public FlickerEdit Flicker2 { get; }
     }
 
     // Rect light = facing (yaw/pitch) + range + size
@@ -1615,6 +1718,31 @@ namespace GhostShell
 
         [Category("Post Processing"), DisplayName("White Point (Reinhard, 1-16)")]
         public float WhitePoint { get => GetPost().whitePoint; set { var p = GetPost(); p.whitePoint = value; SetPost(p); } }
+
+        [Category("Bloom"), DisplayName("Bloom Enabled")]
+        public bool BloomEnabled { get => GetPost().bloomEnabled != 0; set { var p = GetPost(); p.bloomEnabled = value ? 1 : 0; SetPost(p); } }
+
+        [Category("Bloom"), DisplayName("Threshold (linear, after exposure)")]
+        public float BloomThreshold { get => GetPost().bloomThreshold; set { var p = GetPost(); p.bloomThreshold = value; SetPost(p); } }
+
+        [Category("Bloom"), DisplayName("Soft Knee (0-1)")]
+        public float BloomKnee { get => GetPost().bloomKnee; set { var p = GetPost(); p.bloomKnee = value; SetPost(p); } }
+
+        [Category("Bloom"), DisplayName("Intensity (0-10)")]
+        public float BloomIntensity { get => GetPost().bloomIntensity; set { var p = GetPost(); p.bloomIntensity = value; SetPost(p); } }
+
+        [Category("Bloom"), DisplayName("Scatter (0.1 tight - 0.95 wide)")]
+        public float BloomScatter { get => GetPost().bloomScatter; set { var p = GetPost(); p.bloomScatter = value; SetPost(p); } }
+
+        [Category("Bloom"), DisplayName("Size (blur levels, 2-6)")]
+        public int BloomMips { get => GetPost().bloomMips; set { var p = GetPost(); p.bloomMips = value; SetPost(p); } }
+
+        [Category("Bloom"), DisplayName("Tint")]
+        public Color BloomTint
+        {
+            get { var p = GetPost(); return GhostColorUtil.ToColor(p.bloomTintR, p.bloomTintG, p.bloomTintB); }
+            set { var p = GetPost(); p.bloomTintR = value.R / 255f; p.bloomTintG = value.G / 255f; p.bloomTintB = value.B / 255f; SetPost(p); }
+        }
 
 
         [Category("Audio"), DisplayName("Scene Music (plays during Play)")]

@@ -10,6 +10,8 @@ enum SkyParam
 {
     SKY_ENABLED = 0,
     SKY_TIME, SKY_SPEED, SKY_TWILIGHT, SKY_SUN_YAW,
+    SKY_HIDE_SUN, SKY_HIDE_SUN_START, SKY_HIDE_SUN_END,
+    SKY_HIDE_MOON, SKY_HIDE_MOON_START, SKY_HIDE_MOON_END, SKY_HIDE_FADE,
     SKY_DAY_ZENITH, SKY_DAY_HORIZON, SKY_NIGHT_ZENITH, SKY_NIGHT_HORIZON,
     SKY_HORIZON_HEIGHT, SKY_HORIZON_WIDTH, SKY_GRAD_EXP, SKY_GROUND, SKY_GROUND_BLEND, SKY_DUSK, SKY_DUSK_STRENGTH,
     SKY_SUN_COLOR, SKY_SUN_SIZE, SKY_SUN_INTENSITY, SKY_SUN_GLOW, SKY_SUN_GLOW_SIZE,
@@ -33,6 +35,15 @@ enum SkyParam
     SKY_CLOUD_VARIATION, SKY_CLOUD_VAR_FREQ, SKY_CLOUD_NIGHT_BLEND, SKY_CLOUD_NIGHT_BRIGHT,
     SKY_SUN_TEX_OPACITY, SKY_SUN_HALO, SKY_SUN_HALO_SIZE, SKY_SUN_HALO_OVERLAP, SKY_SUN_HALO_COLOR,
     SKY_MOON_TEX_OPACITY, SKY_MOON_HALO, SKY_MOON_HALO_SIZE, SKY_MOON_HALO_OVERLAP, SKY_MOON_HALO_COLOR,
+    SKY_SUN_GLARE, SKY_SUN_GLARE_SIZE, SKY_SUN_GLARE_OVEREXP, SKY_SUN_GLARE_LOOK, SKY_SUN_GLARE_COLOR,
+    SKY_MOON_GLARE, SKY_MOON_GLARE_SIZE, SKY_MOON_GLARE_OVEREXP, SKY_MOON_GLARE_LOOK, SKY_MOON_GLARE_COLOR,
+    SKY_MOON_CUT_TEX, SKY_MOON_PHASE_SRC, SKY_MOON_CUT_AMOUNT, SKY_MOON_CUT_ANGLE, SKY_MOON_CUT_SOFT, SKY_MOON_DAY,
+    SKY_BODY_ON, SKY_BODY_SIZE, SKY_BODY_BRIGHT, SKY_BODY_EDGE, SKY_BODY_LIMB,
+    SKY_HEAT_TEX, SKY_HEAT_STRENGTH, SKY_HEAT_TILING,
+    SKY_PLASMA, SKY_PLASMA_SPEED, SKY_PLASMA_SCALE,
+    SKY_SCATTER, SKY_SCATTER_DENSITY, SKY_REFRACT,
+    SKY_CAUSTIC, SKY_CAUSTIC_SCALE, SKY_CAUSTIC_SPEED,
+    SKY_SSS, SKY_SSS_COLOR,
     SKY_PARAM_COUNT
 };
 
@@ -59,9 +70,11 @@ GhostModEntity* GhostScene_AddMod(GhostScene& s, int typeId);
 // ---- Sky ----
 struct GhostSkyDraw { float sky[64]; int textureId; };
 
-// Up to 6 draws: gradient, stars, sun sprite, moon sprite, day layer, clouds
+
+// Up to 9 draws: gradient, stars, sun, sun body, moon, day layer, clouds, sun glare, moon glare
 int   GhostSky_Build(const GhostModEntity& e, const std::vector<GhostTextureInfo>& textures,
-    float dayScrollDeg, float nightScrollDeg, float cloudU, float cloudV, GhostSkyDraw out[6]);
+    float dayScrollDeg, float nightScrollDeg, float cloudU, float cloudV, float timeSec, GhostSkyDraw out[9]);
+
 void  GhostSky_CloudSpeeds(const GhostModEntity& e, float& uPerSec, float& vPerSec);
 
 

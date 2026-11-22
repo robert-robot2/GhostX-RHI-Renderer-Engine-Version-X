@@ -19,6 +19,8 @@ cbuffer SceneBuffer : register(b1)
     float4 shadowTune;      // x filter mode, y softness (texels), z depth bias scale, w normal bias scale
     Light  lights[MAX_LIGHTS];
     row_major float4x4 shadowVP[MAX_LIGHTS];
+    float4 flickGlobal;               // x = time (s)
+    float4 flick[MAX_LIGHTS * 6];     // per light, 2 layers x 3 float4: colour+intensity / texture id, speed, tiling, amount / diffuse, specular, roughness, metallic
 };
 
 Texture2D    gTexture : register(t0);
@@ -433,6 +435,7 @@ float4 PSMain(PSInput input, bool isFront : SV_IsFrontFace) : SV_TARGET
         nt = normalize(float3(nt.xy * maps[MAP_NORMAL].y, max(nt.z, 1e-3f)));
         N = normalize(mul(nt, tbn));
     }
+
     float3 Tdir = normalize(tbn[0] - N * dot(tbn[0], N));
     if (usePbr && HasMap(MAP_TANGENT))
     {
@@ -520,6 +523,40 @@ float4 PSMain(PSInput input, bool isFront : SV_IsFrontFace) : SV_TARGET
                 spec = SpecularGGX(NoL, NoV, NoH, VoH, f0, alpha);
             specSum += radiance * atten * NoL * PI * spec;
         }
+
+        // ---- flicker layers (Point lights): extra light at the same spot with its own colour, texture and surface response ----
+        if (type == 1 && NoL > 0.0f)
+        {
+            [unroll] for (int fl = 0; fl < 2; fl++)
+            {
+                const uint   fe = i * 6 + (uint)fl * 3;
+                const float4 fa = flick[fe];
+                if (fa.w <= 0.0001f) continue;
+                const float4 fb = flick[fe + 1];
+                const float4 fc = flick[fe + 2];
+                float3 fcol = fa.rgb;
+                float  fint = fa.w;
+                const int ftex = (int)(fb.x + 0.5f);
+                if (ftex > 0)                                   // the texture's hue picks the colour, its luminance the brightness
+                {
+                    const float2 fuv = float2(frac(flickGlobal.x * fb.y) * fb.z, frac(0.37f + 0.211f * (float)i + 0.173f * (float)fl));
+                    const float3 ft = gTex[ftex].SampleLevel(sLinWrap, fuv, 0).rgb;
+                    fcol *= lerp(float3(1, 1, 1), ft / max(max(ft.r, max(ft.g, ft.b)), 1e-3f), fb.w);
+                    fint *= lerp(1.0f, dot(ft, float3(0.299f, 0.587f, 0.114f)), fb.w);
+                }
+                const float3 frad = fcol * fint;
+                diffuseSum += frad * atten * NoL * fc.x;
+                if (usePbr)
+                {
+                    const float3 Hf = normalize(V + toLight);
+                    const float  NoHf = saturate(dot(N, Hf)), VoHf = saturate(dot(V, Hf));
+                    const float  alF = (fc.z >= 0.0f) ? pow(clamp(fc.z, 0.06f, 1.0f), 2.0f) : alpha;
+                    const float3 f0F = lerp(f0, albedo, saturate(fc.w));
+                    specSum += frad * atten * NoL * PI * SpecularGGX(NoL, NoV, NoHf, VoHf, f0F, alF) * fc.y;
+                }
+            }
+        }
+
     }
 
     float3 color;
@@ -703,6 +740,64 @@ float2 SkyCrossUV(float3 d, out float2 cell)
     return float2(st.x * 0.5f + 0.5f, 0.5f - st.y * 0.5f);
 }
 
+// ---------------- Sun body helpers ----------------
+float Hash31(float3 p)
+{
+    p = frac(p * 0.1031f);
+    p += dot(p, p.zyx + 31.32f);
+    return frac((p.x + p.y) * p.z);
+}
+
+float Noise3(float3 x)
+{
+    float3 i = floor(x), f = frac(x);
+    f = f * f * (3.0f - 2.0f * f);
+    float n000 = Hash31(i), n100 = Hash31(i + float3(1, 0, 0));
+    float n010 = Hash31(i + float3(0, 1, 0)), n110 = Hash31(i + float3(1, 1, 0));
+    float n001 = Hash31(i + float3(0, 0, 1)), n101 = Hash31(i + float3(1, 0, 1));
+    float n011 = Hash31(i + float3(0, 1, 1)), n111 = Hash31(i + float3(1, 1, 1));
+    return lerp(lerp(lerp(n000, n100, f.x), lerp(n010, n110, f.x), f.y),
+        lerp(lerp(n001, n101, f.x), lerp(n011, n111, f.x), f.y), f.z);
+}
+
+float Fbm3(float3 p)
+{
+    float a = 0.5f, s = 0.0f;
+    [unroll] for (int i = 0; i < 4; i++) { s += a * Noise3(p); p = p * 2.03f + 17.1f; a *= 0.5f; }
+    return s;
+}
+
+float3 PlasmaRamp(float v)           // dark red -> orange -> yellow -> white hot (display colours)
+{
+    v = saturate(v);
+    float3 c = lerp(float3(0.55f, 0.08f, 0.01f), float3(1.0f, 0.38f, 0.04f), smoothstep(0.0f, 0.4f, v));
+    c = lerp(c, float3(1.0f, 0.78f, 0.25f), smoothstep(0.35f, 0.75f, v));
+    return lerp(c, float3(1.0f, 0.97f, 0.85f), smoothstep(0.7f, 1.0f, v));
+}
+
+// Tileable animated caustic web (period 1 in uv)
+float SunCaustic(float2 uv, float t)
+{
+    const float TAU = 6.28318530718f;
+    float2 p = uv * TAU;
+    p = p - TAU * floor(p / TAU) - 250.0f;
+    float2 i = p;
+    float c = 1.0f;
+    [unroll] for (int n = 0; n < 5; n++)
+    {
+        float tt = t * (1.0f - (3.5f / (float)(n + 1)));
+        i = p + float2(cos(tt - i.x) + sin(tt + i.y), sin(tt - i.y) + cos(tt + i.x));
+        float sx = sin(i.x + tt) / 0.005f, sy = cos(i.y + tt) / 0.005f;
+        sx = abs(sx) < 1e-4f ? 1e-4f : sx;
+        sy = abs(sy) < 1e-4f ? 1e-4f : sy;
+        c += 1.0f / max(length(float2(p.x / sx, p.y / sy)), 1e-4f);
+    }
+    c /= 5.0f;
+    c = 1.17f - pow(c, 1.4f);
+    return pow(abs(c), 8.0f);
+}
+
+
 float4 SkyPS(SkyPSInput input) : SV_TARGET
 {
     float3 d = normalize(input.dir);
@@ -732,18 +827,18 @@ float4 SkyPS(SkyPSInput input) : SV_TARGET
         float sd = dot(d, sky[0].xyz);
         float sunDisc = smoothstep(0.0f, 0.08f, (sd - sky[5].w) / max(1.0f - sky[5].w, 1e-6f));
         float glow = pow(saturate(sd), sky[8].y) * sky[8].x;
-        col += sky[5].rgb * (sunDisc * sky[8].z * sky[14].z + glow);
+        col += sky[5].rgb * (sunDisc * sky[8].z * sky[14].z + glow) * sky[12].z;
 
         float md = dot(d, sky[6].xyz);
         float moonDisc = smoothstep(0.0f, 0.1f, (md - sky[6].w) / max(1.0f - sky[6].w, 1e-6f));
         float moonGlow = pow(saturate(md), sky[14].y) * sky[14].x * (1.0f - sky[0].w);   // glow only at night
-        col += sky[7].rgb * (moonDisc * sky[14].w + moonGlow);
+        col += sky[7].rgb * (moonDisc * sky[14].w + moonGlow) * sky[12].w;
 
         col = lerp(col, sky[3].rgb, groundAmt);
         return float4(saturate(col * sky[8].w), 1.0f);
     }
 
-    if (kind == 2 || kind == 3)          // sun / moon texture + thin halo ring
+    if (kind == 2 || kind == 3)          // sun / moon texture + thin halo ring (+ eclipse cutoff on the moon)
     {
         float3 sd = normalize(sky[13].xyz);
         float3 upRef = (abs(sd.y) > 0.99f) ? float3(0, 0, 1) : float3(0, 1, 0);
@@ -751,18 +846,19 @@ float4 SkyPS(SkyPSInput input) : SV_TARGET
         float3 su = cross(sd, sr);
         float  z = dot(d, sd);
         float2 pr = float2(dot(d, sr), dot(d, su)) / (max(z, 1e-3f) * tan(max(sky[13].w, 1e-4f)));
-        float  r = length(pr);                                       // 1.0 = the texture's edge
+        float  r = length(pr);
+        float2 egx = ddx(pr), egy = ddy(pr);                         // gradients for the eclipse mask
 
         float haloStr = sky[11].x;
         float haloW = max(sky[11].y, 0.005f);
         float haloOv = sky[11].z;
-        float haloC = 1.0f - haloOv + haloW * 0.5f;                // ring centre: starts haloOv inside the edge
-        float ext = max(1.0f, 1.0f - haloOv + haloW) + 0.02f;    // the quad grows to hold the ring
+        float haloC = 1.0f - haloOv + haloW * 0.5f;
+        float ext = max(1.0f, 1.0f - haloOv + haloW) + 0.02f;
 
         float  rc = cos(sky[10].y), rs = sin(sky[10].y);
         float2 p = float2(rc * pr.x - rs * pr.y, rs * pr.x + rc * pr.y);
         float2 uv = float2(p.x * 0.5f + 0.5f, 0.5f - p.y * 0.5f);
-        float2 gx = ddx(uv), gy = ddy(uv);                           // before the discard
+        float2 gx = ddx(uv), gy = ddy(uv);
         if (z <= 0.0f || r > ext) discard;
 
         float4 t = float4(0, 0, 0, 0);
@@ -770,10 +866,29 @@ float4 SkyPS(SkyPSInput input) : SV_TARGET
         float3 enc = pow(saturate(t.rgb), 1.0f / 2.2f);
         float  m = max(enc.r, max(enc.g, enc.b));
         float  mask = lerp(1.0f, smoothstep(0.02f, 0.25f, m), sky[10].w);
-        float  aT = t.a * mask * sky[9].w;                           // texture alpha x opacity x visibility
+        float  aT = t.a * mask * sky[9].w;
 
         float ring = 1.0f - smoothstep(0.0f, haloW * 0.5f, abs(r - haloC));
-        float aH = saturate(ring * haloStr * sky[11].w);             // halo drawn over the texture edge
+        float aH = saturate(ring * haloStr * sky[11].w);
+
+        // eclipse: a circle (or the cutoff texture, white = hidden) slid over the body
+        float occ = 0.0f;
+        if (sky[14].x < 50.0f)
+        {
+            float2 po = pr - float2(cos(sky[14].y), sin(sky[14].y)) * sky[14].x;
+            int    eid = min((int)(sky[14].w + 0.5f), 255);
+            if (eid > 0)
+            {
+                if (abs(po.x) <= 1.0f && abs(po.y) <= 1.0f)
+                {
+                    float4 et = gTex[eid].SampleGrad(sLinClamp, po * float2(0.5f, -0.5f) + 0.5f, egx * 0.5f, egy * 0.5f);
+                    occ = saturate(et.a * dot(et.rgb, float3(0.299f, 0.587f, 0.114f)));
+                }
+            }
+            else occ = 1.0f - smoothstep(1.0f - max(sky[14].z, 0.004f), 1.0f, length(po));
+        }
+        aT *= 1.0f - occ;
+        aH *= 1.0f - occ;
 
         float  a = aH + aT * (1.0f - aH);
         float3 rgb = (sky[15].rgb * aH + enc * sky[9].rgb * aT * (1.0f - aH)) / max(a, 1e-4f);
@@ -797,6 +912,96 @@ float4 SkyPS(SkyPSInput input) : SV_TARGET
         float3 enc = pow(saturate(t.rgb), 1.0f / 2.2f);
         return float4(enc * sky[9].rgb, dens * sky[9].w * trans * horizon * (1.0f - groundAmt));
     }
+
+    if (kind == 5)                       // sun body: plasma + volume scattering + refraction + caustics + subsurface
+    {
+        float3 sd = normalize(sky[13].xyz);
+        float3 upRef = (abs(sd.y) > 0.99f) ? float3(0, 0, 1) : float3(0, 1, 0);
+        float3 sr = normalize(cross(upRef, sd));
+        float3 su = cross(sd, sr);
+        float  z = dot(d, sd);
+        float2 pr = float2(dot(d, sr), dot(d, su)) / (max(z, 1e-3f) * tan(max(sky[13].w, 1e-4f)));
+        float2 pgx = ddx(pr), pgy = ddy(pr);
+        if (z <= 0.0f || dot(pr, pr) > 1.5f) discard;
+
+        float  r = length(pr);
+        float  tm = sky[10].x * sky[10].y;                         // time x plasma speed
+        float  turb = sky[10].z;
+        int    heatId = min((int)(sky[10].w + 0.5f), 255);
+        float  scatter = sky[11].x, density = sky[11].y, refr = sky[11].z, caus = sky[11].w;
+        float  pScale = sky[14].x, cScale = sky[14].y, cTime = sky[10].x * sky[14].z, heatAmt = sky[14].w;
+        float  heatTile = sky[15].x, sss = sky[15].y, edge = max(sky[15].z, 0.005f), limb = sky[15].w;
+
+        // refraction: the silhouette ripples, and the inside is seen through a warped lens
+        float  rim = Noise3(float3(pr * 3.0f, tm * 2.0f + 1.7f)) - 0.5f;
+        float  rd = r + rim * refr * 0.12f;
+        float  mask = 1.0f - smoothstep(1.0f - edge, 1.0f, rd);
+        if (mask <= 0.002f) discard;
+
+        float  zf = sqrt(saturate(1.0f - r * r));                  // sphere height under this pixel (1 centre, 0 rim)
+        float2 wob = float2(Noise3(float3(pr * 2.5f, tm + 3.7f)),
+            Noise3(float3(pr * 2.5f + 9.1f, tm + 1.3f))) - 0.5f;
+        float2 pw = pr * (1.0f - (1.0f - zf) * refr * 0.6f) + wob * refr * 0.5f;
+
+        // volume: 4 slices from the front of the sun to the back, domain-warped plasma in each
+        float3 acc = float3(0, 0, 0);
+        float  T = 1.0f, vSurf = 0.0f;
+        const float dz = 2.0f * max(zf, 0.05f) / 4.0f;
+        [unroll] for (int k = 0; k < 4; k++)
+        {
+            float  f = ((float)k + 0.5f) / 4.0f;                   // 0 = front, 1 = back
+            float3 q = float3(pw, zf * (1.0f - 2.0f * f)) * pScale;
+            float3 warp = float3(Noise3(q + float3(tm, 0.0f, 0.0f)),
+                Noise3(q + float3(0.0f, tm, 3.1f)),
+                Noise3(q + float3(5.2f, 1.7f, tm))) - 0.5f;
+            float  v = Fbm3(q + warp * turb * 2.0f + float3(0.0f, 0.0f, tm));
+            if (heatId > 0)                                        // heat texture drives the plasma, scrolling through the layers
+            {
+                float2 uvH = (pw * 0.5f + 0.5f) * heatTile + float2(tm * 0.35f + f * 0.21f, tm * 0.2f - f * 0.13f);
+                float  hv = dot(gTex[heatId].SampleGrad(sLinWrap, uvH, pgx * 0.5f * heatTile, pgy * 0.5f * heatTile).rgb,
+                    float3(0.299f, 0.587f, 0.114f));
+                v = lerp(v, hv, heatAmt);
+            }
+            if (k == 0) vSurf = v;
+            float  sig = density * (0.4f + saturate(v * 1.3f)) * (0.35f + scatter);
+            float  stepT = exp(-sig * dz);
+            float3 e = PlasmaRamp(v * 1.35f);
+            acc += T * (1.0f - stepT) * e * (1.0f + scatter * (1.0f - f) * 1.5f);   // front slices glow brighter: depth
+            T *= stepT;
+        }
+        float3 col = acc / max(1.0f - T, 1e-3f);
+
+        col *= 1.0f - limb * (1.0f - sqrt(zf));                    // limb darkening
+
+        float2 dirp = pr / max(r, 0.05f);                          // radial light shafts
+        float  shafts = Noise3(float3(dirp * 2.5f, r * 2.5f - tm * 2.5f));
+        col += PlasmaRamp(0.8f) * shafts * scatter * saturate(1.0f - r) * 0.45f;
+
+        float2 cuv = pw * 0.5f * cScale;                           // caustics, bent by the refraction
+        float  cau = SunCaustic(cuv, cTime + 10.0f) + 0.6f * SunCaustic(cuv * 1.7f + 0.31f, cTime * 0.7f + 3.0f);
+        col += float3(1.0f, 0.82f, 0.45f) * cau * caus * (0.4f + 0.6f * zf);
+
+        float  limbK = pow(saturate(1.0f - zf), 2.2f);             // subsurface: glow from within, rim takes the colour
+        float  inner = exp(-r * r * 3.0f) * (1.0f - T);
+        col += sky[8].rgb * sss * (limbK * (0.6f + 0.8f * vSurf) + 0.5f * inner);
+        col = lerp(col, col * sky[8].rgb * 2.0f, saturate(sss * limbK * 0.5f));
+
+        return float4(saturate(col * sky[9].rgb), mask * sky[9].w * (1.0f - groundAmt));
+    }
+
+    if (kind == 6 || kind == 7)          // glare: overexposed core with a hard cutoff, stronger when the camera looks at it
+    {
+        float3 sd = normalize(sky[13].xyz);
+        float  ang = atan2(length(cross(d, sd)), dot(d, sd));      // precise at tiny angles
+        float  x = ang / max(sky[10].x, 1e-3f);
+        float  look = smoothstep(0.35f, 0.98f, dot(normalize(view[2].xyz), sd));   // 1 when it is in the middle of the view
+        float  gain = lerp(1.0f, lerp(0.4f, 2.2f, look), sky[10].z);
+        float  I = sky[9].w * gain * (exp(-x * x * 6.0f) + 0.25f / (1.0f + 14.0f * x * x));
+        float  v = I * sky[10].y;                                  // overexposure: above 1 it clips to solid white
+        float3 c = lerp(sky[9].rgb, float3(1, 1, 1), saturate((v - 0.5f) * 1.5f));
+        return float4(c, saturate(v) * (1.0f - groundAmt));
+    }
+
 
     // ---- a texture layer: black becomes transparent ----
     float3 q = d;
