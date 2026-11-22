@@ -217,6 +217,46 @@ namespace GhostShell
         public float holdTime, jumpHeight;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GhostVolumeInfo
+    {
+        public int id, type, shape, enabled, priority;
+        public float px, py, pz;
+        public float rx, ry, rz;
+        public float sx, sy, sz;
+        public float radius, blend;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)] public float[] p;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 4)] public int[] tex;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GhostPostInfo { public int toneMode; public float exposureEV, whitePoint; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GhostParticleParams
+    {
+        public int id, type;
+        public float px, py, pz;
+        public int enabled;
+        public float rate;
+        public int maxParticles;
+        public float lifeMin, lifeMax;
+        public int prewarm, spawnMode;
+        public float boxX, boxY, boxZ;
+        public int killOutside;
+        public float velMinX, velMinY, velMinZ;
+        public float velMaxX, velMaxY, velMaxZ;
+        public float accelX, accelY, accelZ;
+        public float drag, swayAmp, swayFreq;
+        public float sizeMin, sizeMax, sizeEnd;
+        public float r0, g0, b0, r1, g1, b1;
+        public float alpha0, alpha1;
+        public float rotMin, rotMax, spinMin, spinMax;
+        public int billboard, unlit, additive, alphaClip, pixelArt;
+        public int textureId, source, cols, rows;
+        public float animFps, animSpeed;
+        public int animOverLife, randomStartFrame, meshId;
+        public float drawDistance;
+    }
 
 
     internal static class GhostEngine
@@ -262,6 +302,14 @@ namespace GhostShell
         public static extern int GhostEngine_GetTileMap(int objectId, ref GhostTileMapInfo info);
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern void GhostEngine_SetTileMap(ref GhostTileMapInfo info);
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_AddVolume(int type, int screenX, int screenY);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_GetVolume(int id, out GhostVolumeInfo info);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetVolume(ref GhostVolumeInfo info);
+
 
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern int GhostEngine_AddTileLayer(int objectId);
@@ -622,6 +670,20 @@ namespace GhostShell
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern void GhostEngine_SetFontProvider(GhostFontProviderFn fn);
 
+        // ---- Particle systems ----
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern int GhostEngine_AddParticleSystem(int type, int screenX, int screenY);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern int GhostEngine_AddParticleAt(int type, float x, float y, float z);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern int GhostEngine_RemoveParticle(int id);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern int GhostEngine_GetParticleCount();
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern int GhostEngine_GetParticleIds([Out] int[] outIds, int maxCount);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern int GhostEngine_GetParticle(int id, ref GhostParticleParams p);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern void GhostEngine_SetParticle(ref GhostParticleParams p);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern int GhostEngine_GetParticleText(int id, int which, [Out] byte[] buf, int bufSize);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern void GhostEngine_SetParticleText(int id, int which, [MarshalAs(UnmanagedType.LPUTF8Str)] string text);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern void GhostEngine_ApplyParticlePreset(int id, int type);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern void GhostEngine_RestartParticle(int id);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern int GhostEngine_GetParticleLive(int id);
+
         // ---- Animated models ----
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern int GhostEngine_IsMeshSkinned(int meshId);
@@ -651,6 +713,11 @@ namespace GhostShell
 
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern void GhostEngine_SetLoadProgress(GhostLoadProgressFn? fn);
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_GetPostSettings(out GhostPostInfo p);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetPostSettings(ref GhostPostInfo p);
 
     }
 }

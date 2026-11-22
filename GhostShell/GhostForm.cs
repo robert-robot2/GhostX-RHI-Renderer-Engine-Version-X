@@ -257,7 +257,7 @@ namespace GhostShell
             _menuBuilder.OnOpenInVS += (s, e) => GhostProjectFlow.OpenInVisualStudio(this);
             _menuBuilder.OnPackageProject += (s, e) => GhostPackager.Show(this);
             _menuBuilder.OnSetSolution += (s, e) => GhostProjectFlow.PickSolution(this);
-            _menuBuilder.OnPlay += (s, e) => { GhostPlay.Play(); _renderPanel.Select(); };
+            _menuBuilder.OnPlay += (s, e) => { GhostLoad.Run(this, "Starting game...", 0, () => GhostPlay.Play()); _renderPanel.Select(); };
             _menuBuilder.OnPause += (s, e) => GhostPlay.TogglePause();
             _menuBuilder.OnStop += (s, e) => GhostPlay.Stop();
             _menuBuilder.OnPlayStandalone += (s, e) => GhostPlay.LaunchStandalone(this);

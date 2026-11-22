@@ -563,8 +563,11 @@ float4 PSMain(PSInput input, bool isFront : SV_IsFrontFace) : SV_TARGET
         color = diff + specSum + ambSpec + emissive;
     }
 
+
     if (objPad.x > 1.5f) color += float3(0.25f, 0.12f, 0.0f);
-    return float4(pow(saturate(color), 1.0f / 2.2f) * splatW, outA);
+    // HDR: keep values above 1.0 (the tone-map pass decides what to do with them). The cap only guards against INF in the float target.
+    return float4(pow(clamp(color, 0.0f, 1000.0f), 1.0f / 2.2f) * splatW, outA);
+    //   return float4(pow(saturate(color), 1.0f / 2.2f) * splatW, outA);
 }
 
 // ---------------- Icons ----------------

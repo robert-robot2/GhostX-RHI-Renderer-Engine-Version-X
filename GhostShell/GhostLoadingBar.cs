@@ -7,6 +7,8 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Windows.Forms;
+using System.Diagnostics;
+
 
 namespace GhostShell
 {
@@ -47,7 +49,7 @@ namespace GhostShell
         private readonly Dictionary<string, int> _tally = new();
         private readonly int _planned;
         private int _done;
-        private Control? _owner;
+       // private Control? _owner;
 
         private GhostLoadingBar(string title, int planned)
         {
@@ -91,7 +93,7 @@ namespace GhostShell
         {
             var bar = new GhostLoadingBar(title, planned);
             bar.Show(owner);
-            if (owner is Control c) { bar._owner = c; c.Enabled = false; }      // no clicks while loading
+         //   if (owner is Control c) { bar._owner = c; c.Enabled = false; }      // no clicks while loading
             bar.Refresh();
             return bar;
         }
@@ -116,12 +118,16 @@ namespace GhostShell
         // A status line that isn't an asset (no count)
         public void Stage(string text) { _status.Text = text; Refresh(); }
 
+        public readonly Stopwatch Clock = Stopwatch.StartNew();
+        private const int MinShowMs = 600;           // set to 0 to close the instant loading finishes
+
         public void Finish()
         {
             _bar.Value = 1f;
             _status.Text = _done == 1 ? "Done: 1 asset loaded" : $"Done: {_done} assets loaded";
             Refresh();
-            if (_owner != null) { _owner.Enabled = true; _owner = null; }
+            int left = MinShowMs - (int)Clock.ElapsedMilliseconds;
+            if (left > 0) System.Threading.Thread.Sleep(left);
             Close();
         }
     }
@@ -131,34 +137,68 @@ namespace GhostShell
         private static GhostLoadingBar? _bar;
         private static GhostLoadProgressFn? _cb;          // static, so the GC can't free it while native code holds it
 
-        // Shows the bar, runs `work` (the real loading code), then closes it. Nested calls share the outer bar.
+        private static GhostForm? MainForm() =>
+            Application.OpenForms.OfType<GhostForm>().FirstOrDefault(f => f.IsHandleCreated && f.Visible);
+
+        private static bool _hookMissing;            // GhostX.dll doesn't have the export: show the bar without live asset names
+
+        private static void Attach(IWin32Window? host, string title, int planned)
+        {
+            GhostLoadingBar bar = GhostLoadingBar.Open(host, title, planned);
+            _bar = bar;
+            _cb = (kind, name) => { try { bar.Note(kind, name); } catch { } };
+            if (_hookMissing) return;
+            try { GhostEngine.GhostEngine_SetLoadProgress(_cb); }
+            catch (EntryPointNotFoundException) { _hookMissing = true; bar.Stage("Loading (rebuild GhostX.dll for live asset names)..."); }
+        }
+
+        private static void Detach()
+        {
+            if (_hookMissing) return;
+            try { GhostEngine.GhostEngine_SetLoadProgress(null); } catch (EntryPointNotFoundException) { _hookMissing = true; }
+        }
+
+        private static void End(GhostLoadingBar bar)
+        {
+            if (bar != _bar) return;
+            try { bar.Stage("Preparing animations, terrain and shadows..."); GhostEngine.GhostEngine_Tick(); } catch { }
+            Detach();
+            _cb = null; _bar = null;
+            bar.Finish();
+        }
+
         public static void Run(IWin32Window? owner, string title, int planned, Action work)
         {
-            if (_bar != null) { work(); return; }
-            GhostLoadingBar bar = GhostLoadingBar.Open(owner, title, planned);
-            _bar = bar;
-            _cb = (kind, name) => { try { bar.Note(kind, name); } catch { } };    // never let an exception cross into native code
-            GhostEngine.GhostEngine_SetLoadProgress(_cb);
+            if (_bar != null || GhostPlayer.IsPlayer) { work(); return; }
+            Attach(owner ?? MainForm(), title, planned);
+            GhostLoadingBar bar = _bar!;
             try { work(); }
-            finally
-            {
-                GhostEngine.GhostEngine_SetLoadProgress(null);
-                _cb = null; _bar = null;
-                bar.Finish();
-            }
+            finally { End(bar); }
         }
 
-        // Call at the end of the work: one engine tick loads animations, builds terrain meshes, etc. inside the bar
-        public static void Prime()
+        // How many assets opening this project will touch (reads the manifest's start scene)
+        public static int PlanProject(string manifestPath)
         {
-            _bar?.Stage("Preparing animations, terrain and shadows...");
-            GhostEngine.GhostEngine_Tick();
+            string root = Path.GetDirectoryName(Path.GetFullPath(manifestPath)) ?? "";
+            string? scene = null;
+            try
+            {
+                using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(manifestPath));
+                if (doc.RootElement.TryGetProperty("startScene", out JsonElement s) && s.ValueKind == JsonValueKind.String &&
+                    s.GetString()!.Length > 0)
+                    scene = Path.GetFullPath(Path.Combine(root, s.GetString()!));
+            }
+            catch { }
+            return CountProject(root, scene);
         }
-
         public static void Stage(string text) => _bar?.Stage(text);
 
-        // How many assets opening this scene will touch: itself, its textures, its model files, its animations
-        public static int CountScene(string scenePath)
+        // ---------------- counting what a load will touch ----------------
+        private static string Full(string root, string stored) =>
+            Path.GetFullPath(Path.IsPathRooted(stored) ? stored : Path.Combine(root, stored));
+
+        // Adds the scene's textures + animations + the scene itself to the count; its model files go into `meshes`
+        private static int CountSceneParts(string scenePath, string root, HashSet<string> meshes)
         {
             try
             {
@@ -166,35 +206,44 @@ namespace GhostShell
                 JsonElement r = doc.RootElement;
                 int n = 1;
                 if (r.TryGetProperty("textures", out JsonElement t) && t.ValueKind == JsonValueKind.Array) n += t.GetArrayLength();
-                var meshes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var anims = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 if (r.TryGetProperty("objects", out JsonElement objs) && objs.ValueKind == JsonValueKind.Array)
                     foreach (JsonElement o in objs.EnumerateArray())
                     {
-                        if (o.TryGetProperty("meshFile", out JsonElement mf) && mf.ValueKind == JsonValueKind.String) meshes.Add(mf.GetString()!);
+                        if (o.TryGetProperty("meshFile", out JsonElement mf) && mf.ValueKind == JsonValueKind.String && mf.GetString()!.Length > 0)
+                            meshes.Add(Full(root, mf.GetString()!));
                         foreach (string key in new[] { "sprite", "animator" })
                             if (o.TryGetProperty(key, out JsonElement s) && s.ValueKind == JsonValueKind.Object &&
                                 s.TryGetProperty("anim", out JsonElement a) && a.ValueKind == JsonValueKind.String && a.GetString()!.Length > 0)
                                 anims.Add(a.GetString()!);
                     }
-                return n + meshes.Count + anims.Count;
+                return n + anims.Count;
             }
             catch { return 0; }
         }
 
-        // Opening a project: every .ghostmesh in Content/Models (the palette scan) plus the first scene
-        public static int CountProject(string? scenePath)
+        public static int CountScene(string scenePath)
         {
-            int n = 0;
+            string root = GhostProject.Root ?? Path.GetDirectoryName(Path.GetFullPath(scenePath)) ?? "";
+            var meshes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            return CountSceneParts(scenePath, root, meshes) + meshes.Count;
+        }
+
+        // Project = the start scene's assets + every .ghostmesh in Content/Models (shared files counted once)
+        public static int CountProject(string root, string? scenePath)
+        {
+            var meshes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             try
             {
-                string? content = GhostProject.ContentDir;
-                if (content != null && Directory.Exists(Path.Combine(content, "Models")))
-                    n += Directory.GetFiles(Path.Combine(content, "Models"), "*.ghostmesh", SearchOption.AllDirectories).Length;
+                string dir = Path.Combine(root, "Content", "Models");
+                if (Directory.Exists(dir))
+                    foreach (string f in Directory.EnumerateFiles(dir, "*.ghostmesh", SearchOption.AllDirectories))
+                        meshes.Add(Path.GetFullPath(f));
             }
             catch { }
-            if (!string.IsNullOrEmpty(scenePath) && File.Exists(scenePath)) n += CountScene(scenePath);
-            return n;
+            int n = 0;
+            if (!string.IsNullOrEmpty(scenePath) && File.Exists(scenePath)) n += CountSceneParts(scenePath, root, meshes);
+            return n + meshes.Count;
         }
     }
 }

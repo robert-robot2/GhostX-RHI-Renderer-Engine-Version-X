@@ -1206,7 +1206,10 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
     psoDesc.PS = { ps->GetBufferPointer(), ps->GetBufferSize() };
     psoDesc.InputLayout = { layout, 4 }; 
     psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    psoDesc.RTVFormats[0] = GHOST_HDR_FORMAT;          // was DXGI_FORMAT_R8G8B8A8_UNORM. pso, blendPso, addPso and skyPso derive from this
+    /*
     psoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+    */
     psoDesc.NumRenderTargets = 1;
     psoDesc.SampleDesc.Count = 1;
     psoDesc.SampleMask = UINT_MAX;
@@ -1274,6 +1277,7 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
     blitDesc.DepthStencilState.DepthEnable = FALSE;
     blitDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
     blitDesc.DSVFormat = DXGI_FORMAT_UNKNOWN;
+    blitDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
 
     if (FAILED(device->CreateGraphicsPipelineState(&blitDesc, IID_PPV_ARGS(&p->blitPso))))
     {
@@ -1299,6 +1303,7 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
     uiDesc.VS = { uvs->GetBufferPointer(), uvs->GetBufferSize() };
     uiDesc.PS = { ups->GetBufferPointer(), ups->GetBufferSize() };
     uiDesc.InputLayout = { uiLayout, 3 };
+    uiDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;         // the two overlay PSOs derive from uiDesc
     uiDesc.DepthStencilState.DepthEnable = FALSE;
     uiDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
     D3D12_RENDER_TARGET_BLEND_DESC& bl = uiDesc.BlendState.RenderTarget[0];
@@ -1425,6 +1430,7 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
     iconDesc.VS = { ivs->GetBufferPointer(), ivs->GetBufferSize() };
     iconDesc.PS = { ips->GetBufferPointer(), ips->GetBufferSize() };
     iconDesc.InputLayout = { nullptr, 0 };
+    iconDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
     iconDesc.DepthStencilState.DepthEnable = FALSE;
     iconDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
 
@@ -2169,12 +2175,7 @@ void GhostDrawOverlay(IGhostRHI* rhi, GhostPipeline* p, const std::vector<GhostO
     p->ovCursor += (unsigned int)n;
 }
 
-// ============================================================
-//  MSAA: rebuild the scene PSOs at a new sample count.
-//  Everything is built first and swapped in at the end, so a failure changes nothing.
-//  Call between frames only (the GPU is idle then).
-//  Blit and shadow PSOs are not touched: they never draw into a multisampled target.
-// ============================================================
+
 GhostResult GhostRebuildScenePSOs(IGhostRHI* rhi, GhostPipeline* p, unsigned int sampleCount)
 {
     if (!rhi || !p || !p->rootSignature) return GHOST_FAIL;
@@ -2184,14 +2185,9 @@ GhostResult GhostRebuildScenePSOs(IGhostRHI* rhi, GhostPipeline* p, unsigned int
     const std::wstring vsPath = ShaderPath(L"GhostVS.hlsl");
     const std::wstring psPath = ShaderPath(L"GhostPS.hlsl");
 
-    ComPtr<ID3DBlob> vs, ps, ivs, ips, uvs, ups, ovs, svs, sps;
+    ComPtr<ID3DBlob> vs, ps, svs, sps;
     if (CompileShaderFromFile(vsPath.c_str(), "VSMain", "vs_5_1", &vs) != GHOST_OK ||
         CompileShaderFromFile(psPath.c_str(), "PSMain", "ps_5_1", &ps) != GHOST_OK ||
-        CompileShaderFromFile(vsPath.c_str(), "IconVS", "vs_5_1", &ivs) != GHOST_OK ||
-        CompileShaderFromFile(psPath.c_str(), "IconPS", "ps_5_1", &ips) != GHOST_OK ||
-        CompileShaderFromFile(vsPath.c_str(), "UIVS", "vs_5_1", &uvs) != GHOST_OK ||
-        CompileShaderFromFile(psPath.c_str(), "UIPS", "ps_5_1", &ups) != GHOST_OK ||
-        CompileShaderFromFile(vsPath.c_str(), "OverlayVS", "vs_5_1", &ovs) != GHOST_OK ||
         CompileShaderFromFile(vsPath.c_str(), "SkyVS", "vs_5_1", &svs) != GHOST_OK ||
         CompileShaderFromFile(psPath.c_str(), "SkyPS", "ps_5_1", &sps) != GHOST_OK)
         return GHOST_FAIL;
@@ -2203,27 +2199,14 @@ GhostResult GhostRebuildScenePSOs(IGhostRHI* rhi, GhostPipeline* p, unsigned int
         { "NORMAL",   0, DXGI_FORMAT_R32G32B32_FLOAT,    0, 28, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
         { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,       0, 40, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
     };
-    D3D12_INPUT_ELEMENT_DESC uiLayout[] =
-    {
-        { "POSITION", 0, DXGI_FORMAT_R32G32_FLOAT,       0,  0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-        { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,       0,  8, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-        { "COLOR",    0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 16, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-    };
-    D3D12_INPUT_ELEMENT_DESC ovLayout[] =
-    {
-        { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT,    0,  0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-        { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,       0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-        { "COLOR",    0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 20, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-    };
 
-    // Same state as the original main PSO, only the sample count differs
     D3D12_GRAPHICS_PIPELINE_STATE_DESC base = {};
     base.pRootSignature = p->rootSignature.Get();
     base.VS = { vs->GetBufferPointer(), vs->GetBufferSize() };
     base.PS = { ps->GetBufferPointer(), ps->GetBufferSize() };
     base.InputLayout = { layout, 4 };
     base.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-    base.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+    base.RTVFormats[0] = GHOST_HDR_FORMAT;
     base.NumRenderTargets = 1;
     base.SampleDesc.Count = sampleCount;
     base.SampleDesc.Quality = 0;
@@ -2239,58 +2222,21 @@ GhostResult GhostRebuildScenePSOs(IGhostRHI* rhi, GhostPipeline* p, unsigned int
     base.DepthStencilState.StencilEnable = FALSE;
     base.DSVFormat = DXGI_FORMAT_D24_UNORM_S8_UINT;
 
-    auto noDepth = [](D3D12_GRAPHICS_PIPELINE_STATE_DESC& d)
-        {
-            d.DepthStencilState.DepthEnable = FALSE;
-            d.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
-        };
-    auto alphaBlend = [](D3D12_GRAPHICS_PIPELINE_STATE_DESC& d)
-        {
-            D3D12_RENDER_TARGET_BLEND_DESC& b = d.BlendState.RenderTarget[0];
-            b.BlendEnable = TRUE;
-            b.SrcBlend = D3D12_BLEND_SRC_ALPHA;
-            b.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
-            b.BlendOp = D3D12_BLEND_OP_ADD;
-            b.SrcBlendAlpha = D3D12_BLEND_ONE;
-            b.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
-            b.BlendOpAlpha = D3D12_BLEND_OP_ADD;
-            b.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
-        };
-
-    // icon: unlit billboards, no vertex buffer, no depth, no blending (as in GhostPipelineCreate)
-    D3D12_GRAPHICS_PIPELINE_STATE_DESC iconD = base;
-    iconD.VS = { ivs->GetBufferPointer(), ivs->GetBufferSize() };
-    iconD.PS = { ips->GetBufferPointer(), ips->GetBufferSize() };
-    iconD.InputLayout = { nullptr, 0 };
-    noDepth(iconD);
-
-    // UI: alpha blended, no depth
-    D3D12_GRAPHICS_PIPELINE_STATE_DESC uiD = base;
-    uiD.VS = { uvs->GetBufferPointer(), uvs->GetBufferSize() };
-    uiD.PS = { ups->GetBufferPointer(), ups->GetBufferSize() };
-    uiD.InputLayout = { uiLayout, 3 };
-    noDepth(uiD);
-    alphaBlend(uiD);
-
-    // overlays: UI state + float3 positions
-    D3D12_GRAPHICS_PIPELINE_STATE_DESC ovTopD = uiD;
-    ovTopD.VS = { ovs->GetBufferPointer(), ovs->GetBufferSize() };
-    ovTopD.InputLayout = { ovLayout, 3 };
-
-    D3D12_GRAPHICS_PIPELINE_STATE_DESC ovDepthD = ovTopD;
-    ovDepthD.DepthStencilState.DepthEnable = TRUE;
-    ovDepthD.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
-    ovDepthD.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
-
-    // sky: full-screen triangle, alpha blended, no depth
-    D3D12_GRAPHICS_PIPELINE_STATE_DESC skyD = base;
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC skyD = base;           // full-screen triangle, alpha blended, no depth
     skyD.VS = { svs->GetBufferPointer(), svs->GetBufferSize() };
     skyD.PS = { sps->GetBufferPointer(), sps->GetBufferSize() };
     skyD.InputLayout = { nullptr, 0 };
-    noDepth(skyD);
-    alphaBlend(skyD);
+    skyD.DepthStencilState.DepthEnable = FALSE;
+    skyD.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+    {
+        D3D12_RENDER_TARGET_BLEND_DESC& b = skyD.BlendState.RenderTarget[0];
+        b.BlendEnable = TRUE;
+        b.SrcBlend = D3D12_BLEND_SRC_ALPHA;      b.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;      b.BlendOp = D3D12_BLEND_OP_ADD;
+        b.SrcBlendAlpha = D3D12_BLEND_ONE;       b.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA; b.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+        b.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+    }
 
-    D3D12_GRAPHICS_PIPELINE_STATE_DESC blendD = base;
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC blendD = base;         // translucent: premultiplied, no depth write
     {
         D3D12_RENDER_TARGET_BLEND_DESC& tb = blendD.BlendState.RenderTarget[0];
         tb.BlendEnable = TRUE;
@@ -2300,7 +2246,7 @@ GhostResult GhostRebuildScenePSOs(IGhostRHI* rhi, GhostPipeline* p, unsigned int
         blendD.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
     }
 
-    D3D12_GRAPHICS_PIPELINE_STATE_DESC addD = base;
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC addD = base;           // Tile Map layers / additive particles
     {
         D3D12_RENDER_TARGET_BLEND_DESC& ab = addD.BlendState.RenderTarget[0];
         ab.BlendEnable = TRUE;
@@ -2311,27 +2257,14 @@ GhostResult GhostRebuildScenePSOs(IGhostRHI* rhi, GhostPipeline* p, unsigned int
         addD.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
     }
 
-    ComPtr<ID3D12PipelineState> nMain, nIcon, nUI, nOvTop, nOvDepth, nSky, nBlend;
+    ComPtr<ID3D12PipelineState> nMain, nSky, nBlend, nAdd;
     if (FAILED(device->CreateGraphicsPipelineState(&base, IID_PPV_ARGS(&nMain))) ||
-        FAILED(device->CreateGraphicsPipelineState(&iconD, IID_PPV_ARGS(&nIcon))) ||
-        FAILED(device->CreateGraphicsPipelineState(&uiD, IID_PPV_ARGS(&nUI))) ||
-        FAILED(device->CreateGraphicsPipelineState(&ovTopD, IID_PPV_ARGS(&nOvTop))) ||
-        FAILED(device->CreateGraphicsPipelineState(&ovDepthD, IID_PPV_ARGS(&nOvDepth))) ||
         FAILED(device->CreateGraphicsPipelineState(&skyD, IID_PPV_ARGS(&nSky))) ||
-        FAILED(device->CreateGraphicsPipelineState(&blendD, IID_PPV_ARGS(&nBlend))))    
-        return GHOST_FAIL;
-    ComPtr<ID3D12PipelineState> nAdd;
-
-
-    if (FAILED(device->CreateGraphicsPipelineState(&addD, IID_PPV_ARGS(&nAdd))))
+        FAILED(device->CreateGraphicsPipelineState(&blendD, IID_PPV_ARGS(&nBlend))) ||
+        FAILED(device->CreateGraphicsPipelineState(&addD, IID_PPV_ARGS(&nAdd))))
         return GHOST_FAIL;
 
-    // All six built: swap them in (the GPU is idle, so the old ones can go)
-    p->pso = nMain;
-    p->iconPso = nIcon;
-    p->uiPso = nUI;
-    p->overlayTopPso = nOvTop;
-    p->overlayDepthPso = nOvDepth;
+    p->pso = nMain;                                            // the GPU is idle between frames, so the old ones can go
     p->skyPso = nSky;
     p->blendPso = nBlend;
     p->addPso = nAdd;

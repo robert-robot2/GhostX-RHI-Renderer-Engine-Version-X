@@ -178,13 +178,35 @@ namespace GhostShell
             }
             if (!GhostSceneFile.ConfirmDiscard(owner)) return;
 
-            if (!GhostProject.Open(path, out string err))
+            bool opened = false;
+            string err = "", sceneMsg = "";
+            int sceneResult = -1;                                   // -1 = no scene file, so a new empty scene
+
+            GhostLoad.Run(owner, "Loading project: " + Path.GetFileNameWithoutExtension(path),
+                          GhostLoad.PlanProject(path), () =>
+                          {
+                              opened = GhostProject.Open(path, out string e);
+                              err = e;
+                              if (!opened) return;
+
+                              GhostLoad.Stage("Scanning project models...");
+                              GhostModels.ScanProject();                          // every .ghostmesh in Content/Models
+
+                              string start = GhostProject.Current!.StartScene;
+                              string scenePath = start.Length > 0 ? Path.Combine(GhostProject.Root!, start) : "";
+                              if (scenePath.Length > 0 && File.Exists(scenePath))
+                              {
+                                  sceneResult = GhostSceneFile.OpenQuiet(scenePath, out string m);
+                                  sceneMsg = m;
+                              }
+                              else GhostSceneFile.New();
+                          });
+
+            if (!opened)
             { MessageBox.Show(owner, err, "Open Project failed", MessageBoxButtons.OK, MessageBoxIcon.Warning); return; }
 
-            string start = GhostProject.Current!.StartScene;
-            string scenePath = start.Length > 0 ? Path.Combine(GhostProject.Root!, start) : "";
-            if (scenePath.Length > 0 && File.Exists(scenePath)) GhostSceneFile.Open(scenePath);
-            else GhostSceneFile.New();
+            GhostSceneFile.MarkClean();
+            if (sceneResult >= 0) GhostSceneFile.ShowOpenResult(sceneResult, sceneMsg);
         }
 
         // A grey cube, a directional light and a point light

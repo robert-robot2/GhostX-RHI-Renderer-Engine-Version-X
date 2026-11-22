@@ -21,6 +21,8 @@
 #include "../include/GhostAudio.h"
 #include "../include/GhostAudioBank.h"
 #include "../include/GhostVideoSettings.h"
+#include "../include/GhostParticleMan.h"
+#include "../include/GhostPost.h"
 #include <memory>
 #include <string.h>
 #include <filesystem>
@@ -41,6 +43,7 @@ static int        g_msaaWanted = 1;
 static GhostTAA   g_taa;
 static int        g_taaOn = 0;
 static float      g_taaSpeed = 1.0f;
+static GhostPost  g_post;
 
 // ---- Camera state ----
 static GhostVec3 g_eye = { 0.0f, 0.75f, -2.0f };
@@ -232,7 +235,7 @@ static unsigned int g_lastRW[GHOST_MAX_SURFACES] = {}, g_lastRH[GHOST_MAX_SURFAC
 static int LoadModelFile(const std::string& absFile, std::string& err);
 static std::string g_modelWarn;                     // warnings from model files loaded during a scene load
 static void PerformSceneSwitch();
-
+static void InstallParticleHost();
 // ---- Audio helpers ----
 static float g_preBusVol[GHOST_BUS_COUNT] = {};
 static bool  g_preBusMute[GHOST_BUS_COUNT] = {};
@@ -334,7 +337,7 @@ static void SpawnCoords(int& sx, int& sy)
 static const float ICON_HALF_PX = 18.0f;
 static const float ICON_PICK_PX = ICON_HALF_PX + 4.0f;
 // the last 2 * GHOST_MAX_LIGHTS constant-buffer slots are reserved for light icons + arrows
-static const unsigned int MAX_SCENE_OBJECTS = GHOST_MAX_OBJECTS - 2 * GHOST_MAX_LIGHTS - 2 * GHOST_MAX_CAMERAS - GHOST_MAX_MODS - 8;
+static const unsigned int MAX_SCENE_OBJECTS = GHOST_MAX_OBJECTS - 2 * GHOST_MAX_LIGHTS - 2 * GHOST_MAX_CAMERAS - GHOST_MAX_MODS - GHOST_MAX_VOLUMES - 8 - GHOST_PFX_MAX_DRAWS;
 
 
 // Hard cap on objects (shadow casters are limited to the same number)
@@ -397,6 +400,7 @@ void GhostEngine_SetClearColor(float r, float g, float b)
 int GhostEngine_Init(HWND hwnd, unsigned int width, unsigned int height)
 {
     g_width = width; g_height = height;
+    GhostParticles_Bind(&g_scene.particles);
     g_rhi = CreateRHI(RHIType::DX12);
     if (!g_rhi) return -1;
     if (g_rhi->Init(hwnd, width, height) != GHOST_OK) return -1;
@@ -413,6 +417,7 @@ int GhostEngine_Init(HWND hwnd, unsigned int width, unsigned int height)
     //add failure is not fatal, MSAA just stays unavailable??
     GhostMSAA_Init(g_rhi, g_msaa);
     GhostTAA_Init(g_rhi, g_taa);                  // failure is not fatal: TAA just stays unavailable
+    if (GhostPost_Init(g_rhi, g_post) != GHOST_OK) return -1;     // the HDR path is not optional
     GhostAudio_Init();                            // not fatal: with no sound device every audio call does nothing
     if (GhostAudioBank_Count() == 0) GhostAudioBank_Load(g_projectRoot);
     // ---- Built-in textures: id 0 = white (untextured draws), id 1 = checkerboard (UV debugging) ----
@@ -460,6 +465,14 @@ int GhostEngine_Init(HWND hwnd, unsigned int width, unsigned int height)
                 px[0] = r; px[1] = g; px[2] = b; px[3] = 255;
             }
         if (RegisterTexture("Cube Cross Test", cross.data(), TW, TH) != 2) return -1;
+        {   // default particle texture (the "[Splat" name keeps it out of the texture dropdowns, like the Tile Map weight maps)
+            std::vector<unsigned char> soft;
+            GhostParticles_MakeSoftTexture(soft, 64);
+            const int softId = RegisterTexture("[Splat Particle Soft]", soft.data(), 64, 64);
+            if (softId > 0) GhostParticles_SetDefaultTexture(softId);
+            InstallParticleHost();
+        }
+
 
     }
     // ---- The default camera: always present, gets id 1 ----
@@ -505,6 +518,13 @@ int GhostEngine_Init(HWND hwnd, unsigned int width, unsigned int height)
         }
     }
     */
+
+    // Test Particle Systems Render
+
+   // GhostParticles_Add(GHOST_PFX_FIRE, 0.0f, 0.1f, 3.0f);
+  //  GhostParticles_Add(GHOST_PFX_SNOW, 0.0f, 0.0f, 3.0f);
+
+
 
     QueryPerformanceFrequency(&g_freq);
     QueryPerformanceCounter(&g_prev);
@@ -668,6 +688,7 @@ static GhostVec3* EntityPosition(int id)
     for (GhostLight& l : g_scene.lights)  if (l.id == id) return &l.position;
     for (GhostCamera& c : g_scene.cameras) if (c.id == id) return &c.position;
     for (GhostModEntity& m : g_scene.mods) if (m.id == id) return &m.position;
+    for (GhostVolume& v : g_scene.volumes) if (v.id == id) return &v.position;
     return nullptr;
 }
 
@@ -749,6 +770,14 @@ static int PickAt(int sx, int sy)
         float dx = px - (float)sx, dy = py - (float)sy;
         float d2 = dx * dx + dy * dy;
         if (d2 <= bestD2) { bestD2 = d2; bestId = m.id; }
+    }
+    for (const GhostVolume& v : g_scene.volumes)
+    {
+        float px, py;
+        if (!WorldToScreen(v.position, px, py)) continue;
+        float dx = px - (float)sx, dy = py - (float)sy;
+        float d2 = dx * dx + dy * dy;
+        if (d2 <= bestD2) { bestD2 = d2; bestId = v.id; }
     }
     if (bestId) return bestId;
 
@@ -1055,6 +1084,27 @@ int GhostEngine_AddTileMap(int sx, int sy)
     return o->id;
 }
 
+int GhostEngine_AddVolume(int type, int sx, int sy)
+{
+    if (g_playState != GhostPlayState::Editing) return 0;
+    GhostVolume* v = GhostScene_AddVolume(g_scene, type);
+    if (!v) return 0;
+    SpawnCoords(sx, sy);
+    GhostVec3 p = SpawnPoint(sx, sy);
+    p.y += (v->shape == GHOST_VOLSHAPE_SPHERE) ? 1.5f : v->size.y * 0.5f;     // boxes sit on the ground
+    v->position = p;
+    g_scene.selectedId = v->id;
+    return v->id;
+}
+
+int GhostEngine_AddParticleSystem(int type, int sx, int sy)
+{
+    if (g_playState != GhostPlayState::Editing) return 0;
+    SpawnCoords(sx, sy);
+    const GhostVec3 p = SpawnPoint(sx, sy);
+    return GhostEngine_AddParticleAt(type, p.x, p.y + 0.05f, p.z);
+}
+
 int GhostEngine_RemoveEntity(int id)
 {
     if (g_playState != GhostPlayState::Editing) return 0;
@@ -1081,6 +1131,7 @@ int GhostEngine_GetEntities(GhostEntityInfo* out, int maxCount)
     for (const GhostLight& l : g_scene.lights) { if (n >= maxCount) return n; out[n++] = { l.id, 1, (int)l.type }; }
     for (const GhostCamera& c : g_scene.cameras) { if (n >= maxCount) return n; out[n++] = { c.id, 2, 0 }; }
     for (const GhostModEntity& m : g_scene.mods) { if (n >= maxCount) return n; out[n++] = { m.id, 3, m.typeId }; }
+    for (const GhostVolume& v : g_scene.volumes) { if (n >= maxCount) return n; out[n++] = { v.id, 4, v.type }; }
     return n;
 }
 
@@ -1092,6 +1143,7 @@ int GhostEngine_GetEntityName(int id, char* buf, int bufSize)
     for (const GhostLight& l : g_scene.lights)  if (l.id == id) name = &l.name;
     for (const GhostCamera& c : g_scene.cameras) if (c.id == id) name = &c.name;
     for (const GhostModEntity& m : g_scene.mods) if (m.id == id) name = &m.name;
+    for (const GhostVolume& v : g_scene.volumes) if (v.id == id) name = &v.name;
     if (!name) { buf[0] = 0; return 0; }
     strncpy_s(buf, bufSize, name->c_str(), _TRUNCATE);
     return 1;
@@ -2163,6 +2215,58 @@ static void OverlaySpotCone(const GhostLight& l)
     ring(l.innerDeg, innerCol, false);
 }
 
+// ---- Utility volumes: box / sphere wireframes ----
+static const float kVolColor[GHOST_VOL_COUNT][3] = { { 0.35f, 0.85f, 1.00f },{ 0.75f, 0.60f, 1.00f } };
+static const char* kVolLabel[GHOST_VOL_COUNT] = { "Reflection Capture", "Fog Volume" };
+
+static void OverlayVolumeShape(const GhostVolume& v, const GhostMat4& M, float inset, const float* col, float width, bool depth)
+{
+    if (v.shape == GHOST_VOLSHAPE_SPHERE)
+    {
+        const float r = fmaxf(v.radius - inset, 0.05f);
+        for (int axis = 0; axis < 3; axis++)                       // three great circles
+        {
+            GhostVec3 prev;
+            for (int i = 0; i <= 48; i++)
+            {
+                const float a = (float)i / 48.0f * 2.0f * GHOST_PI;
+                const float c = cosf(a) * r, s = sinf(a) * r;
+                const GhostVec3 local = axis == 0 ? GhostVec3(0, c, s) : (axis == 1 ? GhostVec3(c, 0, s) : GhostVec3(c, s, 0));
+                const GhostVec3 cur = XformPoint(M, local, 1.0f);
+                if (i > 0) g_ov.Line(prev, cur, col, width, depth);
+                prev = cur;
+            }
+        }
+        return;
+    }
+    const GhostVec3 h(fmaxf(v.size.x * 0.5f - inset, 0.05f), fmaxf(v.size.y * 0.5f - inset, 0.05f), fmaxf(v.size.z * 0.5f - inset, 0.05f));
+    GhostVec3 c[8];
+    for (int i = 0; i < 8; i++)
+        c[i] = XformPoint(M, GhostVec3((i & 1) ? h.x : -h.x, (i & 2) ? h.y : -h.y, (i & 4) ? h.z : -h.z), 1.0f);
+    static const int E[12][2] = { { 0,1 },{ 2,3 },{ 4,5 },{ 6,7 },{ 0,2 },{ 1,3 },{ 4,6 },{ 5,7 },{ 0,4 },{ 1,5 },{ 2,6 },{ 3,7 } };
+    for (int e = 0; e < 12; e++) g_ov.Line(c[E[e][0]], c[E[e][1]], col, width, depth);
+}
+
+static void OverlayVolumes()
+{
+    for (const GhostVolume& v : g_scene.volumes)
+    {
+        const bool sel = IsSelected(v.id), hot = (v.id == g_hoverId);
+        const float* b = kVolColor[v.type];
+        const float alpha = !v.enabled ? 0.15f : (sel ? 0.95f : (hot ? 0.8f : 0.40f));
+        const float col[4] = { b[0], b[1], b[2], alpha };
+        const GhostMat4 M = GhostVolumeModel(v);
+        OverlayVolumeShape(v, M, 0.0f, col, sel ? 2.2f : 1.3f, !sel);            // unselected: depth tested, selected: on top
+        if (v.blend > 0.001f && (sel || hot))                                      // inner shape = where the blend starts
+        {
+            const float inner[4] = { b[0], b[1], b[2], alpha * 0.5f };
+            OverlayVolumeShape(v, M, v.blend, inner, 1.0f, false);
+        }
+        if (sel) g_ov.Label(v.position, kVolLabel[v.type], col, 15.0f, 0.0f, 26.0f);
+    }
+}
+
+
 static void DrawViewportOverlay(const GhostMat4& view, const GhostMat4& proj, const GhostVec3& eye,
     unsigned int rw, unsigned int rh, bool editing)
 {
@@ -2175,6 +2279,7 @@ static void DrawViewportOverlay(const GhostMat4& view, const GhostMat4& proj, co
 
     if (editing)
     {
+        OverlayVolumes();
         if (s.showGrid) OverlayGrid(eye);
 
         const int sel = g_scene.selectedId;
@@ -2390,6 +2495,8 @@ static void RenderViewport(int vp)
         g_lastRW[vp] = rw; g_lastRH[vp] = rh;
     }
     if (!taa) GhostTAA_Release(g_taa, vp);
+    if (GhostPost_Ensure(g_rhi, g_post, vp, rw, rh) != GHOST_OK) return;    // 1x HDR scene color for this viewport
+
     float jx = 0.0f, jy = 0.0f;
     // ---- Matrices ----
     GhostVec3 eye = cam->position;
@@ -2420,20 +2527,22 @@ static void RenderViewport(int vp)
     }
 
     // ---- Begin frame ----
+      // ---- Begin frame ----
     D3D12_CPU_DESCRIPTOR_HANDLE dsv = GhostGetDSV(g_pipeline, vp);
     if (custom)
     {
         const GhostColor bars = { 0.06f, 0.06f, 0.07f, 1.0f };
-        g_rhi->BeginFrame(&bars, dsv);                                      // window (the bars) + depth
-        GhostBeginOffscreen(g_rhi, g_pipeline, vp, &clr, rw, rh);  // scene goes into the offscreen image
+        g_rhi->BeginFrame(&bars, dsv);                          // window (the bars) + depth. The offscreen target is used after the scene
     }
     else
     {
         g_rhi->BeginFrame(&clr, dsv);
     }
 
-    if (msaa) GhostMSAA_Begin(g_rhi, g_pipeline, g_msaa, vp, &clr, rw, rh);   // from here every draw goes to the MSAA target
-    if (taa) GhostTAA_Begin(g_rhi, g_pipeline, g_taa, vp, &clr, rw, rh);   // scene, icons and overlays draw jittered
+    // The scene itself draws into an HDR target: multisampled, TAA, or the plain 1x one
+    if (msaa)      GhostMSAA_Begin(g_rhi, g_pipeline, g_msaa, vp, &clr, rw, rh);
+    else if (taa)  GhostTAA_Begin(g_rhi, g_pipeline, g_taa, vp, &clr, rw, rh);
+    else           GhostPost_BeginScene(g_rhi, g_pipeline, g_post, vp, &clr, dsv, rw, rh);
     GhostSceneCB sceneCB;
     if (preview) BuildPreviewSceneCB(sceneCB);
     else { BuildSceneCB(g_scene, sceneCB); RenderShadowPass(sceneCB, eye, forward, rw, rh); }
@@ -2585,6 +2694,75 @@ static void RenderViewport(int vp)
         [](const TransDraw& a, const TransDraw& b) { return a.dist2 > b.dist2; });
     for (const TransDraw& t : g_translucent)
         GhostDrawMesh(g_rhi, g_pipeline, t.meshId, t.slot, t.tex, t.first, t.count, true);
+
+    // ---- Particles: after opaque + translucent objects, before the editor icons ----
+    if (!preview)
+    {
+        static std::vector<GhostParticleDraw> pdraws;
+        GhostParticles_BuildDraws(eye, pdraws, GHOST_PFX_MAX_DRAWS);
+        const GhostVec3 pUp = forward.Cross(right);
+        for (const GhostParticleDraw& d : pdraws)
+        {
+            if (slot >= MAX_SCENE_OBJECTS + GHOST_PFX_MAX_DRAWS) break;
+            const bool quad = (d.meshId == GHOST_MESH_QUAD);
+            GhostObjectCB cb = {};
+            cb.model = GhostParticles_Model(d, right, pUp, forward);
+            cb.view = view;
+            cb.proj = proj;
+            cb.color[0] = d.r; cb.color[1] = d.g; cb.color[2] = d.b; cb.color[3] = 1.0f;
+            cb.pad[1] = (float)((d.alphaClip ? 1 : 0) | (d.unlit ? 2 : 0) | (quad ? 4 : 0));
+            cb.pad[2] = 1.0f;                                    // particles don't receive shadows
+            cb.uvParams[0] = d.uvScaleX; cb.uvParams[1] = d.uvScaleY;
+            cb.uvParams[2] = d.uvOffX;   cb.uvParams[3] = d.uvOffY;
+            cb.mapParams[2] = quad ? 1.0f : 0.0f;                // sprites clamp
+            cb.mapParams[3] = d.pixelArt ? 1.0f : 0.0f;
+            GhostUpdateObjectCB(g_pipeline, slot, &cb);
+            GhostDrawMesh(g_rhi, g_pipeline, d.meshId, slot, (unsigned int)d.textureId, 0, 0, false, d.additive != 0);
+            slot++;
+        }
+    }
+
+    // ---- End of the HDR scene: bring it down to the 1x HDR target ----
+    {
+        ID3D12Resource* hdrRes = GhostPost_Resource(g_post, vp);
+        if (msaa)
+            GhostMSAA_End(g_rhi, g_pipeline, g_msaa, vp, hdrRes);
+        else if (taa)
+        {
+            GhostTAAFrame tf = {};
+            const GhostVec3 camUp = forward.Cross(right);
+            tf.eye[0] = eye.x;      tf.eye[1] = eye.y;      tf.eye[2] = eye.z;
+            tf.right[0] = right.x;  tf.right[1] = right.y;  tf.right[2] = right.z;
+            tf.up[0] = camUp.x;     tf.up[1] = camUp.y;     tf.up[2] = camUp.z;
+            tf.fwd[0] = forward.x;  tf.fwd[1] = forward.y;  tf.fwd[2] = forward.z;
+            tf.p00 = projClean.m[0][0];  tf.p11 = projClean.m[1][1];
+            tf.p22 = projClean.m[2][2];  tf.p23 = projClean.m[2][3];
+            const GhostMat4 vpClean = projClean * view;
+            memcpy(tf.vp, vpClean.m, 16 * sizeof(float));
+
+            GhostPost_ToRT(g_rhi, g_post, vp);                              // the TAA resolve writes its output here
+            GhostTAA_End(g_rhi, g_pipeline, g_taa, vp, GhostPost_RTV(g_post, vp), false, tf);
+            GhostPost_ToSRV(g_rhi, g_post, vp);
+        }
+        else
+            GhostPost_EndScene(g_rhi, g_pipeline, g_post, vp);
+
+        // ---- Tone map into the destination (offscreen image, or the window back buffer) ----
+        D3D12_CPU_DESCRIPTOR_HANDLE destRTV;
+        if (custom)
+        {
+            GhostBeginOffscreen(g_rhi, g_pipeline, vp, &clr, rw, rh);        // offscreen -> RENDER_TARGET, overrides on
+            destRTV = GhostGetOffscreenRTV(g_pipeline, vp);
+        }
+        else destRTV = g_rhi->GetRTV();
+        GhostPost_Tonemap(g_rhi, g_post, vp, destRTV, rw, rh, preview ? GhostPostSettings() : g_scene.post);
+
+        // Everything below draws display-space colors on the destination: icons, overlays, game UI.
+        // Depth-tested overlays use the depth the scene was drawn with (TAA has its own; with MSAA there is none yet).
+        if (taa) { g_pipeline->dsvOverride = GhostTAA_GetDSV(g_taa, vp); g_pipeline->dsvOverrideActive = true; }
+        proj = projClean;                                                     // overlays and icons are never jittered
+    }
+
     // ---- Icons: main view only ----
     if (overlays)
     {
@@ -2612,26 +2790,15 @@ static void RenderViewport(int vp)
             int state = (m.id == g_scene.selectedId) ? 2 : (m.id == g_hoverId ? 1 : 0);
             DrawIcon(slot, 5, m.position, GhostVec3(0, 0, 1), kModColor, state, view, proj);   // cloud glyph
         }
+        for (const GhostVolume& v : g_scene.volumes)
+        {
+            int state = (v.id == g_scene.selectedId) ? 2 : (v.id == g_hoverId ? 1 : 0);
+            DrawIcon(slot, 5, v.position, GhostVec3(0, 0, 1), kVolColor[v.type], state, view, proj);
+        }
     }
 
     if (mainView && (overlays || g_viewCfg.showFps)) DrawViewportOverlay(view, proj, eye, rw, rh, overlays);
-    if (taa)
-    {
-        GhostTAAFrame tf = {};
-        const GhostVec3 camUp = forward.Cross(right);
-        tf.eye[0] = eye.x;      tf.eye[1] = eye.y;      tf.eye[2] = eye.z;
-        tf.right[0] = right.x;  tf.right[1] = right.y;  tf.right[2] = right.z;
-        tf.up[0] = camUp.x;     tf.up[1] = camUp.y;     tf.up[2] = camUp.z;
-        tf.fwd[0] = forward.x;  tf.fwd[1] = forward.y;  tf.fwd[2] = forward.z;
-        tf.p00 = projClean.m[0][0];  tf.p11 = projClean.m[1][1];
-        tf.p22 = projClean.m[2][2];  tf.p23 = projClean.m[2][3];
-        const GhostMat4 vpClean = projClean * view;
-        memcpy(tf.vp, vpClean.m, 16 * sizeof(float));
 
-        // Resolve into the offscreen image (custom resolution) or the window back buffer (Match Window)
-        const D3D12_CPU_DESCRIPTOR_HANDLE dest = custom ? GhostGetOffscreenRTV(g_pipeline, vp) : g_rhi->GetRTV();
-        GhostTAA_End(g_rhi, g_pipeline, g_taa, vp, dest, custom, tf);
-    }
     // ---- 2D game UI: main view, while a game is running. Retained widgets first, then the game's immediate quads ----
     if (mainView && g_playState != GhostPlayState::Editing)
     {
@@ -2650,14 +2817,15 @@ static void RenderViewport(int vp)
         GhostDrawUI(g_rhi, g_pipeline, frameQuads, rw, rh, (float)rh / 1080.0f);
     }
 
-
-
-    if (msaa) GhostMSAA_End(g_rhi, g_pipeline, g_msaa, vp, custom);   // resolve BEFORE the offscreen target goes back to a texture
+ 
     if (custom)
     {
         GhostEndOffscreen(g_rhi, g_pipeline, vp);
         GhostDrawBlit(g_rhi, g_pipeline, vp, fx, fy, fw, fh, g_video.scaleFilter == GHOST_FILTER_POINT ? 1 : 0);
     }
+    g_pipeline->dsvOverrideActive = false;                      // never leak an override into the next viewport
+    g_pipeline->rtvOverrideActive = false;
+
     g_rhi->EndFrame();
 }
 
@@ -2717,6 +2885,9 @@ struct UndoSnap
     float shadowSoftness = 1.0f, shadowBias = 1.0f, shadowNormalBias = 1.0f, shadowDistance = 30.0f;
     std::string music, ambience;
     int   activeCameraId = 0, gameStartCameraId = 0, nextId = 1;
+    std::vector<GhostVolume> volumes;
+    GhostPostSettings post;
+    std::vector<GhostParticleDef> particles;
  };
 static std::vector<UndoSnap> g_undo, g_redo;
 static UndoSnap     g_undoBase;
@@ -2735,6 +2906,9 @@ static void UndoCapture(UndoSnap& s)
     s.shadowBias = g_scene.shadowBias; s.shadowNormalBias = g_scene.shadowNormalBias; s.shadowDistance = g_scene.shadowDistance;
     s.activeCameraId = g_scene.activeCameraId; s.gameStartCameraId = g_scene.gameStartCameraId; s.nextId = g_scene.nextId;
     s.music = g_scene.music; s.ambience = g_scene.ambience;
+    s.volumes = g_scene.volumes;
+    s.post = g_scene.post;
+    s.particles = g_scene.particles;
 }
 
 static void UndoReset() { g_undo.clear(); g_redo.clear(); g_undoHaveBase = false; }
@@ -2768,7 +2942,7 @@ static void UndoRestore(const UndoSnap& s)
     bool haveKeep = false;
     if (GhostCamera* cur = ActiveCamera()) { keep = *cur; haveKeep = true; }
 
-    g_scene.objects = s.objects; g_scene.lights = s.lights; g_scene.cameras = s.cameras; g_scene.mods = s.mods;
+    g_scene.objects = s.objects; g_scene.lights = s.lights; g_scene.cameras = s.cameras; g_scene.mods = s.mods; g_scene.particles = s.particles;
     for (int i = 0; i < 3; i++) g_scene.ambientColor[i] = s.ambientColor[i];
     g_scene.ambientIntensity = s.ambientIntensity; g_scene.shadowStrength = s.shadowStrength;
     g_scene.shadowsEnabled = s.shadowsEnabled;
@@ -2776,6 +2950,9 @@ static void UndoRestore(const UndoSnap& s)
     g_scene.shadowBias = s.shadowBias; g_scene.shadowNormalBias = s.shadowNormalBias; g_scene.shadowDistance = s.shadowDistance;
     g_scene.music = s.music; g_scene.ambience = s.ambience;
     g_scene.activeCameraId = s.activeCameraId; g_scene.gameStartCameraId = s.gameStartCameraId;
+    g_scene.volumes = s.volumes;
+    g_scene.post = s.post;
+
     if (s.nextId > g_scene.nextId) g_scene.nextId = s.nextId;      // ids never go backwards
 
     if (haveKeep)

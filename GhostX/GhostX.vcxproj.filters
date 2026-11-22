@@ -111,6 +111,12 @@
     <ClInclude Include="include\GhostEngineDataCore.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="include\GhostParticleMan.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="include\GhostPost.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\GhostPipeline.cpp">
@@ -174,6 +180,12 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\GhostSkin.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\GhostParticleMan.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\GhostPost.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

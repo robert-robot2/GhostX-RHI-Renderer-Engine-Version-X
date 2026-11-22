@@ -47,22 +47,40 @@ namespace GhostShell
             return true;
         }
 
-        public static bool Open(string path)
+        // Loads a scene and registers its textures. No message boxes, so it can run inside a loading bar.
+        // 0 = failed (msg = reason), 1 = ok, 2 = ok with warnings (msg = warnings). Caller calls MarkClean().
+        public static int OpenQuiet(string path, out string msg)
         {
             ApplyRoot(path);
             var buf = new byte[4096];
             int r = GhostEngine.GhostEngine_LoadScene(path, buf, buf.Length);
-            if (r == 0)
+            msg = Msg(buf);
+            if (r != 0)
             {
-                MessageBox.Show(Msg(buf), "Could not open scene", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return false;      // the current scene is untouched
+                GhostLoad.Stage("Building texture thumbnails...");
+                GhostAssets.SyncFromEngine();
+                CurrentPath = path;
             }
-            GhostAssets.SyncFromEngine();
-            CurrentPath = path;
-            MarkClean();
-            if (r == 2)
-                MessageBox.Show(Msg(buf), "Scene opened with warnings", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return true;
+            return r;
+        }
+
+        public static void ShowOpenResult(int r, string msg)
+        {
+            if (r == 0) MessageBox.Show(msg, "Could not open scene", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            else if (r == 2) MessageBox.Show(msg, "Scene opened with warnings", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        public static bool Open(string path)
+        {
+            int r = 0; string msg = "";
+            GhostLoad.Run(null, "Loading scene: " + Path.GetFileName(path), GhostLoad.CountScene(path), () =>
+            {
+                r = OpenQuiet(path, out string m);
+                msg = m;
+            });
+            if (r != 0) MarkClean();              // after the bar's final engine tick, so terrain collider fitting isn't counted as an edit
+            ShowOpenResult(r, msg);
+            return r != 0;                        // on failure the current scene is untouched
         }
 
         public static void New()

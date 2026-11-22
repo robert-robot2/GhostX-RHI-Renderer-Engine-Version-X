@@ -175,6 +175,7 @@ void GhostEngine_Tick()
     UpdateOrbitCameras(dt, g_playState != GhostPlayState::Editing);
     UpdateSprites(dt); // animation clips run in the editor and while playing
     UpdateAnimators(dt);
+    GhostParticles_Update(g_playState == GhostPlayState::Paused ? 0.0f : dt);
     PaintTick(dt);
     UpdateTileMaps();
     GhostAudio_Update(dt);
@@ -212,9 +213,11 @@ void GhostEngine_Shutdown()
 {
     GhostPad_Shutdown();
     GhostGameModule_Unload();
+    GhostParticles_Shutdown();
     GhostAudio_Shutdown();
     GhostMSAA_Shutdown(g_msaa);
     GhostTAA_Shutdown(g_taa);
+    GhostPost_Shutdown(g_post);
 
     GhostPipelineDestroy(g_pipeline);
     g_pipeline = nullptr;
@@ -594,6 +597,7 @@ void GhostEngine_DestroyViewport(int vp)
     GhostReleaseOffscreen(g_pipeline, vp);
     GhostMSAA_Release(g_msaa, vp);
     GhostTAA_Release(g_taa, vp);
+    GhostPost_Release(g_post, vp);
     g_vp[vp] = EngineViewport();
 }
 
@@ -644,10 +648,11 @@ void GhostEngine_SetLoadProgress(GhostLoadProgressFn fn) { g_loadProgress = fn; 
 // Used by the scene loader: reuse a texture that is already on the GPU, otherwise decode and upload it
 static int LoadSceneTexture(const std::string& absPath, const std::string& name)
 {
-    LoadNote("Texture", absPath.substr(absPath.find_last_of("\\/") == std::string::npos ? 0 : absPath.find_last_of("\\/") + 1));
     for (const GhostTextureInfo& t : g_scene.textures)
         if (t.id >= GHOST_FIRST_USER_TEXTURE && !t.path.empty() && _stricmp(t.path.c_str(), absPath.c_str()) == 0)
             return t.id;
+
+    LoadNote("Texture", name);                       // only real loads are reported
 
     std::vector<unsigned char> px;
     unsigned int w = 0, h = 0;
@@ -704,6 +709,7 @@ int GhostEngine_LoadScene(const char* path, char* msg, int msgSize)
     g_hoverId = 0; g_dragging = false; g_dragId = 0; g_inputCameraId = 0;
     FreeAllTileInstances();
     g_scenePath = GhostPath_Normalize(path);
+    GhostParticles_ResetAll();
     g_scene.version++;
     UndoReset();
     CopyMsg(warn, msg, msgSize);
@@ -717,9 +723,10 @@ void GhostEngine_ClearScene()
     g_scene.objects.clear(); g_scenePath.clear();
     FreeAllTileInstances();
     g_scene.lights.clear();
-    g_scene.cameras.clear(); g_scene.mods.clear();
+    g_scene.cameras.clear(); g_scene.mods.clear(); g_scene.volumes.clear(); g_scene.particles.clear();
+    GhostParticles_ResetAll();
     g_scene.ambientColor[0] = g_scene.ambientColor[1] = g_scene.ambientColor[2] = 1.0f;
-    g_scene.ambientIntensity = 0.15f;    g_scene.shadowsEnabled = true;
+    g_scene.ambientIntensity = 0.15f; g_scene.post = GhostPostSettings(); g_scene.shadowsEnabled = true;
     g_scene.shadowStrength = 1.0f;
     g_scene.shadowRes = 1024;
     g_scene.shadowFilter = 2; g_scene.shadowSoftness = 1.0f; g_scene.shadowBias = 1.0f;
@@ -1152,11 +1159,11 @@ static std::string StoredToAbs(const std::string& stored)
 static int LoadAnimFile(const std::string& stored)
 {
     const std::string abs = StoredToAbs(stored);
-    LoadNote("Animation", stored);
+  
     for (size_t i = 0; i < g_anims.size(); i++)
         if (_stricmp(g_anims[i].path.c_str(), abs.c_str()) == 0) return (int)i;
     if (g_anims.size() >= 64) return -1;
-
+    LoadNote("Animation", stored);
     GhostAnimAsset a;
     std::string err, warn;
     if (!GhostAnim_Load(a, g_projectRoot, abs, LoadSceneTexture, err, warn))
@@ -1187,6 +1194,61 @@ static void ReloadAnims()
         const auto mt = std::filesystem::last_write_time(std::filesystem::path(GhostUtf8ToWide(it->first)), ec);
         if (ec || mt != it->second.mtime) it = g_skelClips.erase(it); else ++it;
     }
+
+    // in or out of loop?
+    GhostParticles_InvalidateClips();
+}
+
+// ---- Particle host: lets GhostParticleMan read sprite clips without knowing about g_anims ----
+static int ParticleResolveClip(const char* animPath, const char* clipName, GhostParticleClipInfo* out)
+{
+    if (!animPath || !*animPath || !out) return -1;
+    const int aid = LoadAnimFile(animPath);
+    if (aid < 0 || aid >= (int)g_anims.size() || aid > 255) return -1;
+    const GhostAnimAsset& a = g_anims[(size_t)aid];
+    if (a.clips.empty()) return -1;
+    int ci = (clipName && *clipName) ? GhostAnim_FindClip(a, clipName) : -1;
+    if (ci < 0) ci = 0;
+    if (ci > 255) return -1;
+    const GhostClip& c = a.clips[(size_t)ci];
+    if (c.skeletal) return -1;                                    // a 3D clip, not a sprite sheet
+    out->textureId = c.textureId;
+    out->cols = c.source == 0 ? 1 : c.cols;
+    out->rows = c.source == 0 ? 1 : c.rows;
+    out->frameCount = (int)c.frames.size();
+    out->duration = c.fps > 0.0f ? (float)c.frames.size() / c.fps : 0.0f;
+    out->loop = c.loop ? 1 : 0;
+    return (aid << 8) | ci;
+}
+
+static int ParticleFrameAt(int handle, float t)
+{
+    const size_t aid = (size_t)(handle >> 8), ci = (size_t)(handle & 255);
+    if (aid >= g_anims.size() || ci >= g_anims[aid].clips.size()) return 0;
+    return GhostAnim_FrameAt(g_anims[aid].clips[ci], t);
+}
+
+static int ParticleClipNames(const char* animPath, char* buf, int size)
+{
+    if (!buf || size <= 0) return 0;
+    buf[0] = 0;
+    if (!animPath || !*animPath) return 0;
+    const int aid = LoadAnimFile(animPath);
+    if (aid < 0 || aid >= (int)g_anims.size()) return 0;
+    std::string t;
+    for (const GhostClip& c : g_anims[(size_t)aid].clips)
+        if (!c.skeletal) { if (!t.empty()) t += "|"; t += c.name; }
+    CopyMsg(t, buf, size);
+    return 1;
+}
+
+static void InstallParticleHost()
+{
+    GhostParticleHost h = {};
+    h.ResolveClip = ParticleResolveClip;
+    h.FrameAt = ParticleFrameAt;
+    h.ClipNames = ParticleClipNames;
+    GhostParticles_SetHost(&h);
 }
 
 // Replace the existing SpriteDrawInfo function in GhostEngine.cpp with this:
@@ -1871,6 +1933,7 @@ static void PerformSceneSwitch()
         OutputDebugStringA(("[GhostX] Scene \"" + rel + "\":\n" + warn + g_modelWarn).c_str());
 
     g_scenePath = abs;
+    GhostParticles_ResetAll();
     FreeAllTileInstances();
     g_scene.version++;
     if (g_scene.gameStartCameraId && FindCamera(g_scene.gameStartCameraId))
@@ -2136,6 +2199,26 @@ int GhostEngine_TakePlayFault(char* buf, int size)
 int GhostEngine_DuplicateEntity(int id)
 {
     if (g_playState != GhostPlayState::Editing) return 0;
+
+    for (const GhostVolume& sv : g_scene.volumes)
+        if (sv.id == id)
+        {
+            if (g_scene.volumes.size() >= GHOST_MAX_VOLUMES) return 0;
+            GhostVolume copy = sv;                                  // copy first: push_back can move the vector
+            copy.id = g_scene.nextId++;
+            std::string base = copy.name;
+            size_t sp = base.find_last_of(' ');
+            if (sp != std::string::npos && sp + 1 < base.size() && base.find_first_not_of("0123456789", sp + 1) == std::string::npos)
+                base.resize(sp);
+            copy.name = base + " " + std::to_string(copy.id);
+            copy.position.x += (copy.shape == GHOST_VOLSHAPE_SPHERE ? copy.radius * 2.0f : copy.size.x) + 0.25f;
+            g_scene.volumes.push_back(copy);
+            g_scene.selectedId = copy.id;
+            g_scene.selectedFace = -1;
+            g_scene.version++;
+            return copy.id;                                         // returns before the iterator is used again
+        }
+
     GhostObject* src = FindObject(id);
     if (!src || !CanAddObject(src->meshId)) return 0;
 
@@ -2273,6 +2356,7 @@ void GhostEngine_SetEntityName(int id, const char* utf8)
     for (GhostLight& l : g_scene.lights) if (l.id == id) { l.name = n; g_scene.version++; return; }
     for (GhostCamera& c : g_scene.cameras) if (c.id == id) { c.name = n; g_scene.version++; return; }
     for (GhostModEntity& m : g_scene.mods) if (m.id == id) { m.name = n; g_scene.version++; return; }
+    for (GhostVolume& v : g_scene.volumes) if (v.id == id) { v.name = n; g_scene.version++; return; }
 }
 
 void GhostEngine_SetFaceMode(int on) { g_faceMode = (on != 0); }
@@ -3039,6 +3123,8 @@ static int LoadModelFile(const std::string& absFile, std::string& err)
         const GhostMeshInfo* m = GhostMesh_Info(i);
         if (m && !m->file.empty() && _stricmp(m->file.c_str(), abs.c_str()) == 0) return i;
     }
+
+    LoadNote("Model", StemOf(abs));
     if (!g_rhi || !g_pipeline) { err = "The engine is not ready."; return -1; }
 
     GhostModelResult r;
@@ -3647,3 +3733,56 @@ int  GhostEngine_AnimRequestState(int objectId, const char* state)
     return Api_SpriteSetState(objectId, state);
 }
 void GhostEngine_AnimResetRuntime(int objectId) { g_animRt.erase(objectId); }
+
+int GhostEngine_GetVolume(int id, GhostVolumeInfo* out)
+{
+    if (!out) return 0;
+    for (const GhostVolume& v : g_scene.volumes)
+        if (v.id == id)
+        {
+            memset(out, 0, sizeof * out);
+            out->id = v.id; out->type = v.type; out->shape = v.shape; out->enabled = v.enabled ? 1 : 0; out->priority = v.priority;
+            out->px = v.position.x;    out->py = v.position.y;    out->pz = v.position.z;
+            out->rx = v.rotationDeg.x; out->ry = v.rotationDeg.y; out->rz = v.rotationDeg.z;
+            out->sx = v.size.x;        out->sy = v.size.y;        out->sz = v.size.z;
+            out->radius = v.radius;    out->blend = v.blend;
+            memcpy(out->p, v.p, sizeof out->p);
+            memcpy(out->tex, v.tex, sizeof out->tex);
+            return 1;
+        }
+    return 0;
+}
+
+void GhostEngine_SetVolume(const GhostVolumeInfo* in)
+{
+    if (!in) return;
+    for (GhostVolume& v : g_scene.volumes)
+        if (v.id == in->id)
+        {
+            v.position = { in->px, in->py, in->pz };
+            v.rotationDeg = { in->rx, in->ry, in->rz };
+            v.size = { in->sx, in->sy, in->sz };
+            v.shape = in->shape; v.radius = in->radius; v.blend = in->blend;
+            v.priority = in->priority; v.enabled = (in->enabled != 0);
+            memcpy(v.p, in->p, sizeof v.p);
+            for (int i = 0; i < GHOST_VOL_TEXTURES; i++)
+                v.tex[i] = (in->tex[i] >= 0 && in->tex[i] < (int)g_scene.textures.size()) ? in->tex[i] : 0;
+            GhostVolume_Clamp(v);                                   // type is fixed at creation
+            return;
+        }
+}
+
+void GhostEngine_GetPostSettings(GhostPostInfo* out)
+{
+    if (!out) return;
+    *out = { g_scene.post.toneMode, g_scene.post.exposureEV, g_scene.post.whitePoint };
+}
+
+void GhostEngine_SetPostSettings(const GhostPostInfo* in)
+{
+    if (!in) return;
+    g_scene.post.toneMode = in->toneMode;
+    g_scene.post.exposureEV = in->exposureEV;
+    g_scene.post.whitePoint = in->whitePoint;
+    GhostPostSettings_Clamp(g_scene.post);
+}

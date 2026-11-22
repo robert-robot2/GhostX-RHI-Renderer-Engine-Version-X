@@ -2,6 +2,7 @@
 #pragma once
 #include "GhostMath.h"
 #include "GhostRoleParams.h"
+#include "GhostParticleMan.h"
 #include <vector>
 #include <string>
 #include <string.h>
@@ -639,17 +640,77 @@ struct GhostModEntity
     GhostVec3   position = { 0, 3, 0 };       // only used for the viewport icon
     std::vector<float> values;                // all parameters, packed (colors take 3 floats)
 };
+
+// ---- Volumes (Utilities palette) ----
+constexpr unsigned int GHOST_MAX_VOLUMES = 16;
+constexpr int GHOST_VOL_PARAMS = 16;     // per-type float parameters (meaning defined by each phase)
+constexpr int GHOST_VOL_TEXTURES = 4;    // per-type texture ids (cubemap, noise ...)
+enum GhostVolumeType { GHOST_VOL_REFLECTION = 0, GHOST_VOL_FOG, GHOST_VOL_COUNT };
+enum GhostVolumeShape { GHOST_VOLSHAPE_BOX = 0, GHOST_VOLSHAPE_SPHERE };
+
+struct GhostVolume
+{
+    int         id = 0;
+    int         type = 0;                       // GhostVolumeType
+    std::string name;
+    GhostVec3   position = { 0, 2, 0 };
+    GhostVec3   rotationDeg = { 0, 0, 0 };      // Ry * Rx * Rz, like objects
+    GhostVec3   size = { 10, 5, 10 };           // full extents, used when shape == Box
+    int         shape = 0;                      // GhostVolumeShape
+    float       radius = 5.0f;                  // used when shape == Sphere
+    float       blend = 1.0f;                   // soft falloff distance inside the edge
+    int         priority = 0;
+    bool        enabled = true;
+    float       p[GHOST_VOL_PARAMS] = {};
+    int         tex[GHOST_VOL_TEXTURES] = {};
+};
+
+inline void GhostVolume_Clamp(GhostVolume& v)
+{
+    auto cf = [](float x, float lo, float hi) { return x != x ? lo : (x < lo ? lo : (x > hi ? hi : x)); };
+    v.type = v.type < 0 ? 0 : (v.type >= GHOST_VOL_COUNT ? GHOST_VOL_COUNT - 1 : v.type);
+    v.shape = v.shape ? 1 : 0;
+    v.position = { cf(v.position.x, -100000.f, 100000.f), cf(v.position.y, -100000.f, 100000.f), cf(v.position.z, -100000.f, 100000.f) };
+    v.rotationDeg = { cf(v.rotationDeg.x, -720.f, 720.f), cf(v.rotationDeg.y, -720.f, 720.f), cf(v.rotationDeg.z, -720.f, 720.f) };
+    v.size = { cf(v.size.x, 0.1f, 10000.f), cf(v.size.y, 0.1f, 10000.f), cf(v.size.z, 0.1f, 10000.f) };
+    v.radius = cf(v.radius, 0.1f, 10000.f);
+    v.blend = cf(v.blend, 0.0f, 1000.f);
+    v.priority = v.priority < -100 ? -100 : (v.priority > 100 ? 100 : v.priority);
+    for (int i = 0; i < GHOST_VOL_PARAMS; i++) if (v.p[i] != v.p[i]) v.p[i] = 0.0f;
+}
+
+// ---- Post processing (scene settings) ----
+enum GhostToneMode { GHOST_TONE_NONE = 0, GHOST_TONE_REINHARD, GHOST_TONE_ACES, GHOST_TONE_NEUTRAL, GHOST_TONE_COUNT };
+
+struct GhostPostSettings
+{
+    int   toneMode = GHOST_TONE_NONE;      // None = the old clamp, so existing scenes look the same until you pick a curve
+    float exposureEV = 0.0f;               // stops, -5 .. +5
+    float whitePoint = 4.0f;               // Reinhard: the brightness that maps to white
+};
+
+inline void GhostPostSettings_Clamp(GhostPostSettings& p)
+{
+    auto cf = [](float x, float lo, float hi) { return x != x ? lo : (x < lo ? lo : (x > hi ? hi : x)); };
+    p.toneMode = p.toneMode < 0 ? 0 : (p.toneMode >= GHOST_TONE_COUNT ? GHOST_TONE_COUNT - 1 : p.toneMode);
+    p.exposureEV = cf(p.exposureEV, -5.0f, 5.0f);
+    p.whitePoint = cf(p.whitePoint, 1.0f, 16.0f);
+}
+
 struct GhostScene
 {
     std::vector<GhostObject> objects;
     std::vector<GhostLight>  lights;
     std::vector<GhostCamera> cameras;
     std::vector<GhostModEntity> mods;
+    std::vector<GhostVolume> volumes;
+    std::vector<GhostParticleDef> particles;       // particle systems (the live particles are in GhostParticleMan)
     int activeCameraId = 0;              // the camera the main view renders through
     int gameStartCameraId = 0;           // 0 = Play keeps the current main view camera
     std::vector<GhostTextureInfo> textures;     // id 0 = White, id 1 = Checkerboard, then imports
     float        ambientColor[3] = { 1, 1, 1 };
     float        ambientIntensity = 0.15f;
+    GhostPostSettings post;
     int          nextId = 1;          // ONE id space for objects and lights
     int          selectedId = 0;      // 0 = nothing selected
     int          selectedFace = -1;   // -1 = all faces; always belongs to selectedId
@@ -719,6 +780,22 @@ inline GhostCamera* GhostScene_AddCamera(GhostScene& s)
     s.version++;
     return &s.cameras.back();
 }
+
+inline GhostVolume* GhostScene_AddVolume(GhostScene& s, int type)
+{
+    if (type < 0 || type >= GHOST_VOL_COUNT || s.volumes.size() >= GHOST_MAX_VOLUMES) return nullptr;
+    static const char* names[GHOST_VOL_COUNT] = { "Reflection Capture", "Fog Volume" };
+    GhostVolume v;
+    v.id = s.nextId++;
+    v.type = type;
+    v.name = std::string(names[type]) + " " + std::to_string(v.id);
+    if (type == GHOST_VOL_REFLECTION) { v.shape = GHOST_VOLSHAPE_SPHERE; v.radius = 5.0f; }
+    else { v.shape = GHOST_VOLSHAPE_BOX; v.size = { 10, 5, 10 }; }
+    s.volumes.push_back(v);
+    s.version++;
+    return &s.volumes.back();
+}
+
 inline bool GhostScene_Remove(GhostScene& s, int id)
 {
     for (size_t i = 0; i < s.objects.size(); i++)
@@ -737,6 +814,8 @@ inline bool GhostScene_Remove(GhostScene& s, int id)
         }
     for (size_t i = 0; i < s.mods.size(); i++)
         if (s.mods[i].id == id) { s.mods.erase(s.mods.begin() + i); goto removed; }
+    for (size_t i = 0; i < s.volumes.size(); i++)
+        if (s.volumes[i].id == id) { s.volumes.erase(s.volumes.begin() + i); goto removed; }
     return false;
 removed:
 
@@ -767,4 +846,13 @@ inline GhostMat4 GhostObjectModel(const GhostObject& o, const float* yawDegOverr
         * GhostMat4::RotationX(o.rotationDeg.x * d2r)
         * GhostMat4::RotationZ((o.rotationDeg.z + o.animator.leanDeg) * d2r)
         * GhostMat4::Scale(o.scale.x * sm.x, o.scale.y * sm.y, o.scale.z * sm.z);
+}
+
+inline GhostMat4 GhostVolumeModel(const GhostVolume& v)       // no scale: size / radius are real units
+{
+    const float d2r = GHOST_PI / 180.0f;
+    return GhostMat4::Translation(v.position.x, v.position.y, v.position.z)
+        * GhostMat4::RotationY(v.rotationDeg.y * d2r)
+        * GhostMat4::RotationX(v.rotationDeg.x * d2r)
+        * GhostMat4::RotationZ(v.rotationDeg.z * d2r);
 }

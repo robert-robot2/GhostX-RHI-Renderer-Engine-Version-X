@@ -3,7 +3,10 @@
 #include "GhostPipeline.h"
 #include "IGhostRHI.h"
 
+constexpr DXGI_FORMAT GHOST_MSAA_COLOR_FORMAT = GHOST_HDR_FORMAT;                 // was R8G8B8A8_UNORM
+/*
 constexpr DXGI_FORMAT GHOST_MSAA_COLOR_FORMAT = DXGI_FORMAT_R8G8B8A8_UNORM;       // matches the swap chain + offscreen targets
+*/
 constexpr DXGI_FORMAT GHOST_MSAA_DEPTH_FORMAT = DXGI_FORMAT_D24_UNORM_S8_UINT;    // matches the pipeline's depth buffers
 
 struct GhostMSAA
@@ -34,8 +37,8 @@ GhostResult  GhostMSAA_Ensure(IGhostRHI* rhi, GhostMSAA& m, int id, unsigned int
 void         GhostMSAA_Release(GhostMSAA& m, int id);
 
 // Begin: points every draw at the multisampled target and clears it.
-// End:   resolves it into the offscreen target (intoOffscreen = true, call BEFORE GhostEndOffscreen)
-//        or into the window's back buffer (false), and hands drawing back to the 1x targets.
+// End:   resolves it into resolveTarget (the 1x HDR target, resting in PIXEL_SHADER_RESOURCE, same format)
+//        and hands drawing back to the 1x targets.
 void GhostMSAA_Begin(IGhostRHI* rhi, GhostPipeline* p, GhostMSAA& m, int id,
     const GhostColor* clear, unsigned int w, unsigned int h);
-void GhostMSAA_End(IGhostRHI* rhi, GhostPipeline* p, GhostMSAA& m, int id, bool intoOffscreen);
+void GhostMSAA_End(IGhostRHI* rhi, GhostPipeline* p, GhostMSAA& m, int id, ID3D12Resource* resolveTarget);

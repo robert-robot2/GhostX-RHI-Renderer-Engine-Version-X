@@ -122,7 +122,7 @@ PSOut TaaPS(VSOut i)
 
     PSOut o;
     o.hist = float4(res, 1.0f);
-    o.disp = float4(saturate(res + dY), 1.0f);
+    o.disp = float4(max(res + dY, 0.0f), 1.0f);        // was saturate(res + dY): HDR values must survive to the tone map
     return o;
 }
 )HLSL";
@@ -233,7 +233,10 @@ GhostResult GhostTAA_Init(IGhostRHI* rhi, GhostTAA& t)
     d.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     d.NumRenderTargets = 2;
     d.RTVFormats[0] = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    d.RTVFormats[1] = GHOST_HDR_FORMAT;                 // was R8G8B8A8_UNORM: the destination is now the HDR target
+    /*
     d.RTVFormats[1] = DXGI_FORMAT_R8G8B8A8_UNORM;
+    */
     d.SampleDesc.Count = 1;
     d.SampleMask = UINT_MAX;
     d.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
@@ -324,9 +327,11 @@ GhostResult GhostTAA_Ensure(IGhostRHI* rhi, GhostTAA& t, int id, unsigned int w,
         D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr, IID_PPV_ARGS(&h0)))) return GHOST_FAIL;
     if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd,
         D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr, IID_PPV_ARGS(&h1)))) return GHOST_FAIL;
-
+    /*
     rd.Format = DXGI_FORMAT_R24G8_TYPELESS;
-    rd.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+    */
+    rd.Format = GHOST_HDR_FORMAT;                       // was DXGI_FORMAT_R8G8B8A8_UNORM
+    rd.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
     D3D12_CLEAR_VALUE cv = {};
     cv.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
     cv.DepthStencil.Depth = 1.0f;
@@ -352,7 +357,7 @@ GhostResult GhostTAA_Ensure(IGhostRHI* rhi, GhostTAA& t, int id, unsigned int w,
     for (int s = 0; s < 2; s++)
     {
         const unsigned int b = (unsigned int)id * 6 + (unsigned int)s * 3;
-        sv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        sv.Format = GHOST_HDR_FORMAT;                   // was DXGI_FORMAT_R8G8B8A8_UNORM
         dev->CreateShaderResourceView(sc.Get(), &sv, HandleAt(t.srvHeap.Get(), b + 0, t.srvInc));
         sv.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
         dev->CreateShaderResourceView(histRes[s], &sv, HandleAt(t.srvHeap.Get(), b + 1, t.srvInc));
@@ -481,6 +486,11 @@ void GhostTAA_End(IGhostRHI* rhi, GhostPipeline* p, GhostTAA& t, int id,
     t.read[id] = wr;
 
     // The game UI (and the rest of the frame) draws onto the destination from here
-    p->rtvOverride = dest;
-    p->rtvOverrideActive = destIsOffscreen;
+    p->rtvOverrideActive = false;               // the caller tone maps next, then draws overlays / UI
+    (void)destIsOffscreen;
+}
+
+D3D12_CPU_DESCRIPTOR_HANDLE GhostTAA_GetDSV(GhostTAA& t, int id)
+{
+    return HandleAt(t.dsvHeap.Get(), (unsigned int)id, t.dsvInc);
 }

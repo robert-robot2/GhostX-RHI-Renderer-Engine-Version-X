@@ -47,13 +47,14 @@ void        GhostTAA_Shutdown(GhostTAA& t);
 // Per viewport: (re)creates targets for this render size
 GhostResult GhostTAA_Ensure(IGhostRHI* rhi, GhostTAA& t, int id, unsigned int w, unsigned int h);
 void        GhostTAA_Release(GhostTAA& t, int id);
-
+// The TAA depth buffer's DSV (D24S8, resting in DEPTH_WRITE between frames). The editor overlays test against it after tone mapping.
+D3D12_CPU_DESCRIPTOR_HANDLE GhostTAA_GetDSV(GhostTAA& t, int id);
 // Sub-pixel jitter in pixels, each in [-0.5, 0.5]. speed = steps of the 16-sample sequence per frame.
 void GhostTAA_NextJitter(GhostTAA& t, int id, float speed, float& jx, float& jy);
 
 // Begin: points every draw at the jittered scene target + TAA depth and clears them.
 // End:   resolves into the history AND the destination (back buffer RTV, or the offscreen RTV),
-//        then hands drawing back to the destination so the game UI can draw on top, crisp.
+//        then hands drawing back to the destination so the game UI can draw on top, crisp. dest is now the 1x HDR target RTV.
 void GhostTAA_Begin(IGhostRHI* rhi, GhostPipeline* p, GhostTAA& t, int id,
     const GhostColor* clear, unsigned int w, unsigned int h);
 void GhostTAA_End(IGhostRHI* rhi, GhostPipeline* p, GhostTAA& t, int id,

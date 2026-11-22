@@ -178,6 +178,12 @@ namespace GhostShell
             => new StandardValuesCollection(Items);
     }
 
+    internal class ToneMapConverter : FixedListConverter
+    {
+        public static readonly string[] Names = { "None (clamp)", "Reinhard", "ACES (filmic)", "Neutral (keeps colors)" };
+        protected override string[] Items => Names;
+    }
+
     internal class MapModeConverter : FixedListConverter
     {
         public static readonly string[] Names =
@@ -1593,6 +1599,24 @@ namespace GhostShell
         [Category("Shadows"), DisplayName("Shadow Distance (m, 0 = whole scene)")]
         public float ShadowDistance { get => GetTune().distance; set { var t = GetTune(); t.distance = value; SetTune(t); } }
 
+        private static GhostPostInfo GetPost() { GhostEngine.GhostEngine_GetPostSettings(out var p); return p; }
+        private static void SetPost(GhostPostInfo p) => GhostEngine.GhostEngine_SetPostSettings(ref p);
+
+        [Category("Post Processing"), DisplayName("Tone Mapping")]
+        [TypeConverter(typeof(ToneMapConverter))]
+        public string ToneMapping
+        {
+            get => ToneMapConverter.Names[Math.Clamp(GetPost().toneMode, 0, ToneMapConverter.Names.Length - 1)];
+            set { int i = Array.IndexOf(ToneMapConverter.Names, value); if (i >= 0) { var p = GetPost(); p.toneMode = i; SetPost(p); } }
+        }
+
+        [Category("Post Processing"), DisplayName("Exposure (EV stops, -5 to 5)")]
+        public float Exposure { get => GetPost().exposureEV; set { var p = GetPost(); p.exposureEV = value; SetPost(p); } }
+
+        [Category("Post Processing"), DisplayName("White Point (Reinhard, 1-16)")]
+        public float WhitePoint { get => GetPost().whitePoint; set { var p = GetPost(); p.whitePoint = value; SetPost(p); } }
+
+
         [Category("Audio"), DisplayName("Scene Music (plays during Play)")]
         [TypeConverter(typeof(MusicChoiceConverter))]
         public string SceneMusic { get => GhostSceneAudio.Get(0); set => GhostSceneAudio.Set(0, value); }
@@ -1613,6 +1637,8 @@ namespace GhostShell
         private static readonly Color Accent = Color.FromArgb(0xFF, 0xC8, 0x6E);
         private static readonly Color CamColor = Color.FromArgb(0x7F, 0xD4, 0xFF);
         private static readonly Color ModColor = Color.FromArgb(0xC8, 0xA0, 0xFF);
+
+        private static readonly Color VolColor = Color.FromArgb(0x7F, 0xE0, 0xB0);
 
         private sealed class PaletteItem
         {
@@ -1650,6 +1676,8 @@ namespace GhostShell
         private PanelDock _dockAnim = null!;
         private GhostAudioMixer _mixer = null!;
         private PanelDock _dockMixer = null!;
+        private GhostParticleEditor _particles = null!;
+        private PanelDock _dockParticles = null!;
 
         private bool _visible = true;
         private bool _syncing;
@@ -1713,7 +1741,7 @@ namespace GhostShell
                 BackColor = Bg2,
                 ForeColor = Fg,
             };
-            _category.Items.AddRange(new object[] { "Lighting", "Primitives", "Sprites", "Cameras", "Mods", "Models", "Maps" });
+            _category.Items.AddRange(new object[] { "Lighting", "Primitives", "Sprites", "Cameras", "Mods", "Models", "Maps","Utilities", "Particle Systems" });
             _category.SelectedIndexChanged += (s, e) => FillPalette();
             // add order matters for docking: Fill first, then Bottom, then Top
             _left.Controls.Add(_palette);
@@ -2209,6 +2237,8 @@ namespace GhostShell
             _dockAnim = new PanelDock("AnimEditor", "Animation Editor", _animEditor, ToolAreas | DockAreas.Document);
             _mixer = new GhostAudioMixer();
             _dockMixer = new PanelDock("AudioMixer", "Audio Mixer", _mixer, ToolAreas | DockAreas.Document);
+            _particles = new GhostParticleEditor();
+            _dockParticles = new PanelDock("ParticleEditor", "Particle Editor", _particles, ToolAreas | DockAreas.Document);
             _form.Controls.Add(_dock);
             _dock.BringToFront();                    // the dock fills whatever the menu strip leaves
             _form.MainMenuStrip?.SendToBack();
@@ -2227,6 +2257,7 @@ namespace GhostShell
             "UIDesigner" => _dockDesigner,
             "AnimEditor" => _dockAnim,
             "AudioMixer" => _dockMixer,
+            "ParticleEditor" => _dockParticles,
             _ => null!,
         };
 
@@ -2297,11 +2328,12 @@ namespace GhostShell
             if (_dockDesigner.DockPanel != null) _dockDesigner.DockPanel = null!;
             if (_dockAnim.DockPanel != null) _dockAnim.DockPanel = null!;
             if (_dockMixer.DockPanel != null) _dockMixer.DockPanel = null!;
+            if (_dockParticles.DockPanel != null) _dockParticles.DockPanel = null!;
             ApplyDefaultLayout();
         }
         private bool IsInsideDesigner(Control? c)
         {
-            for (; c != null; c = c.Parent) if (c == _designer || c == _animEditor || c == _mixer) return true;
+            for (; c != null; c = c.Parent) if (c == _designer || c == _animEditor || c == _mixer || c == _particles) return true;
             return false;
         }
 
@@ -2359,6 +2391,20 @@ namespace GhostShell
             if (path != null) _animEditor.OpenFile(path);
             _animEditor.FocusCanvas();
         }
+
+        public void OpenParticleEditor()
+        {
+            if (_dockParticles.DockState == DockState.Unknown)
+            {
+                Rectangle r = _form.Bounds;
+                var b = new Rectangle(r.X + 120, r.Y + 140,
+                    Math.Max(760, Math.Min(1000, r.Width - 180)), Math.Max(520, Math.Min(760, r.Height - 200)));
+                _dockParticles.Show(_dock, b);
+            }
+            else _dockParticles.Show(_dock);
+            _particles.FocusCanvas();
+        }
+
         private bool IsShown(PanelDock d) => d.DockPanel != null && !d.IsHidden;
 
         private void ShowPanel(PanelDock d)
@@ -2408,7 +2454,10 @@ namespace GhostShell
             fsAnim.Click += (s, e) => { OpenAnimEditor(null); ToggleEditorFullscreen(_animEditor, "Animation Editor", () => _animEditor.Save()); };
             var fsMix = new ToolStripMenuItem("Audio Mixer") { ShortcutKeyDisplayString = "F11" };
             fsMix.Click += (s, e) => { OpenMixer(); ToggleEditorFullscreen(_mixer, "Audio Mixer", null); };
-            fsMenu.DropDownItems.AddRange(new ToolStripItem[] { fsUi, fsAnim, fsMix });
+            var fxItem = new ToolStripMenuItem("Particle Editor");
+            fxItem.Click += (s, e) => OpenParticleEditor();
+            menu.DropDownItems.Add(fxItem);
+            fsMenu.DropDownItems.AddRange(new ToolStripItem[] { fsUi, fsAnim, fsMix, fxItem });
             menu.DropDownItems.Add(fsMenu);
             menu.DropDownItems.Add(new ToolStripSeparator());
             var reset = new ToolStripMenuItem("Reset Layout");
@@ -2435,6 +2484,7 @@ namespace GhostShell
                 uiItem.Checked = IsShown(_dockDesigner);
                 animItem.Checked = IsShown(_dockAnim);
                 mixItem.Checked = IsShown(_dockMixer);
+                fxItem.Checked = IsShown(_dockParticles);
             };
 
             int at = strip.Items.Count;                                   // before Help
@@ -2496,6 +2546,17 @@ namespace GhostShell
                 case 6:
                     Add("Tile Map", "tilemap", 0);
                     break;
+                case 7:
+                    Add("Reflection Capture (Sphere)", "volume", 0);
+                    Add("Fog Volume", "volume", 1);
+                    break;
+                case 8:
+                    Add("Fire", "particle", 0);
+                    Add("Snow", "particle", 1);
+                    Add("Custom", "particle", 2);
+                    break;
+           
+              
                 default:
                     {
                         int n = GhostEngine.GhostEngine_GetModTypeCount();
@@ -2530,17 +2591,27 @@ namespace GhostShell
             return (s != null && s.StartsWith("ghost:")) ? s : null;
         }
 
+    
         private void Spawn(string kind, int type, int x, int y)
         {
             int id = kind == "light" ? GhostEngine.GhostEngine_AddLight(type, x, y)
 : kind == "cam" ? GhostEngine.GhostEngine_AddCamera(type, x, y)
 : kind == "mod" ? GhostEngine.GhostEngine_AddMod(type, x, y)
+: kind == "volume" ? GhostEngine.GhostEngine_AddVolume(type, x, y)
 : kind == "tilemap" ? GhostEngine.GhostEngine_AddTileMap(x, y)
+: kind == "particle" ? GhostEngine.GhostEngine_AddParticleSystem(type, x, y)
                 : GhostEngine.GhostEngine_AddObject(type, x, y);
             if (id == 0) System.Media.SystemSounds.Beep.Play();   // scene is full (or 4 cameras already)
             else if (kind == "cam") _vp.Open(id);
+            else if (kind == "particle")
+            {
+                if (!IsShown(_dockParticles)) OpenParticleEditor();
+                _particles.SelectEmitter(id);
+            }
             Sync();
         }
+
+
         private void OnViewportDrag(object? sender, DragEventArgs e)
         {
             string? payload = DropPayload(e);
@@ -2665,7 +2736,7 @@ namespace GhostShell
                 var node = new TreeNode(text)
                 {
                     Tag = buf[i].id,
-                    ForeColor = buf[i].kind == 1 ? Accent : (buf[i].kind == 2 ? CamColor : (buf[i].kind == 3 ? ModColor : Fg)),
+                    ForeColor = buf[i].kind == 1 ? Accent : (buf[i].kind == 2 ? CamColor : (buf[i].kind == 3 ? ModColor : (buf[i].kind == 4 ? VolColor : Fg))),
                 };
                 _tree.Nodes.Add(node);
                 _nodes[buf[i].id] = node;
@@ -2747,6 +2818,8 @@ namespace GhostShell
                     var c = new GhostCameraInfo();
                     if (GhostEngine.GhostEngine_GetCamera(id, ref c) != 0)
                         proxy = c.mode == 1 ? new OrbitCameraProxy(id) : new CameraProxy(id);
+                    else if (GhostEngine.GhostEngine_GetVolume(id, out GhostVolumeInfo vi) != 0)
+                        proxy = VolumeProxy.Create(id, vi.type);
                     else if (GhostModProxy.Exists(id))
                         proxy = new GhostModProxy(id);
                 }
@@ -2761,7 +2834,8 @@ namespace GhostShell
                 GhostEngine.GhostEngine_GetAmbient(out float r, out float g, out float b, out float k);
                 GhostEngine.GhostEngine_GetShadowSettings(out int se, out float ss);
                 GhostEngine.GhostEngine_GetShadowTuning(out GhostShadowTuning st);
-                return (r, g, b, k, GhostEngine.GhostEngine_GetGameStartCamera(), se, ss, GhostEngine.GhostEngine_GetShadowResolution(), st);
+                GhostEngine.GhostEngine_GetPostSettings(out GhostPostInfo pi);
+                return (r, g, b, k, GhostEngine.GhostEngine_GetGameStartCamera(), se, ss, GhostEngine.GhostEngine_GetShadowResolution(), st, pi);
             }
             var o = new GhostObjectInfo();
             if (GhostEngine.GhostEngine_GetObject(id, ref o) != 0)
@@ -2776,6 +2850,9 @@ namespace GhostShell
             if (GhostEngine.GhostEngine_GetLight(id, ref l) != 0) return l;
             var c = new GhostCameraInfo();
             if (GhostEngine.GhostEngine_GetCamera(id, ref c) != 0) return c;
+            if (GhostEngine.GhostEngine_GetVolume(id, out GhostVolumeInfo vol) != 0)
+                return (vol.shape, vol.enabled, vol.priority, vol.px, vol.py, vol.pz, vol.rx, vol.ry, vol.rz,
+                        vol.sx, vol.sy, vol.sz, vol.radius, vol.blend, string.Join(",", vol.p), string.Join(",", vol.tex));
             if (GhostModProxy.Exists(id)) return GhostMods.Signature(id);
             return null;
         }

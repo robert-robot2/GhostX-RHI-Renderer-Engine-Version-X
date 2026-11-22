@@ -177,21 +177,11 @@ void GhostMSAA_Begin(IGhostRHI* rhi, GhostPipeline* p, GhostMSAA& m, int id,
     p->dsvOverride = dsv;  p->dsvOverrideActive = true;
 }
 
-void GhostMSAA_End(IGhostRHI* rhi, GhostPipeline* p, GhostMSAA& m, int id, bool intoOffscreen)
+void GhostMSAA_End(IGhostRHI* rhi, GhostPipeline* p, GhostMSAA& m, int id, ID3D12Resource* dst)
 {
     p->rtvOverrideActive = false;
     p->dsvOverrideActive = false;
-    if (id < 0 || id >= GHOST_MAX_SURFACES || !m.color[id]) return;
-
-    if (!intoOffscreen)
-    {
-        rhi->ResolveToBackBuffer(m.color[id].Get(), GHOST_MSAA_COLOR_FORMAT);
-        return;
-    }
-
-    // The offscreen target is in RENDER_TARGET state here (GhostBeginOffscreen put it there)
-    ID3D12Resource* dst = p->offTargets[id].Get();
-    if (!dst) return;
+    if (id < 0 || id >= GHOST_MAX_SURFACES || !m.color[id] || !dst) return;
     auto* cmd = rhi->GetCmdList();
 
     D3D12_RESOURCE_BARRIER b[2] = {};
@@ -203,7 +193,7 @@ void GhostMSAA_End(IGhostRHI* rhi, GhostPipeline* p, GhostMSAA& m, int id, bool 
     b[1].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
     b[1].Transition.pResource = dst;
     b[1].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-    b[1].Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+    b[1].Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
     b[1].Transition.StateAfter = D3D12_RESOURCE_STATE_RESOLVE_DEST;
     cmd->ResourceBarrier(2, b);
 
@@ -212,6 +202,6 @@ void GhostMSAA_End(IGhostRHI* rhi, GhostPipeline* p, GhostMSAA& m, int id, bool 
     b[0].Transition.StateBefore = D3D12_RESOURCE_STATE_RESOLVE_SOURCE;
     b[0].Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
     b[1].Transition.StateBefore = D3D12_RESOURCE_STATE_RESOLVE_DEST;
-    b[1].Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+    b[1].Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
     cmd->ResourceBarrier(2, b);
 }

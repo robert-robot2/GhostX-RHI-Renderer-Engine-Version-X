@@ -2,6 +2,7 @@
 #pragma once
 #include "GhostVideoSettings.h"
 #include "GhostRoleParams.h"
+#include "GhostParticleMan.h"
 #include <Windows.h>
 
 #ifdef GHOSTENGINE_EXPORTS
@@ -137,6 +138,7 @@ typedef void(__cdecl* GhostLoadProgressFn)(const char* utf8Kind, const char* utf
 struct GhostShadowTuning { int filter; float softness, bias, normalBias, distance; };
 
 struct GhostMapInfo { int textureId; float amount; int channel; int invert; };
+struct GhostPostInfo { int toneMode; float exposureEV, whitePoint; };   // toneMode: 0 none, 1 Reinhard, 2 ACES, 3 Neutral
 
 struct GhostSurfaceInfo
 {
@@ -169,6 +171,17 @@ struct GhostPaintInfo
     int   hasTileMap;
 };
 
+struct GhostVolumeInfo
+{
+    int   id, type, shape, enabled, priority;   // type: 0 reflection capture, 1 fog.  shape: 0 box, 1 sphere
+    float px, py, pz;
+    float rx, ry, rz;                           // degrees
+    float sx, sy, sz;                           // box size
+    float radius, blend;
+    float p[16];                                // per-type parameters (later phases)
+    int   tex[4];                               // per-type texture ids (later phases)
+};
+
 extern "C"
 {
     GHOST_API int  GhostEngine_Init(HWND hwnd, unsigned int width, unsigned int height);
@@ -189,6 +202,11 @@ extern "C"
     GHOST_API int  GhostEngine_AddLight(int lightType, int screenX, int screenY);
 
     GHOST_API int  GhostEngine_AddTileMap(int screenX, int screenY);         // Maps > Tile Map. New id, 0 = failed
+
+    GHOST_API int  GhostEngine_AddVolume(int type, int screenX, int screenY);   // Utilities palette. New id, 0 = failed
+    GHOST_API int  GhostEngine_GetVolume(int id, GhostVolumeInfo* out);         // 0 = not a volume
+    GHOST_API void GhostEngine_SetVolume(const GhostVolumeInfo* in);
+
     GHOST_API int  GhostEngine_GetTileMap(int objectId, GhostTileMapInfo* out);   // 0 = not a Tile Map
     GHOST_API void GhostEngine_SetTileMap(const GhostTileMapInfo* in);
     GHOST_API int  GhostEngine_AddTileLayer(int objectId);                        // new layer index, -1 = refused (limit / not a Tile Map)
@@ -400,6 +418,20 @@ extern "C"
     GHOST_API void  GhostEngine_SetTAAJitterSpeed(float speed);    // 0.05 .. 4, default 1
     GHOST_API float GhostEngine_GetTAAJitterSpeed();
 
+    // ---- Particle systems ----
+    GHOST_API int  GhostEngine_AddParticleSystem(int type, int screenX, int screenY);   // 0 fire, 1 snow, 2 custom
+    GHOST_API int  GhostEngine_AddParticleAt(int type, float x, float y, float z);
+    GHOST_API int  GhostEngine_RemoveParticle(int id);
+    GHOST_API int  GhostEngine_GetParticleCount();
+    GHOST_API int  GhostEngine_GetParticleIds(int* outIds, int maxCount);
+    GHOST_API int  GhostEngine_GetParticle(int id, GhostParticleParams* out);
+    GHOST_API void GhostEngine_SetParticle(const GhostParticleParams* in);
+    GHOST_API int  GhostEngine_GetParticleText(int id, int which, char* buf, int bufSize);   // 0 anim file, 1 clip, 2 clip names '|'
+    GHOST_API void GhostEngine_SetParticleText(int id, int which, const char* utf8);
+    GHOST_API void GhostEngine_ApplyParticlePreset(int id, int type);
+    GHOST_API void GhostEngine_RestartParticle(int id);
+    GHOST_API int  GhostEngine_GetParticleLive(int id);
+
     // ---- Gamepad ----
     GHOST_API void GhostEngine_SetPadSettings(float deadzone, int rumble, int slot);   // slot -1 = auto
     GHOST_API int  GhostEngine_GetPadInfo(GhostPadInfo* out);                          // 1 = a pad is connected
@@ -449,4 +481,9 @@ extern "C"
     GHOST_API int  GhostEngine_AnimPreview_Get(float* time, float* duration, int* matched, int* total);
     GHOST_API int  GhostEngine_AnimRequestState(int objectId, const char* state);
     GHOST_API void GhostEngine_AnimResetRuntime(int objectId);
+
+    GHOST_API void GhostEngine_GetPostSettings(GhostPostInfo* out);
+    GHOST_API void GhostEngine_SetPostSettings(const GhostPostInfo* in);
+
+    GHOST_API void GhostEngine_SetLoadProgress(GhostLoadProgressFn fn);
 }

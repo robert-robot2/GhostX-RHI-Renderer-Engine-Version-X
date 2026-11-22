@@ -10,6 +10,9 @@
 #include <d3d12.h>
 #include <d3dcompiler.h>
 #include <wrl/client.h>
+
+constexpr DXGI_FORMAT GHOST_HDR_FORMAT = DXGI_FORMAT_R16G16B16A16_FLOAT;   // scene color: gamma-encoded floats, values above 1.0 are kept
+
 using Microsoft::WRL::ComPtr;
 
 struct GhostVertex {

@@ -262,6 +262,7 @@ bool GhostScene_Save(const GhostScene& s, const std::string& root, const std::st
             { "filter", s.shadowFilter },{ "softness", s.shadowSoftness },{ "bias", s.shadowBias },
             { "normalBias", s.shadowNormalBias },{ "distance", s.shadowDistance } };
         j["audio"] = json{ { "music", s.music },{ "ambience", s.ambience } };
+        j["post"] = json{ { "toneMode", s.post.toneMode },{ "exposure", s.post.exposureEV },{ "whitePoint", s.post.whitePoint } };
         std::set<int> saved;
         json texs = json::array();
         for (const GhostTextureInfo& t : s.textures)
@@ -481,6 +482,52 @@ bool GhostScene_Save(const GhostScene& s, const std::string& root, const std::st
             mods.push_back(jm);
         }
         j["mods"] = mods;
+
+        json vols = json::array();
+        for (const GhostVolume& v : s.volumes)
+        {
+            json jv;
+            jv["id"] = v.id; jv["type"] = v.type; jv["name"] = v.name;
+            jv["position"] = V3(v.position); jv["rotation"] = V3(v.rotationDeg); jv["size"] = V3(v.size);
+            jv["shape"] = v.shape; jv["radius"] = v.radius; jv["blend"] = v.blend;
+            jv["priority"] = v.priority; jv["enabled"] = v.enabled;
+            json pj = json::array(); for (float x : v.p) pj.push_back(x);
+            jv["params"] = pj;
+            json tj = json::array();
+            for (int t : v.tex) tj.push_back((t < GHOST_FIRST_USER_TEXTURE || saved.count(t)) ? t : 0);
+            jv["textures"] = tj;
+            vols.push_back(jv);
+        }
+        j["volumes"] = vols;
+
+        json parts = json::array();
+        for (const GhostParticleDef& d : s.particles)
+        {
+            const GhostParticleParams& p = d.p;
+            json jp;
+            jp["id"] = p.id;
+            jp["type"] = p.type;
+#define PP_SAVE(n) jp[#n] = p.n;
+            GHOST_PARTICLE_FIELDS(PP_SAVE)
+#undef PP_SAVE
+                jp["texture"] = (p.textureId < GHOST_FIRST_USER_TEXTURE || saved.count(p.textureId)) ? p.textureId : 0;
+            jp["mesh"] = -1;
+            if (const GhostMeshInfo* mi = GhostMesh_Info(p.meshId))
+            {
+                if (mi->builtin) jp["mesh"] = p.meshId;
+                else
+                {
+                    jp["meshName"] = mi->name;
+                    if (!mi->file.empty()) jp["meshFile"] = MakeStoredPath(mi->file, root);
+                }
+            }
+            jp["anim"] = d.anim;
+            jp["clip"] = d.clip;
+            parts.push_back(jp);
+        }
+        j["particles"] = parts;
+
+
         // Write to a temp file first, so a failed save never destroys the old one
         fs::path out(GhostUtf8ToWide(file));
         if (out.has_parent_path()) fs::create_directories(out.parent_path());
@@ -555,7 +602,7 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
 
         // ---- ids: keep the saved ones, hand out new ones for missing or duplicate ids ----
         int maxId = 0;
-        for (const char* key : { "objects", "lights", "cameras", "mods" })
+        for (const char* key : { "objects", "lights", "cameras", "mods", "volumes" })
             if (j.contains(key) && j[key].is_array())
                 for (const json& it : j[key]) maxId = (std::max)(maxId, it.value("id", 0));
         std::set<int> used;
@@ -567,7 +614,7 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
             };
 
         // ---- reset and fill ----
-        s.objects.clear(); s.lights.clear(); s.cameras.clear(); s.mods.clear();
+        s.objects.clear(); s.lights.clear(); s.cameras.clear(); s.mods.clear(); s.volumes.clear(); s.particles.clear();
         s.selectedId = 0; s.selectedFace = -1; s.activeCameraId = 0;
         s.ambientColor[0] = s.ambientColor[1] = s.ambientColor[2] = 1.0f;
         s.ambientIntensity = 0.15f;
@@ -601,6 +648,16 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
             s.ambience = j["audio"].value("ambience", std::string());
             if (s.music.size() > 47) s.music.resize(47);
             if (s.ambience.size() > 47) s.ambience.resize(47);
+        }
+
+        s.post = GhostPostSettings();
+        if (j.contains("post") && j["post"].is_object())
+        {
+            const json& jp = j["post"];
+            s.post.toneMode = jp.value("toneMode", 0);
+            s.post.exposureEV = jp.value("exposure", 0.0f);
+            s.post.whitePoint = jp.value("whitePoint", 4.0f);
+            GhostPostSettings_Clamp(s.post);
         }
         if (j.contains("objects") && j["objects"].is_array())
             for (const json& jo : j["objects"])
@@ -895,6 +952,67 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
             }
         s.nextId = (std::max)(s.nextId, maxId + 1);
 
+        if (j.contains("volumes") && j["volumes"].is_array())
+            for (const json& jv : j["volumes"])
+            {
+                if (s.volumes.size() >= GHOST_MAX_VOLUMES) { warn += "Too many volumes: the rest were skipped.\n"; break; }
+                GhostVolume v;
+                v.id = takeId(jv.value("id", 0));
+                v.type = Clampi(jv.value("type", 0), 0, GHOST_VOL_COUNT - 1);
+                v.name = jv.value("name", std::string("Volume"));
+                ReadV3(jv, "position", v.position);
+                ReadV3(jv, "rotation", v.rotationDeg);
+                ReadV3(jv, "size", v.size);
+                v.shape = Clampi(jv.value("shape", 0), 0, 1);
+                v.radius = jv.value("radius", 5.0f);
+                v.blend = jv.value("blend", 1.0f);
+                v.priority = jv.value("priority", 0);
+                v.enabled = jv.value("enabled", true);
+                ReadF(jv, "params", v.p, GHOST_VOL_PARAMS);
+                if (jv.contains("textures") && jv["textures"].is_array())
+                    for (int k = 0; k < GHOST_VOL_TEXTURES && k < (int)jv["textures"].size(); k++)
+                        if (jv["textures"][k].is_number_integer()) v.tex[k] = mapTex(jv["textures"][k].get<int>());
+                GhostVolume_Clamp(v);
+                s.volumes.push_back(v);
+            }
+
+        if (j.contains("particles") && j["particles"].is_array())
+        {
+            int maxP = 0;
+            for (const json& jp : j["particles"]) maxP = (std::max)(maxP, jp.value("id", 0));
+            std::set<int> usedP;
+            for (const json& jp : j["particles"])
+            {
+                if ((int)s.particles.size() >= GHOST_PFX_MAX_EMITTERS) { warn += "Too many particle systems: the rest were skipped.\n"; break; }
+                GhostParticleDef d;
+                GhostParticles_FillPreset(Clampi(jp.value("type", 0), 0, GHOST_PFX_TYPE_COUNT - 1), d.p);   // fields missing in the file keep the preset's value
+                GhostParticleParams& p = d.p;
+#define PP_LOAD(n) p.n = jp.value(#n, p.n);
+                GHOST_PARTICLE_FIELDS(PP_LOAD)
+#undef PP_LOAD
+                    int id = jp.value("id", 0);
+                if (id <= 0 || usedP.count(id)) id = ++maxP;
+                usedP.insert(id);
+                p.id = id;
+                p.textureId = mapTex(jp.value("texture", 0));
+
+                int mesh = jp.value("mesh", -1);
+                const std::string meshName = jp.value("meshName", std::string());
+                const std::string meshFile = jp.value("meshFile", std::string());
+                if (!meshFile.empty() && loadMesh) { std::string why; mesh = loadMesh(ResolveStoredPath(meshFile, root), why); }
+                else if (!meshName.empty()) mesh = GhostMesh_FindByName(meshName);
+                p.meshId = (GhostMesh_Valid(mesh) && mesh != GHOST_MESH_QUAD) ? mesh : -1;
+
+                d.anim = jp.value("anim", std::string());
+                d.clip = jp.value("clip", std::string());
+                if (d.anim.size() > 259) d.anim.resize(259);
+                if (d.clip.size() > 47) d.clip.resize(47);
+                GhostParticles_Clamp(p);
+                s.particles.push_back(d);
+            }
+        }
+
+
         if (s.cameras.empty()) GhostScene_AddCamera(s);          // there is always at least one camera
         int active = j.value("activeCamera", 0);
         s.activeCameraId = s.cameras.front().id;
@@ -946,7 +1064,7 @@ unsigned int GhostScene_Hash(const GhostScene& s)
     I(s.shadowsEnabled ? 1 : 0); F(s.shadowStrength); I(s.shadowRes); I(s.shadowFilter); F(s.shadowSoftness); F(s.shadowBias); F(s.shadowNormalBias); F(s.shadowDistance);
     S(s.music); S(s.ambience);
     F(s.ambientColor[0]); F(s.ambientColor[1]); F(s.ambientColor[2]); F(s.ambientIntensity);
-
+    I(s.post.toneMode); F(s.post.exposureEV); F(s.post.whitePoint);
     for (const GhostObject& o : s.objects)
     {
         I(o.id); I(o.meshId); S(o.name);
@@ -1003,5 +1121,13 @@ unsigned int GhostScene_Hash(const GhostScene& s)
         I(m.id); I(m.typeId); S(m.name); V(m.position);
         for (float x : m.values) F(x);
     }
+    for (const GhostVolume& v : s.volumes)
+    {
+        I(v.id); I(v.type); S(v.name); V(v.position); V(v.rotationDeg); V(v.size);
+        I(v.shape); F(v.radius); F(v.blend); I(v.priority); I(v.enabled ? 1 : 0);
+        for (float x : v.p) F(x);
+        for (int t : v.tex) I(t);
+    }
+    for (const GhostParticleDef& d : s.particles) { mix(&d.p, sizeof d.p); S(d.anim); S(d.clip); }
     return h;
 }
