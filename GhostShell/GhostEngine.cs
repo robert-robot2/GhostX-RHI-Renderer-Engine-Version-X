@@ -278,6 +278,11 @@ namespace GhostShell
         public float ssrIntensity, ssrMaxDistance, ssrThickness;
         public int ssrSteps;
         public float ssrMaxRoughness, ssrEdgeFade;
+        public int ssgiEnabled;
+        public float ssgiIntensity, ssgiRadius;
+        public int ssgiSamples;
+        public float ssgiTemporal, ssgiFadeDist;
+        public int ssgiShowOnly;
     }
 
     [StructLayout(LayoutKind.Sequential)]

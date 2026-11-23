@@ -720,6 +720,7 @@ int GhostEngine_LoadScene(const char* path, char* msg, int msgSize)
     FreeAllTileInstances();
     FreeAllProbes();
     GhostPost_SSRReset(g_post);
+    GhostPost_SSGIReset(g_post);
     g_scenePath = GhostPath_Normalize(path);
     GhostParticles_ResetAll();
     g_scene.version++;
@@ -736,7 +737,7 @@ void GhostEngine_ClearScene()
     FreeAllTileInstances();
     FreeAllProbes();
     GhostPost_SSRReset(g_post);
-
+    GhostPost_SSGIReset(g_post);
     g_scene.lights.clear();
     g_scene.cameras.clear(); g_scene.mods.clear(); g_scene.volumes.clear(); g_scene.particles.clear();
     GhostParticles_ResetAll();
@@ -1979,6 +1980,8 @@ static void PerformSceneSwitch()
     FreeAllTileInstances();
     FreeAllProbes();
     GhostPost_SSRReset(g_post);
+    GhostPost_SSGIReset(g_post);
+
     g_scene.version++;
     if (g_scene.gameStartCameraId && FindCamera(g_scene.gameStartCameraId))
         g_scene.activeCameraId = g_scene.gameStartCameraId;
@@ -3841,7 +3844,8 @@ void GhostEngine_GetPostSettings(GhostPostInfo* out)
              p.bloomTint[0], p.bloomTint[1], p.bloomTint[2],
              p.ssaoEnabled, p.ssaoRadius, p.ssaoIntensity, p.ssaoBias, p.ssaoStrength,
              p.ssaoSamples, p.ssaoDirectFade, p.ssaoHalfRes, p.ssaoShowOnly, p.ssaoFadeDist,
-             p.ssrEnabled, p.ssrIntensity, p.ssrMaxDistance, p.ssrThickness, p.ssrSteps, p.ssrMaxRoughness, p.ssrEdgeFade };
+             p.ssrEnabled, p.ssrIntensity, p.ssrMaxDistance, p.ssrThickness, p.ssrSteps, p.ssrMaxRoughness, p.ssrEdgeFade,
+             p.ssgiEnabled, p.ssgiIntensity, p.ssgiRadius, p.ssgiSamples, p.ssgiTemporal, p.ssgiFadeDist, p.ssgiShowOnly };
 }
 
 void GhostEngine_SetPostSettings(const GhostPostInfo* in)
@@ -3859,6 +3863,9 @@ void GhostEngine_SetPostSettings(const GhostPostInfo* in)
     p.ssrEnabled = in->ssrEnabled; p.ssrIntensity = in->ssrIntensity; p.ssrMaxDistance = in->ssrMaxDistance;
     p.ssrThickness = in->ssrThickness; p.ssrSteps = in->ssrSteps; p.ssrMaxRoughness = in->ssrMaxRoughness;
     p.ssrEdgeFade = in->ssrEdgeFade;
+    p.ssgiEnabled = in->ssgiEnabled; p.ssgiIntensity = in->ssgiIntensity; p.ssgiRadius = in->ssgiRadius;
+    p.ssgiSamples = in->ssgiSamples; p.ssgiTemporal = in->ssgiTemporal; p.ssgiFadeDist = in->ssgiFadeDist;
+    p.ssgiShowOnly = in->ssgiShowOnly;
     GhostPostSettings_Clamp(p);
 }
 

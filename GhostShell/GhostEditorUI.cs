@@ -1816,7 +1816,26 @@ namespace GhostShell
         [Category("Reflections (SSR)"), DisplayName("Edge Fade (0-0.5)")]
         public float SsrEdgeFade { get => GetPost().ssrEdgeFade; set { var p = GetPost(); p.ssrEdgeFade = value; SetPost(p); } }
 
+        [Category("Global Illumination (SSGI)"), DisplayName("SSGI Enabled")]
+        public bool SsgiEnabled { get => GetPost().ssgiEnabled != 0; set { var p = GetPost(); p.ssgiEnabled = value ? 1 : 0; SetPost(p); } }
 
+        [Category("Global Illumination (SSGI)"), DisplayName("Intensity (0-5)")]
+        public float SsgiIntensity { get => GetPost().ssgiIntensity; set { var p = GetPost(); p.ssgiIntensity = value; SetPost(p); } }
+
+        [Category("Global Illumination (SSGI)"), DisplayName("Radius (world units)")]
+        public float SsgiRadius { get => GetPost().ssgiRadius; set { var p = GetPost(); p.ssgiRadius = value; SetPost(p); } }
+
+        [Category("Global Illumination (SSGI)"), DisplayName("Quality (samples, 4-32)")]
+        public int SsgiSamples { get => GetPost().ssgiSamples; set { var p = GetPost(); p.ssgiSamples = value; SetPost(p); } }
+
+        [Category("Global Illumination (SSGI)"), DisplayName("Temporal Smoothing (0-0.97)")]
+        public float SsgiTemporal { get => GetPost().ssgiTemporal; set { var p = GetPost(); p.ssgiTemporal = value; SetPost(p); } }
+
+        [Category("Global Illumination (SSGI)"), DisplayName("Fade Distance (0 = no limit)")]
+        public float SsgiFadeDist { get => GetPost().ssgiFadeDist; set { var p = GetPost(); p.ssgiFadeDist = value; SetPost(p); } }
+
+        [Category("Global Illumination (SSGI)"), DisplayName("Show GI Only (debug)")]
+        public bool SsgiShowOnly { get => GetPost().ssgiShowOnly != 0; set { var p = GetPost(); p.ssgiShowOnly = value ? 1 : 0; SetPost(p); } }
 
         private static GhostFogInfo GetFog() { GhostEngine.GhostEngine_GetFogSettings(out var f); return f; }
         private static void SetFog(GhostFogInfo f) => GhostEngine.GhostEngine_SetFogSettings(ref f);

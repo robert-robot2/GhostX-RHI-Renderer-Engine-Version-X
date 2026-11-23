@@ -828,6 +828,14 @@ struct GhostPostSettings
     int   ssrSteps = 32;                   // 8 .. 96
     float ssrMaxRoughness = 0.6f;          // rougher surfaces get no SSR (they use probes / ambient)
     float ssrEdgeFade = 0.1f;              // fraction of the screen over which reflections fade at the edges
+    // ---- SSGI (Phase 8) ----
+    int   ssgiEnabled = 0;
+    float ssgiIntensity = 1.0f;            // 0 .. 5
+    float ssgiRadius = 2.5f;               // world units the bounce light reaches
+    int   ssgiSamples = 12;                // 4 .. 32
+    float ssgiTemporal = 0.85f;            // history weight: higher = smoother, but slower to react
+    float ssgiFadeDist = 60.0f;            // no GI beyond this camera distance (0 = no limit)
+    int   ssgiShowOnly = 0;                // debug: show the bounce light only
 };
 
 inline void GhostPostSettings_Clamp(GhostPostSettings& p)
@@ -860,6 +868,13 @@ inline void GhostPostSettings_Clamp(GhostPostSettings& p)
     p.ssrSteps = p.ssrSteps < 8 ? 8 : (p.ssrSteps > 96 ? 96 : p.ssrSteps);
     p.ssrMaxRoughness = cf(p.ssrMaxRoughness, 0.05f, 1.0f);
     p.ssrEdgeFade = cf(p.ssrEdgeFade, 0.0f, 0.5f);
+    p.ssgiEnabled = p.ssgiEnabled ? 1 : 0;
+    p.ssgiIntensity = cf(p.ssgiIntensity, 0.0f, 5.0f);
+    p.ssgiRadius = cf(p.ssgiRadius, 0.2f, 10.0f);
+    p.ssgiSamples = p.ssgiSamples < 4 ? 4 : (p.ssgiSamples > 32 ? 32 : p.ssgiSamples);
+    p.ssgiTemporal = cf(p.ssgiTemporal, 0.0f, 0.97f);
+    p.ssgiFadeDist = cf(p.ssgiFadeDist, 0.0f, 1000.0f);
+    p.ssgiShowOnly = p.ssgiShowOnly ? 1 : 0;
 }
 
 // ---- Global fog + volumetric lighting (scene settings) ----

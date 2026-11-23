@@ -3157,18 +3157,32 @@ DrawSceneColor(view, proj, eye, true, overlays, preview, preview ? g_vp[vp].solo
         ID3D12Resource* hdrRes = GhostPost_Resource(g_post, vp);
         const bool fogOn = !preview && g_pipeline->fogPso && FogActive();
         const bool aoOn = !preview && g_post.ssaoReady && g_scene.post.ssaoEnabled;
+        const bool giOn = !preview && g_post.ssgiReady && g_scene.post.ssgiEnabled;
         const float proj6[6] = { proj.m[0][0], proj.m[1][1], proj.m[0][2], proj.m[1][2], proj.m[2][2], proj.m[2][3] };   // the matrix the scene was drawn with (jittered under TAA)
         const float aoNoise = taa ? (float)(g_frameNo % 64u) * 5.588238f : 0.0f;
+        const float giNoise = (float)(g_frameNo % 64u) * 5.588238f;                // GI noise changes every frame in every AA mode: the temporal pass averages it
+
+        GhostSsgiFrame gf = {};
+        {
+            const GhostVec3 camUp2 = forward.Cross(right);
+            gf.eye[0] = eye.x;       gf.eye[1] = eye.y;       gf.eye[2] = eye.z;
+            gf.right[0] = right.x;   gf.right[1] = right.y;   gf.right[2] = right.z;
+            gf.up[0] = camUp2.x;     gf.up[1] = camUp2.y;     gf.up[2] = camUp2.z;
+            gf.fwd[0] = forward.x;   gf.fwd[1] = forward.y;   gf.fwd[2] = forward.z;
+            const GhostMat4 giVP = projClean * view;
+            memcpy(gf.vp, giVP.m, 16 * sizeof(float));
+        }
 
         if (msaa)
         {
             GhostMSAA_End(g_rhi, g_pipeline, g_msaa, vp, hdrRes);                  // colour -> 1x HDR (rests in PIXEL_SHADER_RESOURCE)
             GhostMSAA_ResolveDepth(g_rhi, g_pipeline, g_msaa, vp, rw, rh);         // nearest depth sample -> the 1x depth buffer
-            if (aoOn || fogOn)
+            if (aoOn || giOn || fogOn)
             {
                 ID3D12Resource* dep = g_pipeline->depthBuffers[vp].Get();
                 GhostPost_ToRT(g_rhi, g_post, vp);
-                if (aoOn) GhostPost_SSAO(g_rhi, g_post, vp, hdrRes, GhostPost_RTV(g_post, vp), dep, rw, rh, g_scene.post, proj6, aoNoise);
+                if (aoOn)  GhostPost_SSAO(g_rhi, g_post, vp, hdrRes, GhostPost_RTV(g_post, vp), dep, rw, rh, g_scene.post, proj6, aoNoise);
+                if (giOn)  GhostPost_SSGI(g_rhi, g_post, vp, hdrRes, GhostPost_RTV(g_post, vp), dep, rw, rh, g_scene.post, proj6, gf, giNoise);
                 if (fogOn) GhostPost_Fog(g_rhi, g_pipeline, g_post, vp, hdrRes, GhostPost_RTV(g_post, vp), dep, rw, rh);
                 GhostPost_ToSRV(g_rhi, g_post, vp);
             }
@@ -3178,6 +3192,9 @@ DrawSceneColor(view, proj, eye, true, overlays, preview, preview ? g_vp[vp].solo
             if (aoOn)                                                              // on the jittered image: the TAA resolve averages the sampling noise
                 GhostPost_SSAO(g_rhi, g_post, vp, g_taa.scene[vp].Get(), GhostTAA_SceneRTV(g_taa, vp),
                     g_taa.depth[vp].Get(), rw, rh, g_scene.post, proj6, aoNoise);
+            if (giOn)
+                GhostPost_SSGI(g_rhi, g_post, vp, g_taa.scene[vp].Get(), GhostTAA_SceneRTV(g_taa, vp),
+                    g_taa.depth[vp].Get(), rw, rh, g_scene.post, proj6, gf, giNoise);
             if (fogOn)
                 GhostPost_Fog(g_rhi, g_pipeline, g_post, vp, g_taa.scene[vp].Get(), GhostTAA_SceneRTV(g_taa, vp),
                     g_taa.depth[vp].Get(), rw, rh);
@@ -3200,7 +3217,8 @@ DrawSceneColor(view, proj, eye, true, overlays, preview, preview ? g_vp[vp].solo
         else
         {
             ID3D12Resource* dep = g_pipeline->depthBuffers[vp].Get();              // the HDR target is still in RENDER_TARGET state here
-            if (aoOn) GhostPost_SSAO(g_rhi, g_post, vp, hdrRes, GhostPost_RTV(g_post, vp), dep, rw, rh, g_scene.post, proj6, aoNoise);
+            if (aoOn)  GhostPost_SSAO(g_rhi, g_post, vp, hdrRes, GhostPost_RTV(g_post, vp), dep, rw, rh, g_scene.post, proj6, aoNoise);
+            if (giOn)  GhostPost_SSGI(g_rhi, g_post, vp, hdrRes, GhostPost_RTV(g_post, vp), dep, rw, rh, g_scene.post, proj6, gf, giNoise);
             if (fogOn) GhostPost_Fog(g_rhi, g_pipeline, g_post, vp, hdrRes, GhostPost_RTV(g_post, vp), dep, rw, rh);
             GhostPost_EndScene(g_rhi, g_pipeline, g_post, vp);
         }

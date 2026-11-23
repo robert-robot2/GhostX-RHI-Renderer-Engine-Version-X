@@ -496,6 +496,275 @@ static void InitSsr(ID3D12Device* dev, GhostPost& t)
     t.ssrSrvInc = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     t.ssrReady = true;
 }
+
+// ============================================================
+//  SSGI shaders
+// ============================================================
+static const char* kSsgiHLSL = R"HLSL(
+Texture2D<float>  gDepth : register(t0);
+Texture2D<float4> gTexA  : register(t1);     // gather / composite: scene colour.  blur: its input
+Texture2D<float4> gTexB  : register(t2);     // gather: history.  composite: the blurred bounce light
+SamplerState sLin : register(s0);
+
+cbuffer GiCB : register(b0)
+{
+    float4 cam;     // p00, p11, p02, p12
+    float4 cam2;    // p22, p23, full width, full height
+    float4 eyeP;
+    float4 rightP;
+    float4 upP;
+    float4 fwdP;
+    float4 prm0;    // x radius, y intensity, w samples
+    float4 prm1;    // x noise offset, y history weight, z fade distance, w show only
+    float4 prm2;    // xy blur step, z ignore history (1)
+    float4 prm3;    // xy half-res size
+    row_major float4x4 prevVP;
+};
+
+float4 GiVS(uint vid : SV_VertexID) : SV_POSITION
+{
+    float2 c = float2((vid << 1) & 2, vid & 2);
+    return float4(c * 2.0f - 1.0f, 0.0f, 1.0f);
+}
+
+float LinZ(int2 px)                              // view depth, 1e6 for the sky
+{
+    px = clamp(px, int2(0, 0), int2(cam2.zw) - 1);
+    float d = gDepth.Load(int3(px, 0));
+    return d >= 0.99999f ? 1e6f : cam2.y / (d - cam2.x);
+}
+
+float3 ViewPos(int2 px, float z)
+{
+    float2 ndc = float2(((float)px.x + 0.5f) / cam2.z * 2.0f - 1.0f, 1.0f - ((float)px.y + 0.5f) / cam2.w * 2.0f);
+    return float3((ndc.x - cam.z) / cam.x, (ndc.y - cam.w) / cam.y, 1.0f) * z;
+}
+
+float3 ReconNormal(int2 px, float3 P)
+{
+    float zl = LinZ(px + int2(-1, 0)), zr = LinZ(px + int2(1, 0));
+    float zu = LinZ(px + int2(0, -1)), zd = LinZ(px + int2(0, 1));
+    float3 dx, dy;
+    if (abs(zr - P.z) < abs(zl - P.z)) dx = ViewPos(px + int2(1, 0), zr) - P;  else dx = P - ViewPos(px + int2(-1, 0), zl);
+    if (abs(zd - P.z) < abs(zu - P.z)) dy = ViewPos(px + int2(0, 1), zd) - P;  else dy = P - ViewPos(px + int2(0, -1), zu);
+    float3 n = normalize(cross(dx, dy));
+    if (dot(n, P) > 0.0f) n = -n;
+    return n;
+}
+
+// Half resolution: gather bounce light from nearby screen pixels, then blend with last frame's result (reprojected)
+float4 GiGatherPS(float4 sp : SV_POSITION) : SV_TARGET
+{
+    const int2 hp = int2(sp.xy);
+    const int2 px = hp * 2;
+    const float z = LinZ(px);
+    if (z > 9e5f) return float4(0.0f, 0.0f, 0.0f, 60000.0f);
+    const float zOut = min(z, 59000.0f);
+    if (prm1.z > 0.0f && z > prm1.z) return float4(0.0f, 0.0f, 0.0f, zOut);
+
+    const float3 P = ViewPos(px, z);
+    const float3 N = ReconNormal(px, P);
+    const float pxPerUnit = cam.y * 0.5f * cam2.w / z;
+    const float pxR = min(prm0.x * pxPerUnit, 160.0f);              // never reach more than ~160 pixels away
+    const float R = pxR / max(pxPerUnit, 1e-4f);
+    const int   count = clamp((int)(prm0.w + 0.5f), 4, 32);
+    const float ign  = frac(52.9829189f * frac(dot(float2(px) + prm1.x, float2(0.06711056f, 0.00583715f))));
+    const float ign2 = frac(52.9829189f * frac(dot(float2(px) + prm1.x + 17.0f, float2(0.06711056f, 0.00583715f))));
+
+    float3 gi = float3(0.0f, 0.0f, 0.0f);
+    if (pxR >= 3.0f)
+    {
+        [loop] for (int i = 0; i < count; i++)
+        {
+            const float hh = frac(((float)i + 0.5f) / (float)count + ign2);
+            const float phi = (float)i * 2.39996323f + ign * 6.2831853f;
+            const float2 off = float2(cos(phi), sin(phi)) * (pxR * sqrt(max(hh, 0.02f)));
+            const int2 q = px + int2(round(off));
+            if (q.x < 0 || q.y < 0 || q.x >= (int)cam2.z || q.y >= (int)cam2.w) continue;
+            const float zq = LinZ(q);
+            if (zq > 9e5f) continue;
+            const float3 Q = ViewPos(q, zq);
+            const float3 v = Q - P;
+            const float dist = length(v);
+            if (dist < 1e-3f || dist > R * 1.5f) continue;
+            const float3 dir = v / dist;
+            const float wr = saturate(dot(N, dir) - 0.05f);          // the sample must be above this surface
+            if (wr <= 0.0f) continue;
+            const float we = saturate(dot(ReconNormal(q, Q), -dir)); // and its surface must face us
+            if (we <= 0.0f) continue;
+            const float fall = 1.0f / (1.0f + 4.0f * dist * dist / (R * R));
+            const float3 L = min(pow(max(gTexA.Load(int3(q, 0)).rgb, 0.0f), 2.2f), float3(8.0f, 8.0f, 8.0f));
+            gi += L * (wr * we * fall);
+        }
+        gi *= 4.0f / (float)count;
+    }
+    if (prm1.z > 0.0f) gi *= 1.0f - smoothstep(prm1.z * 0.7f, prm1.z, z);
+
+    // ---- temporal: reproject into the previous frame, reject on a depth mismatch ----
+    const float3 W = eyeP.xyz + rightP.xyz * P.x + upP.xyz * P.y + fwdP.xyz * P.z;
+    const float4 pc = mul(prevVP, float4(W, 1.0f));                  // pc.w = the previous frame's view depth
+    float wgt = 0.0f;
+    float3 hist = float3(0.0f, 0.0f, 0.0f);
+    if (pc.w > 1e-4f && prm2.z < 0.5f)
+    {
+        const float2 pn = pc.xy / pc.w;
+        const float2 puv = float2(pn.x * 0.5f + 0.5f, 0.5f - pn.y * 0.5f);
+        if (all(puv >= float2(0.0f, 0.0f)) && all(puv <= float2(1.0f, 1.0f)))
+        {
+            const int2 hq = clamp(int2(puv * prm3.xy), int2(0, 0), int2(prm3.xy) - 1);
+            const float hz = gTexB.Load(int3(hq, 0)).a;
+            if (abs(hz - pc.w) < 0.08f * pc.w + 0.05f)
+            {
+                hist = gTexB.SampleLevel(sLin, puv, 0).rgb;
+                wgt = prm1.y;
+            }
+        }
+    }
+    return float4(lerp(gi, hist, wgt), zOut);
+}
+
+float4 GiBlurPS(float4 sp : SV_POSITION) : SV_TARGET
+{
+    const int2 pc = int2(sp.xy);
+    const int2 dir = int2(prm2.x + 0.5f, prm2.y + 0.5f);              // stride 2 half-res pixels
+    const int2 hd = int2(prm3.xy);
+    const float4 c0 = gTexA.Load(int3(pc, 0));
+    if (c0.a > 59000.0f) return c0;
+    float3 sum = c0.rgb;
+    float ws = 1.0f;
+    [unroll] for (int k = -3; k <= 3; k++)
+    {
+        if (k == 0) continue;
+        const int2 q = clamp(pc + dir * k, int2(0, 0), hd - 1);
+        const float4 c = gTexA.Load(int3(q, 0));
+        const float w = exp(-0.5f * (float)(k * k) / 4.0f) * exp(-abs(c.a - c0.a) / (0.03f * c0.a + 0.02f));
+        sum += c.rgb * w;
+        ws += w;
+    }
+    return float4(sum / ws, c0.a);
+}
+
+float4 GiCompPS(float4 sp : SV_POSITION) : SV_TARGET
+{
+    const int2 px = int2(sp.xy);
+    const float3 enc = gTexA.Load(int3(px, 0)).rgb;
+    const float z = LinZ(px);
+    const int2 hd = int2(prm3.xy);
+
+    float3 gi = float3(0.0f, 0.0f, 0.0f);
+    if (z < 9e5f)                                                      // joint bilateral upsample from half resolution
+    {
+        const float2 hpos = (float2(px) + 0.5f) * 0.5f - 0.5f;
+        const int2 h0 = int2(floor(hpos));
+        const float2 f = hpos - float2(h0);
+        float3 acc = float3(0.0f, 0.0f, 0.0f);
+        float ws = 0.0f;
+        [unroll] for (int j = 0; j < 4; j++)
+        {
+            const int dx = j & 1, dy = j >> 1;
+            const int2 q = clamp(h0 + int2(dx, dy), int2(0, 0), hd - 1);
+            const float4 g = gTexB.Load(int3(q, 0));
+            const float bw = (dx != 0 ? f.x : 1.0f - f.x) * (dy != 0 ? f.y : 1.0f - f.y);
+            const float dw = exp(-abs(g.a - z) / (0.02f * z + 0.02f));
+            const float w = bw * dw + 1e-5f;
+            acc += g.rgb * w;
+            ws += w;
+        }
+        gi = acc / ws;
+    }
+    gi *= prm0.y;
+    if (prm1.w > 0.5f) return float4(pow(saturate(gi), 1.0f / 2.2f), 1.0f);
+
+    const float3 lin = pow(max(enc, 0.0f), 2.2f);
+    const float lum = max(dot(lin, float3(0.2126f, 0.7152f, 0.0722f)), 1e-4f);
+    const float3 tint = min(lin / lum, float3(1.5f, 1.5f, 1.5f));      // the surface's colour ratio stands in for its albedo
+    const float3 res = lin + gi * tint * 0.6f;
+    return float4(pow(clamp(res, 0.0f, 1000.0f), 1.0f / 2.2f), 1.0f);
+}
+)HLSL";
+
+static void InitSsgi(ID3D12Device* dev, GhostPost& t)
+{
+    t.ssgiReady = false;
+
+    D3D12_DESCRIPTOR_RANGE rg[3] = {};
+    D3D12_ROOT_PARAMETER rp[4] = {};
+    for (int i = 0; i < 3; i++)
+    {
+        rg[i].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+        rg[i].NumDescriptors = 1;
+        rg[i].BaseShaderRegister = (UINT)i;
+        rg[i].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+        rp[i].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        rp[i].DescriptorTable.NumDescriptorRanges = 1;
+        rp[i].DescriptorTable.pDescriptorRanges = &rg[i];
+        rp[i].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    }
+    rp[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+    rp[3].Constants.ShaderRegister = 0;
+    rp[3].Constants.Num32BitValues = 56;                         // 3 tables + 56 constants = 59 of the 64 root DWORDs
+    rp[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+    D3D12_STATIC_SAMPLER_DESC samp = LinearClampSampler();
+    D3D12_ROOT_SIGNATURE_DESC rsd = {};
+    rsd.NumParameters = 4;
+    rsd.pParameters = rp;
+    rsd.NumStaticSamplers = 1;
+    rsd.pStaticSamplers = &samp;
+    ComPtr<ID3DBlob> blob, err;
+    if (FAILED(D3D12SerializeRootSignature(&rsd, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &err)) ||
+        FAILED(dev->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&t.ssgiRootSig))))
+        return;
+
+    ComPtr<ID3DBlob> vs, p1, p2, p3;
+    if (!CompilePost(kSsgiHLSL, "GiVS", "vs_5_1", &vs) || !CompilePost(kSsgiHLSL, "GiGatherPS", "ps_5_1", &p1) ||
+        !CompilePost(kSsgiHLSL, "GiBlurPS", "ps_5_1", &p2) || !CompilePost(kSsgiHLSL, "GiCompPS", "ps_5_1", &p3))
+    {
+        OutputDebugStringA("[GhostX] SSGI shader failed to compile: SSGI is disabled.\n");
+        return;
+    }
+
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC d = {};
+    d.pRootSignature = t.ssgiRootSig.Get();
+    d.VS = { vs->GetBufferPointer(), vs->GetBufferSize() };
+    d.InputLayout = { nullptr, 0 };
+    d.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    d.NumRenderTargets = 1;
+    d.RTVFormats[0] = GHOST_HDR_FORMAT;
+    d.SampleDesc.Count = 1;
+    d.SampleMask = UINT_MAX;
+    d.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+    d.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+    d.RasterizerState.DepthClipEnable = TRUE;
+    d.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+    d.DepthStencilState.DepthEnable = FALSE;
+    d.DSVFormat = DXGI_FORMAT_UNKNOWN;
+
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC g = d, b = d, c = d;
+    g.PS = { p1->GetBufferPointer(), p1->GetBufferSize() };
+    b.PS = { p2->GetBufferPointer(), p2->GetBufferSize() };
+    c.PS = { p3->GetBufferPointer(), p3->GetBufferSize() };
+    if (FAILED(dev->CreateGraphicsPipelineState(&g, IID_PPV_ARGS(&t.ssgiGatherPso))) ||
+        FAILED(dev->CreateGraphicsPipelineState(&b, IID_PPV_ARGS(&t.ssgiBlurPso))) ||
+        FAILED(dev->CreateGraphicsPipelineState(&c, IID_PPV_ARGS(&t.ssgiCompPso))))
+        return;
+
+    D3D12_DESCRIPTOR_HEAP_DESC rh = {};
+    rh.NumDescriptors = GHOST_MAX_SURFACES * 4;
+    rh.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+    D3D12_DESCRIPTOR_HEAP_DESC sh = {};
+    sh.NumDescriptors = GHOST_MAX_SURFACES * 6;
+    sh.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+    sh.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+    if (FAILED(dev->CreateDescriptorHeap(&rh, IID_PPV_ARGS(&t.ssgiRtvHeap))) ||
+        FAILED(dev->CreateDescriptorHeap(&sh, IID_PPV_ARGS(&t.ssgiSrvHeap))))
+        return;
+    t.ssgiRtvInc = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+    t.ssgiSrvInc = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    t.ssgiReady = true;
+}
+
+
 // ============================================================
 //  Lifecycle
 // ============================================================
@@ -630,6 +899,7 @@ GhostResult GhostPost_Init(IGhostRHI* rhi, GhostPost& t)
     t.srvInc = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     InitSsao(dev, t);                                          // optional: a failure only disables SSAO
     InitSsr(dev, t);                                           // optional: a failure only disables SSR
+    InitSsgi(dev, t);                                          // optional: a failure only disables SSGI
     t.ready = true;
     return GHOST_OK;
 }
@@ -648,6 +918,9 @@ void GhostPost_Release(GhostPost& t, int id)
     t.ssrColor[id].Reset(); t.ssrDepth[id].Reset();
     t.ssrW[id] = t.ssrH[id] = 0;
     t.ssrHave[id] = false;
+    for (int k = 0; k < 2; k++) { t.ssgiT[k][id].Reset(); t.ssgiBlur[k][id].Reset(); }
+    t.ssgiW[id] = t.ssgiH[id] = 0;
+    t.ssgiHave[id] = false;
 }
 
 void GhostPost_Shutdown(GhostPost& t)
@@ -667,6 +940,9 @@ void GhostPost_Shutdown(GhostPost& t)
     t.ssaoReady = false;
     t.ssrDepthPso.Reset(); t.ssrRootSig.Reset(); t.ssrRtvHeap.Reset(); t.ssrSrvHeap.Reset();
     t.ssrReady = false;
+    t.ssgiGatherPso.Reset(); t.ssgiBlurPso.Reset(); t.ssgiCompPso.Reset();
+    t.ssgiRootSig.Reset(); t.ssgiRtvHeap.Reset(); t.ssgiSrvHeap.Reset();
+    t.ssgiReady = false;
 }
 
 GhostResult GhostPost_Ensure(IGhostRHI* rhi, GhostPost& t, int id, unsigned int w, unsigned int h)
@@ -1203,4 +1479,154 @@ void GhostPost_SSRCapture(IGhostRHI* rhi, GhostPost& t, int id, ID3D12Resource* 
     memcpy(t.ssrPrevView[id], view12, sizeof(float) * 12);
     memcpy(t.ssrPrevProj[id], proj8, sizeof(float) * 8);
     t.ssrHave[id] = true;
+}
+
+static GhostResult EnsureSsgiTargets(IGhostRHI* rhi, GhostPost& t, int id, unsigned int hw, unsigned int hh)
+{
+    if (t.ssgiT[0][id] && t.ssgiT[1][id] && t.ssgiBlur[0][id] && t.ssgiBlur[1][id] && t.ssgiW[id] == hw && t.ssgiH[id] == hh)
+        return GHOST_OK;
+    ID3D12Device* dev = rhi->GetDevice();
+    for (int k = 0; k < 2; k++) { t.ssgiT[k][id].Reset(); t.ssgiBlur[k][id].Reset(); }   // the GPU is idle between frames
+    t.ssgiHave[id] = false;
+    t.ssgiRead[id] = 0;
+
+    D3D12_HEAP_PROPERTIES hp = {};
+    hp.Type = D3D12_HEAP_TYPE_DEFAULT;
+    D3D12_RESOURCE_DESC rd = {};
+    rd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    rd.Width = hw;
+    rd.Height = hh;
+    rd.DepthOrArraySize = 1;
+    rd.MipLevels = 1;
+    rd.Format = GHOST_HDR_FORMAT;
+    rd.SampleDesc.Count = 1;
+    rd.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    rd.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+
+    ComPtr<ID3D12Resource> r[4];
+    for (int i = 0; i < 4; i++)
+        if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd,
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr, IID_PPV_ARGS(&r[i]))))
+            return GHOST_FAIL;
+
+    const unsigned int rb = (unsigned int)id * 4, sb = (unsigned int)id * 6;
+    D3D12_SHADER_RESOURCE_VIEW_DESC sv = {};
+    sv.Format = GHOST_HDR_FORMAT;
+    sv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    sv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    sv.Texture2D.MipLevels = 1;
+    for (int i = 0; i < 4; i++)                                  // RTV slots 0..3 and SRV slots 2..5 = T0, T1, blurA, blurB
+    {
+        dev->CreateRenderTargetView(r[i].Get(), nullptr, PostHandle(t.ssgiRtvHeap.Get(), rb + (unsigned int)i, t.ssgiRtvInc));
+        dev->CreateShaderResourceView(r[i].Get(), &sv, PostHandle(t.ssgiSrvHeap.Get(), sb + 2 + (unsigned int)i, t.ssgiSrvInc));
+    }
+    t.ssgiT[0][id] = r[0];  t.ssgiT[1][id] = r[1];
+    t.ssgiBlur[0][id] = r[2];  t.ssgiBlur[1][id] = r[3];
+    t.ssgiW[id] = hw;
+    t.ssgiH[id] = hh;
+    return GHOST_OK;
+}
+
+void GhostPost_SSGI(IGhostRHI* rhi, GhostPost& t, int id, ID3D12Resource* color, D3D12_CPU_DESCRIPTOR_HANDLE colorRTV,
+    ID3D12Resource* depth, unsigned int w, unsigned int h, const GhostPostSettings& s, const float* proj6,
+    const GhostSsgiFrame& f, float noiseOffset)
+{
+    if (!t.ready || !t.ssgiReady || !s.ssgiEnabled || !color || !depth || !proj6 || id < 0 || id >= GHOST_MAX_SURFACES) return;
+    const unsigned int hw = (w + 1) / 2, hh = (h + 1) / 2;
+    if (EnsureSsgiTargets(rhi, t, id, hw, hh) != GHOST_OK || EnsureFogCopy(rhi, t, id, w, h) != GHOST_OK) return;
+
+    ID3D12Device* dev = rhi->GetDevice();
+    auto* cmd = rhi->GetCmdList();
+    ID3D12Resource* cp = t.fogCopy[id].Get();
+    const int rd = t.ssgiRead[id], wr = rd ^ 1;
+    const bool reset = !t.ssgiHave[id];
+    const unsigned int sb = (unsigned int)id * 6, rb = (unsigned int)id * 4;
+
+    // per-frame descriptors: slot 0 = depth, slot 1 = scene copy (slots 2..5 were written when the targets were created)
+    D3D12_SHADER_RESOURCE_VIEW_DESC sv = {};
+    sv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    sv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    sv.Texture2D.MipLevels = 1;
+    sv.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+    dev->CreateShaderResourceView(depth, &sv, PostHandle(t.ssgiSrvHeap.Get(), sb + 0, t.ssgiSrvInc));
+    sv.Format = GHOST_HDR_FORMAT;
+    dev->CreateShaderResourceView(cp, &sv, PostHandle(t.ssgiSrvHeap.Get(), sb + 1, t.ssgiSrvInc));
+
+    auto gpu = [&](unsigned int slot)
+        {
+            D3D12_GPU_DESCRIPTOR_HANDLE g = t.ssgiSrvHeap->GetGPUDescriptorHandleForHeapStart();
+            g.ptr += (UINT64)(sb + slot) * t.ssgiSrvInc;
+            return g;
+        };
+    auto setup = [&](ID3D12PipelineState* pso, D3D12_CPU_DESCRIPTOR_HANDLE rtv, unsigned int tw, unsigned int th,
+        unsigned int s0, unsigned int s1, unsigned int s2, float dx, float dy)
+        {
+            cmd->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+            D3D12_VIEWPORT vp = { 0.0f, 0.0f, (float)tw, (float)th, 0.0f, 1.0f };
+            D3D12_RECT sc = { 0, 0, (LONG)tw, (LONG)th };
+            cmd->RSSetViewports(1, &vp);
+            cmd->RSSetScissorRects(1, &sc);
+            cmd->SetPipelineState(pso);
+            cmd->SetGraphicsRootDescriptorTable(0, gpu(s0));
+            cmd->SetGraphicsRootDescriptorTable(1, gpu(s1));
+            cmd->SetGraphicsRootDescriptorTable(2, gpu(s2));
+
+            float k[56] = {};
+            k[0] = proj6[0]; k[1] = proj6[1]; k[2] = proj6[2]; k[3] = proj6[3];
+            k[4] = proj6[4]; k[5] = proj6[5]; k[6] = (float)w; k[7] = (float)h;
+            k[8] = f.eye[0];   k[9] = f.eye[1];   k[10] = f.eye[2];
+            k[12] = f.right[0]; k[13] = f.right[1]; k[14] = f.right[2];
+            k[16] = f.up[0];   k[17] = f.up[1];   k[18] = f.up[2];
+            k[20] = f.fwd[0];  k[21] = f.fwd[1];  k[22] = f.fwd[2];
+            k[24] = s.ssgiRadius; k[25] = s.ssgiIntensity; k[27] = (float)s.ssgiSamples;
+            k[28] = noiseOffset; k[29] = s.ssgiTemporal; k[30] = s.ssgiFadeDist; k[31] = (float)s.ssgiShowOnly;
+            k[32] = dx; k[33] = dy; k[34] = reset ? 1.0f : 0.0f;
+            k[36] = (float)hw; k[37] = (float)hh;
+            memcpy(k + 40, t.ssgiPrevVP[id], sizeof(float) * 16);
+            cmd->SetGraphicsRoot32BitConstants(3, 56, k, 0);
+            cmd->DrawInstanced(3, 1, 0, 0);
+        };
+    auto toRT = [&](ID3D12Resource* r) { D3D12_RESOURCE_BARRIER b = PostTrans(r, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET); cmd->ResourceBarrier(1, &b); };
+    auto toSRV = [&](ID3D12Resource* r) { D3D12_RESOURCE_BARRIER b = PostTrans(r, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE); cmd->ResourceBarrier(1, &b); };
+    auto rtv = [&](unsigned int i) { return PostHandle(t.ssgiRtvHeap.Get(), rb + i, t.ssgiRtvInc); };
+
+    // depth becomes readable; the scene is copied (the composite reads the copy and draws over the original)
+    D3D12_RESOURCE_BARRIER b = PostTrans(depth, D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    cmd->ResourceBarrier(1, &b);
+    D3D12_RESOURCE_BARRIER cb[2];
+    cb[0] = PostTrans(color, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    cb[1] = PostTrans(cp, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+    cmd->ResourceBarrier(2, cb);
+    cmd->CopyResource(cp, color);
+    cb[0] = PostTrans(color, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    cb[1] = PostTrans(cp, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    cmd->ResourceBarrier(2, cb);
+
+    ID3D12DescriptorHeap* heaps[] = { t.ssgiSrvHeap.Get() };
+    cmd->SetDescriptorHeaps(1, heaps);
+    cmd->SetGraphicsRootSignature(t.ssgiRootSig.Get());
+    cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+    // 1. gather + temporal: depth, scene, history(rd) -> T[wr]
+    toRT(t.ssgiT[wr][id].Get());
+    setup(t.ssgiGatherPso.Get(), rtv((unsigned int)wr), hw, hh, 0, 1, 2 + (unsigned int)rd, 0.0f, 0.0f);
+    toSRV(t.ssgiT[wr][id].Get());
+
+    // 2. blur horizontal: T[wr] -> blurA     3. blur vertical: blurA -> blurB
+    toRT(t.ssgiBlur[0][id].Get());
+    setup(t.ssgiBlurPso.Get(), rtv(2), hw, hh, 0, 2 + (unsigned int)wr, 0, 2.0f, 0.0f);
+    toSRV(t.ssgiBlur[0][id].Get());
+    toRT(t.ssgiBlur[1][id].Get());
+    setup(t.ssgiBlurPso.Get(), rtv(3), hw, hh, 0, 4, 0, 0.0f, 2.0f);
+    toSRV(t.ssgiBlur[1][id].Get());
+
+    // 4. composite over the scene (full resolution)
+    setup(t.ssgiCompPso.Get(), colorRTV, w, h, 0, 1, 5, 0.0f, 0.0f);
+
+    b = PostTrans(depth, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+    cmd->ResourceBarrier(1, &b);
+
+    memcpy(t.ssgiPrevVP[id], f.vp, sizeof(float) * 16);
+    t.ssgiRead[id] = wr;
+    t.ssgiHave[id] = true;
 }

@@ -161,8 +161,8 @@ struct GhostSoundInfo
 typedef int(__cdecl* GhostFontProviderFn)(const char* utf8AbsPath);   // returns a font slot, 0 = failed
 typedef void(__cdecl* GhostLoadProgressFn)(const char* utf8Kind, const char* utf8Name);
 struct GhostShadowTuning { int filter; float softness, bias, normalBias, distance; };
-
 struct GhostMapInfo { int textureId; float amount; int channel; int invert; };
+
 struct GhostPostInfo
 {
     int   toneMode;                                   // 0 none, 1 Reinhard, 2 ACES, 3 Neutral
@@ -181,6 +181,11 @@ struct GhostPostInfo
     float ssrIntensity, ssrMaxDistance, ssrThickness;
     int   ssrSteps;
     float ssrMaxRoughness, ssrEdgeFade;
+    int   ssgiEnabled;
+    float ssgiIntensity, ssgiRadius;
+    int   ssgiSamples;
+    float ssgiTemporal, ssgiFadeDist;
+    int   ssgiShowOnly;
 };
 
 struct GhostSurfaceInfo
