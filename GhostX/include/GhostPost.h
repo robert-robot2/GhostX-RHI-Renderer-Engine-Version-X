@@ -32,6 +32,18 @@ struct GhostPost
     unsigned int                 ssaoRtvInc = 0, ssaoSrvInc = 0;
     ComPtr<ID3D12Resource>       ssaoA[GHOST_MAX_SURFACES], ssaoB[GHOST_MAX_SURFACES];
     unsigned int                 ssaoW[GHOST_MAX_SURFACES] = {}, ssaoH[GHOST_MAX_SURFACES] = {};
+    // ---- SSR history (optional: ssrReady stays false if its shader fails) ----
+    bool                         ssrReady = false;
+    ComPtr<ID3D12RootSignature>  ssrRootSig;
+    ComPtr<ID3D12PipelineState>  ssrDepthPso;                 // depth -> view-space depth (R32F)
+    ComPtr<ID3D12DescriptorHeap> ssrRtvHeap, ssrSrvHeap;
+    unsigned int                 ssrRtvInc = 0, ssrSrvInc = 0;
+    ComPtr<ID3D12Resource>       ssrColor[GHOST_MAX_SURFACES];    // last frame's 1x HDR image
+    ComPtr<ID3D12Resource>       ssrDepth[GHOST_MAX_SURFACES];    // last frame's view-space depth (1e6 = sky)
+    unsigned int                 ssrW[GHOST_MAX_SURFACES] = {}, ssrH[GHOST_MAX_SURFACES] = {};
+    bool                         ssrHave[GHOST_MAX_SURFACES] = {};   // the history holds a finished frame
+    float                        ssrPrevView[GHOST_MAX_SURFACES][12] = {};   // view matrix rows 0..2 of that frame
+    float                        ssrPrevProj[GHOST_MAX_SURFACES][8] = {};    // p00 p11 p02 p12 p22 p23 width height
 };
 
 GhostResult GhostPost_Init(IGhostRHI* rhi, GhostPost& t);
@@ -66,3 +78,18 @@ void GhostPost_Fog(IGhostRHI* rhi, GhostPipeline* p, GhostPost& t, int id, ID3D1
 // proj6 = { p00, p11, p02, p12, p22, p23 } of the matrix the scene was drawn with (jittered under TAA).
 void GhostPost_SSAO(IGhostRHI* rhi, GhostPost& t, int id, ID3D12Resource* color, D3D12_CPU_DESCRIPTOR_HANDLE colorRTV,
     ID3D12Resource* depth, unsigned int w, unsigned int h, const GhostPostSettings& s, const float* proj6, float noiseOffset);
+
+// SSR history. UpdateTargets creates the history for this surface while SSR is wanted, and frees it otherwise.
+void GhostPost_SSRUpdateTargets(IGhostRHI* rhi, GhostPost& t, int id, bool wanted, unsigned int w, unsigned int h);
+// Points the shared t12 / t13 descriptors at this surface's history (null descriptors when it has none). Every viewport calls this before drawing.
+void GhostPost_SSRBind(IGhostRHI* rhi, GhostPipeline* p, GhostPost& t, int id);
+// End of the frame: copies the finished HDR image (PIXEL_SHADER_RESOURCE) and the depth (typeless D24S8, DEPTH_WRITE) into the history.
+// view12 = view matrix rows 0..2, proj8 = p00 p11 p02 p12 p22 p23 width height (clean, unjittered). States are restored.
+void GhostPost_SSRCapture(IGhostRHI* rhi, GhostPost& t, int id, ID3D12Resource* color, ID3D12Resource* depth,
+    unsigned int w, unsigned int h, const float* view12, const float* proj8);
+
+inline bool GhostPost_SSRHistoryValid(const GhostPost& t, int id)
+{
+    return id >= 0 && id < GHOST_MAX_SURFACES && t.ssrHave[id] && t.ssrColor[id] && t.ssrDepth[id];
+}
+inline void GhostPost_SSRReset(GhostPost& t) { for (int i = 0; i < GHOST_MAX_SURFACES; i++) t.ssrHave[i] = false; }   // scene changed: drop the history

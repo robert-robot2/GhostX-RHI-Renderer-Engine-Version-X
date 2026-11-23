@@ -76,8 +76,8 @@ float DrPS(float4 pos : SV_POSITION) : SV_Depth
         const size_t len = strlen(kDepthHLSL);
         if (FAILED(D3D12SerializeRootSignature(&rsd, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &err)) ||
             FAILED(device->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&m.depthRootSig))) ||
-            FAILED(D3DCompile(kDepthHLSL, len, "GhostMSAADepth", nullptr, nullptr, "DrVS", "vs_6_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &vs, &err)) ||
-            FAILED(D3DCompile(kDepthHLSL, len, "GhostMSAADepth", nullptr, nullptr, "DrPS", "ps_6_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &ps, &err)))
+            FAILED(D3DCompile(kDepthHLSL, len, "GhostMSAADepth", nullptr, nullptr, "DrVS", "vs_5_1", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &vs, &err)) ||
+            FAILED(D3DCompile(kDepthHLSL, len, "GhostMSAADepth", nullptr, nullptr, "DrPS", "ps_5_1", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &ps, &err)))
         {
             m.maxSamples = 1; return GHOST_FAIL;
         }

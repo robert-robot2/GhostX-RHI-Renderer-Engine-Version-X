@@ -1075,7 +1075,7 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
     // add after SRV range block this may be incorrrect
     D3D12_DESCRIPTOR_RANGE shadowRange = {};
     shadowRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-    shadowRange.NumDescriptors = 1 + GHOST_MAX_PROBES + 2;   // t1 shadow maps, t2..t9 probes, t10 fog depth, t11 fog scene copy
+    shadowRange.NumDescriptors = 1 + GHOST_MAX_PROBES + 4;   // t1 shadow, t2..t9 probes, t10/t11 fog, t12/t13 SSR history
     shadowRange.BaseShaderRegister = 1;                       // t1
     shadowRange.RegisterSpace = 0;
     shadowRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
@@ -1529,7 +1529,19 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
         fh.ptr += (SIZE_T)GHOST_FOG_SRV_BASE * p->srvIncrement;
         for (int i = 0; i < 2; i++) { device->CreateShaderResourceView(nullptr, &nd, fh); fh.ptr += p->srvIncrement; }
     }
-
+    {   // the two SSR history slots: null descriptors until a viewport binds its history
+        D3D12_SHADER_RESOURCE_VIEW_DESC nd = {};
+        nd.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        nd.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        nd.Texture2D.MipLevels = 1;
+        D3D12_CPU_DESCRIPTOR_HANDLE sh = p->cbvHeap->GetCPUDescriptorHandleForHeapStart();
+        sh.ptr += (SIZE_T)GHOST_SSR_SRV_BASE * p->srvIncrement;
+        nd.Format = GHOST_HDR_FORMAT;
+        device->CreateShaderResourceView(nullptr, &nd, sh);
+        sh.ptr += p->srvIncrement;
+        nd.Format = DXGI_FORMAT_R32_FLOAT;
+        device->CreateShaderResourceView(nullptr, &nd, sh);
+    }
 
     // ---- DSV Heap + Depth Buffer ----
     D3D12_DESCRIPTOR_HEAP_DESC dsvHeapDesc = {};

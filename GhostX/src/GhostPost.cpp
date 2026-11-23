@@ -412,7 +412,90 @@ static void InitSsao(ID3D12Device* dev, GhostPost& t)
     t.ssaoReady = true;
 }
 
+// ============================================================
+//  SSR history capture shader: depth -> view-space depth
+// ============================================================
+static const char* kSsrCapHLSL = R"HLSL(
+Texture2D<float> gDepth : register(t0);
+cbuffer SsrCapCB : register(b0) { float4 k; };       // x = proj[2][2], y = proj[2][3]
 
+float4 CapVS(uint vid : SV_VertexID) : SV_POSITION
+{
+    float2 c = float2((vid << 1) & 2, vid & 2);
+    return float4(c * 2.0f - 1.0f, 0.0f, 1.0f);
+}
+
+float CapPS(float4 pos : SV_POSITION) : SV_TARGET
+{
+    float d = gDepth.Load(int3(int2(pos.xy), 0));
+    return d >= 0.99999f ? 1e6f : k.y / (d - k.x);
+}
+)HLSL";
+
+static void InitSsr(ID3D12Device* dev, GhostPost& t)
+{
+    t.ssrReady = false;
+
+    D3D12_DESCRIPTOR_RANGE range = {};
+    range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    range.NumDescriptors = 1;
+    range.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+    D3D12_ROOT_PARAMETER rp[2] = {};
+    rp[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    rp[0].DescriptorTable.NumDescriptorRanges = 1;
+    rp[0].DescriptorTable.pDescriptorRanges = &range;
+    rp[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    rp[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+    rp[1].Constants.ShaderRegister = 0;
+    rp[1].Constants.Num32BitValues = 4;
+    rp[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    D3D12_ROOT_SIGNATURE_DESC rsd = {};
+    rsd.NumParameters = 2;
+    rsd.pParameters = rp;
+    ComPtr<ID3DBlob> blob, err;
+    if (FAILED(D3D12SerializeRootSignature(&rsd, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &err)) ||
+        FAILED(dev->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&t.ssrRootSig))))
+        return;
+
+    ComPtr<ID3DBlob> vs, ps;
+    if (!CompilePost(kSsrCapHLSL, "CapVS", "vs_5_1", &vs) || !CompilePost(kSsrCapHLSL, "CapPS", "ps_5_1", &ps))
+    {
+        OutputDebugStringA("[GhostX] SSR capture shader failed to compile: SSR is disabled.\n");
+        return;
+    }
+
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC d = {};
+    d.pRootSignature = t.ssrRootSig.Get();
+    d.VS = { vs->GetBufferPointer(), vs->GetBufferSize() };
+    d.PS = { ps->GetBufferPointer(), ps->GetBufferSize() };
+    d.InputLayout = { nullptr, 0 };
+    d.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    d.NumRenderTargets = 1;
+    d.RTVFormats[0] = DXGI_FORMAT_R32_FLOAT;
+    d.SampleDesc.Count = 1;
+    d.SampleMask = UINT_MAX;
+    d.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+    d.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+    d.RasterizerState.DepthClipEnable = TRUE;
+    d.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+    d.DepthStencilState.DepthEnable = FALSE;
+    d.DSVFormat = DXGI_FORMAT_UNKNOWN;
+    if (FAILED(dev->CreateGraphicsPipelineState(&d, IID_PPV_ARGS(&t.ssrDepthPso)))) return;
+
+    D3D12_DESCRIPTOR_HEAP_DESC rh = {};
+    rh.NumDescriptors = GHOST_MAX_SURFACES;
+    rh.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+    D3D12_DESCRIPTOR_HEAP_DESC sh = {};
+    sh.NumDescriptors = 1;
+    sh.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+    sh.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+    if (FAILED(dev->CreateDescriptorHeap(&rh, IID_PPV_ARGS(&t.ssrRtvHeap))) ||
+        FAILED(dev->CreateDescriptorHeap(&sh, IID_PPV_ARGS(&t.ssrSrvHeap))))
+        return;
+    t.ssrRtvInc = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+    t.ssrSrvInc = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    t.ssrReady = true;
+}
 // ============================================================
 //  Lifecycle
 // ============================================================
@@ -546,6 +629,7 @@ GhostResult GhostPost_Init(IGhostRHI* rhi, GhostPost& t)
     t.rtvInc = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
     t.srvInc = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     InitSsao(dev, t);                                          // optional: a failure only disables SSAO
+    InitSsr(dev, t);                                           // optional: a failure only disables SSR
     t.ready = true;
     return GHOST_OK;
 }
@@ -561,6 +645,9 @@ void GhostPost_Release(GhostPost& t, int id)
     t.fogCopy[id].Reset();
     t.ssaoA[id].Reset(); t.ssaoB[id].Reset();
     t.ssaoW[id] = t.ssaoH[id] = 0;
+    t.ssrColor[id].Reset(); t.ssrDepth[id].Reset();
+    t.ssrW[id] = t.ssrH[id] = 0;
+    t.ssrHave[id] = false;
 }
 
 void GhostPost_Shutdown(GhostPost& t)
@@ -578,6 +665,8 @@ void GhostPost_Shutdown(GhostPost& t)
     t.ssaoPso.Reset(); t.ssaoBlurPso.Reset(); t.ssaoCompPso.Reset();
     t.ssaoRootSig.Reset(); t.ssaoRtvHeap.Reset(); t.ssaoSrvHeap.Reset();
     t.ssaoReady = false;
+    t.ssrDepthPso.Reset(); t.ssrRootSig.Reset(); t.ssrRtvHeap.Reset(); t.ssrSrvHeap.Reset();
+    t.ssrReady = false;
 }
 
 GhostResult GhostPost_Ensure(IGhostRHI* rhi, GhostPost& t, int id, unsigned int w, unsigned int h)
@@ -988,4 +1077,130 @@ void GhostPost_SSAO(IGhostRHI* rhi, GhostPost& t, int id, ID3D12Resource* color,
 
     b = PostTrans(depth, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_DEPTH_WRITE);
     cmd->ResourceBarrier(1, &b);
+}
+
+
+void GhostPost_SSRUpdateTargets(IGhostRHI* rhi, GhostPost& t, int id, bool wanted, unsigned int w, unsigned int h)
+{
+    if (id < 0 || id >= GHOST_MAX_SURFACES) return;
+    if (!wanted || !t.ssrReady || w == 0 || h == 0)
+    {
+        if (t.ssrColor[id] || t.ssrDepth[id])
+        {
+            t.ssrColor[id].Reset();                            // the GPU is idle between frames. GhostPost_SSRBind then writes null descriptors
+            t.ssrDepth[id].Reset();
+            t.ssrW[id] = t.ssrH[id] = 0;
+        }
+        t.ssrHave[id] = false;
+        return;
+    }
+    if (t.ssrColor[id] && t.ssrDepth[id] && t.ssrW[id] == w && t.ssrH[id] == h) return;
+
+    ID3D12Device* dev = rhi->GetDevice();
+    t.ssrColor[id].Reset();
+    t.ssrDepth[id].Reset();
+    t.ssrHave[id] = false;
+
+    D3D12_HEAP_PROPERTIES hp = {};
+    hp.Type = D3D12_HEAP_TYPE_DEFAULT;
+    D3D12_RESOURCE_DESC rd = {};
+    rd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    rd.Width = w;
+    rd.Height = h;
+    rd.DepthOrArraySize = 1;
+    rd.MipLevels = 1;
+    rd.SampleDesc.Count = 1;
+    rd.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    rd.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+
+    ComPtr<ID3D12Resource> c, d;
+    rd.Format = GHOST_HDR_FORMAT;                              // same description as the 1x HDR target (CopyResource needs a match)
+    if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd,
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr, IID_PPV_ARGS(&c)))) return;
+    rd.Format = DXGI_FORMAT_R32_FLOAT;
+    if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd,
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr, IID_PPV_ARGS(&d)))) return;
+
+    dev->CreateRenderTargetView(d.Get(), nullptr, PostHandle(t.ssrRtvHeap.Get(), (unsigned int)id, t.ssrRtvInc));
+    t.ssrColor[id] = c;
+    t.ssrDepth[id] = d;
+    t.ssrW[id] = w;
+    t.ssrH[id] = h;
+}
+
+void GhostPost_SSRBind(IGhostRHI* rhi, GhostPipeline* p, GhostPost& t, int id)
+{
+    if (!rhi || !p || !p->cbvHeap) return;
+    ID3D12Device* dev = rhi->GetDevice();
+    const bool has = id >= 0 && id < GHOST_MAX_SURFACES && t.ssrColor[id] && t.ssrDepth[id];
+
+    D3D12_SHADER_RESOURCE_VIEW_DESC sv = {};
+    sv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    sv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    sv.Texture2D.MipLevels = 1;
+    D3D12_CPU_DESCRIPTOR_HANDLE h = p->cbvHeap->GetCPUDescriptorHandleForHeapStart();
+    h.ptr += (SIZE_T)GHOST_SSR_SRV_BASE * p->srvIncrement;
+    sv.Format = GHOST_HDR_FORMAT;
+    dev->CreateShaderResourceView(has ? t.ssrColor[id].Get() : nullptr, &sv, h);
+    h.ptr += p->srvIncrement;
+    sv.Format = DXGI_FORMAT_R32_FLOAT;
+    dev->CreateShaderResourceView(has ? t.ssrDepth[id].Get() : nullptr, &sv, h);
+}
+
+void GhostPost_SSRCapture(IGhostRHI* rhi, GhostPost& t, int id, ID3D12Resource* color, ID3D12Resource* depth,
+    unsigned int w, unsigned int h, const float* view12, const float* proj8)
+{
+    if (!t.ready || !t.ssrReady || id < 0 || id >= GHOST_MAX_SURFACES || !color || !depth || !view12 || !proj8 ||
+        !t.ssrColor[id] || !t.ssrDepth[id] || t.ssrW[id] != w || t.ssrH[id] != h) return;
+    ID3D12Device* dev = rhi->GetDevice();
+    auto* cmd = rhi->GetCmdList();
+    ID3D12Resource* hc = t.ssrColor[id].Get();
+    ID3D12Resource* hd = t.ssrDepth[id].Get();
+
+    // ---- colour: straight copy of the finished HDR image ----
+    D3D12_RESOURCE_BARRIER b[2];
+    b[0] = PostTrans(color, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    b[1] = PostTrans(hc, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+    cmd->ResourceBarrier(2, b);
+    cmd->CopyResource(hc, color);
+    b[0] = PostTrans(color, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    b[1] = PostTrans(hc, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    cmd->ResourceBarrier(2, b);
+
+    // ---- depth: converted to view-space depth ----
+    D3D12_SHADER_RESOURCE_VIEW_DESC sv = {};
+    sv.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+    sv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    sv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    sv.Texture2D.MipLevels = 1;
+    dev->CreateShaderResourceView(depth, &sv, t.ssrSrvHeap->GetCPUDescriptorHandleForHeapStart());
+
+    b[0] = PostTrans(depth, D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    b[1] = PostTrans(hd, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    cmd->ResourceBarrier(2, b);
+
+    D3D12_CPU_DESCRIPTOR_HANDLE rtv = PostHandle(t.ssrRtvHeap.Get(), (unsigned int)id, t.ssrRtvInc);
+    cmd->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+    D3D12_VIEWPORT vp = { 0.0f, 0.0f, (float)w, (float)h, 0.0f, 1.0f };
+    D3D12_RECT sc = { 0, 0, (LONG)w, (LONG)h };
+    cmd->RSSetViewports(1, &vp);
+    cmd->RSSetScissorRects(1, &sc);
+
+    ID3D12DescriptorHeap* heaps[] = { t.ssrSrvHeap.Get() };
+    cmd->SetDescriptorHeaps(1, heaps);
+    cmd->SetPipelineState(t.ssrDepthPso.Get());
+    cmd->SetGraphicsRootSignature(t.ssrRootSig.Get());
+    cmd->SetGraphicsRootDescriptorTable(0, t.ssrSrvHeap->GetGPUDescriptorHandleForHeapStart());
+    const float k[4] = { proj8[4], proj8[5], 0.0f, 0.0f };      // p22, p23
+    cmd->SetGraphicsRoot32BitConstants(1, 4, k, 0);
+    cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    cmd->DrawInstanced(3, 1, 0, 0);
+
+    b[0] = PostTrans(depth, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+    b[1] = PostTrans(hd, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    cmd->ResourceBarrier(2, b);
+
+    memcpy(t.ssrPrevView[id], view12, sizeof(float) * 12);
+    memcpy(t.ssrPrevProj[id], proj8, sizeof(float) * 8);
+    t.ssrHave[id] = true;
 }

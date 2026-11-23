@@ -2978,6 +2978,24 @@ static void FillFogCB(GhostSceneCB& cb, const GhostVec3& eye, const GhostVec3& f
 }
 
 // ============================================================
+//  SSR: previous-frame camera for the ray march in PSMain
+// ============================================================
+static void FillSsrCB(GhostSceneCB& cb, int vp)
+{
+    cb.ssrA[0] = 0.0f;                                         // 0 = off (a first frame, or no history yet)
+    const GhostPostSettings& s = g_scene.post;
+    if (!g_post.ssrReady || !s.ssrEnabled || !GhostPost_SSRHistoryValid(g_post, vp)) return;
+    const float* pv = g_post.ssrPrevView[vp];
+    const float* pp = g_post.ssrPrevProj[vp];
+    cb.ssrA[0] = 1.0f; cb.ssrA[1] = s.ssrMaxDistance; cb.ssrA[2] = s.ssrThickness; cb.ssrA[3] = (float)s.ssrSteps;
+    cb.ssrB[0] = s.ssrIntensity; cb.ssrB[1] = s.ssrMaxRoughness; cb.ssrB[2] = s.ssrEdgeFade;
+    cb.ssrB[3] = (float)(g_frameNo % 64u) * 5.588238f;        // moves the step jitter every frame (TAA averages it)
+    cb.ssrC[0] = pp[0]; cb.ssrC[1] = pp[1]; cb.ssrC[2] = pp[2]; cb.ssrC[3] = pp[3];
+    cb.ssrD[0] = pp[4]; cb.ssrD[1] = pp[5]; cb.ssrD[2] = pp[6]; cb.ssrD[3] = pp[7];
+    for (int r = 0; r < 3; r++) for (int c = 0; c < 4; c++) cb.ssrView[r][c] = pv[r * 4 + c];
+}
+
+// ============================================================
 //  One viewport = one surface + one camera. The GPU is idle between viewports
 //  (EndFrame waits), so the constant buffer slots are simply reused.
 // ============================================================
@@ -3037,6 +3055,8 @@ static void RenderViewport(int vp)
     }
     if (!taa) GhostTAA_Release(g_taa, vp);
     if (GhostPost_Ensure(g_rhi, g_post, vp, rw, rh) != GHOST_OK) return;    // 1x HDR scene color for this viewport
+    const bool ssrWant = !preview && g_post.ssrReady && g_scene.post.ssrEnabled;
+    GhostPost_SSRUpdateTargets(g_rhi, g_post, vp, ssrWant, rw, rh);        // history exists only while SSR is on
 
     float jx = 0.0f, jy = 0.0f;
     // ---- Matrices ----
@@ -3085,12 +3105,14 @@ static void RenderViewport(int vp)
     else if (taa)  GhostTAA_Begin(g_rhi, g_pipeline, g_taa, vp, &clr, rw, rh);
     else           GhostPost_BeginScene(g_rhi, g_pipeline, g_post, vp, &clr, dsv, rw, rh);
     GhostSceneCB sceneCB;
+    GhostPost_SSRBind(g_rhi, g_pipeline, g_post, vp);                      // t12 / t13 = this viewport's history (null if none)
     if (preview) BuildPreviewSceneCB(sceneCB);
     else
     {
-        BuildSceneCB(g_scene, sceneCB, g_timeSec);
+        BuildSceneCB(g_scene, sceneCB,g_timeSec);
         FillProbeCB(sceneCB);
         FillFogCB(sceneCB, eye, forward, right, proj, rw, rh, taa);
+        FillSsrCB(sceneCB, vp);
         RenderShadowPass(sceneCB, eye, forward, rw, rh);
     }
     GhostUpdateSceneCB(g_pipeline, &sceneCB);
@@ -3183,6 +3205,16 @@ DrawSceneColor(view, proj, eye, true, overlays, preview, preview ? g_vp[vp].solo
             GhostPost_EndScene(g_rhi, g_pipeline, g_post, vp);
         }
 
+        if (ssrWant)                                                       // this finished frame becomes next frame's reflection source
+        {
+            const float v12[12] = { view.m[0][0], view.m[0][1], view.m[0][2], view.m[0][3],
+                                    view.m[1][0], view.m[1][1], view.m[1][2], view.m[1][3],
+                                    view.m[2][0], view.m[2][1], view.m[2][2], view.m[2][3] };
+            const float p8[8] = { projClean.m[0][0], projClean.m[1][1], projClean.m[0][2], projClean.m[1][2],
+                                  projClean.m[2][2], projClean.m[2][3], (float)rw, (float)rh };
+            ID3D12Resource* ssrDep = taa ? g_taa.depth[vp].Get() : g_pipeline->depthBuffers[vp].Get();
+            GhostPost_SSRCapture(g_rhi, g_post, vp, hdrRes, ssrDep, rw, rh, v12, p8);
+        }
 
         const GhostPostSettings postCfg = preview ? GhostPostSettings() : g_scene.post;     // the preview window never blooms
         GhostPost_Bloom(g_rhi, g_post, vp, rw, rh, postCfg);                                // HDR -> bloom chain (only if enabled)

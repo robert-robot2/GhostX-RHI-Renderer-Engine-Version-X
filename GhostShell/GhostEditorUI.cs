@@ -1794,6 +1794,30 @@ namespace GhostShell
 
         [Category("Ambient Occlusion (SSAO)"), DisplayName("Show AO Only (debug)")]
         public bool SsaoShowOnly { get => GetPost().ssaoShowOnly != 0; set { var p = GetPost(); p.ssaoShowOnly = value ? 1 : 0; SetPost(p); } }
+
+        [Category("Reflections (SSR)"), DisplayName("SSR Enabled")]
+        public bool SsrEnabled { get => GetPost().ssrEnabled != 0; set { var p = GetPost(); p.ssrEnabled = value ? 1 : 0; SetPost(p); } }
+
+        [Category("Reflections (SSR)"), DisplayName("Intensity (0-2)")]
+        public float SsrIntensity { get => GetPost().ssrIntensity; set { var p = GetPost(); p.ssrIntensity = value; SetPost(p); } }
+
+        [Category("Reflections (SSR)"), DisplayName("Max Distance (world units)")]
+        public float SsrMaxDistance { get => GetPost().ssrMaxDistance; set { var p = GetPost(); p.ssrMaxDistance = value; SetPost(p); } }
+
+        [Category("Reflections (SSR)"), DisplayName("Thickness (world units)")]
+        public float SsrThickness { get => GetPost().ssrThickness; set { var p = GetPost(); p.ssrThickness = value; SetPost(p); } }
+
+        [Category("Reflections (SSR)"), DisplayName("Quality (steps, 8-96)")]
+        public int SsrSteps { get => GetPost().ssrSteps; set { var p = GetPost(); p.ssrSteps = value; SetPost(p); } }
+
+        [Category("Reflections (SSR)"), DisplayName("Max Roughness (rougher surfaces use probes)")]
+        public float SsrMaxRoughness { get => GetPost().ssrMaxRoughness; set { var p = GetPost(); p.ssrMaxRoughness = value; SetPost(p); } }
+
+        [Category("Reflections (SSR)"), DisplayName("Edge Fade (0-0.5)")]
+        public float SsrEdgeFade { get => GetPost().ssrEdgeFade; set { var p = GetPost(); p.ssrEdgeFade = value; SetPost(p); } }
+
+
+
         private static GhostFogInfo GetFog() { GhostEngine.GhostEngine_GetFogSettings(out var f); return f; }
         private static void SetFog(GhostFogInfo f) => GhostEngine.GhostEngine_SetFogSettings(ref f);
 

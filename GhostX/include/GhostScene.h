@@ -820,6 +820,14 @@ struct GhostPostSettings
     int   ssaoHalfRes = 0;
     int   ssaoShowOnly = 0;                // debug: show the AO buffer
     float ssaoFadeDist = 50.0f;            // AO fades out toward this camera distance (0 = no fade)
+    // ---- SSR (Phase 7) ----
+    int   ssrEnabled = 0;
+    float ssrIntensity = 1.0f;
+    float ssrMaxDistance = 30.0f;          // world units
+    float ssrThickness = 0.4f;             // world units: how far behind a surface a ray still counts as a hit
+    int   ssrSteps = 32;                   // 8 .. 96
+    float ssrMaxRoughness = 0.6f;          // rougher surfaces get no SSR (they use probes / ambient)
+    float ssrEdgeFade = 0.1f;              // fraction of the screen over which reflections fade at the edges
 };
 
 inline void GhostPostSettings_Clamp(GhostPostSettings& p)
@@ -845,6 +853,13 @@ inline void GhostPostSettings_Clamp(GhostPostSettings& p)
     p.ssaoHalfRes = p.ssaoHalfRes ? 1 : 0;
     p.ssaoShowOnly = p.ssaoShowOnly ? 1 : 0;
     p.ssaoFadeDist = cf(p.ssaoFadeDist, 0.0f, 1000.0f);
+    p.ssrEnabled = p.ssrEnabled ? 1 : 0;
+    p.ssrIntensity = cf(p.ssrIntensity, 0.0f, 2.0f);
+    p.ssrMaxDistance = cf(p.ssrMaxDistance, 1.0f, 200.0f);
+    p.ssrThickness = cf(p.ssrThickness, 0.02f, 5.0f);
+    p.ssrSteps = p.ssrSteps < 8 ? 8 : (p.ssrSteps > 96 ? 96 : p.ssrSteps);
+    p.ssrMaxRoughness = cf(p.ssrMaxRoughness, 0.05f, 1.0f);
+    p.ssrEdgeFade = cf(p.ssrEdgeFade, 0.0f, 0.5f);
 }
 
 // ---- Global fog + volumetric lighting (scene settings) ----

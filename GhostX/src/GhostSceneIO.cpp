@@ -339,6 +339,9 @@ bool GhostScene_Save(const GhostScene& s, const std::string& root, const std::st
         j["post"]["ssao"] = json{ { "enabled", s.post.ssaoEnabled },{ "radius", s.post.ssaoRadius },{ "intensity", s.post.ssaoIntensity },
     { "bias", s.post.ssaoBias },{ "strength", s.post.ssaoStrength },{ "samples", s.post.ssaoSamples },
     { "directFade", s.post.ssaoDirectFade },{ "halfRes", s.post.ssaoHalfRes },{ "fadeDist", s.post.ssaoFadeDist } };
+        j["post"]["ssr"] = json{ { "enabled", s.post.ssrEnabled },{ "intensity", s.post.ssrIntensity },{ "maxDistance", s.post.ssrMaxDistance },
+    { "thickness", s.post.ssrThickness },{ "steps", s.post.ssrSteps },{ "maxRoughness", s.post.ssrMaxRoughness },
+    { "edgeFade", s.post.ssrEdgeFade } };
 
 
         std::set<int> saved, used;
@@ -788,6 +791,17 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
                 s.post.ssaoHalfRes = ja.value("halfRes", 0);
                 s.post.ssaoFadeDist = ja.value("fadeDist", 50.0f);
             }
+            if (jp.contains("ssr") && jp["ssr"].is_object())
+            {
+                const json& jr = jp["ssr"];
+                s.post.ssrEnabled = jr.value("enabled", 0);
+                s.post.ssrIntensity = jr.value("intensity", 1.0f);
+                s.post.ssrMaxDistance = jr.value("maxDistance", 30.0f);
+                s.post.ssrThickness = jr.value("thickness", 0.4f);
+                s.post.ssrSteps = jr.value("steps", 32);
+                s.post.ssrMaxRoughness = jr.value("maxRoughness", 0.6f);
+                s.post.ssrEdgeFade = jr.value("edgeFade", 0.1f);
+            }
             GhostPostSettings_Clamp(s.post);
         }
 
@@ -1233,6 +1247,8 @@ unsigned int GhostScene_Hash(const GhostScene& s)
     F(s.post.bloomScatter); I(s.post.bloomMips); F(s.post.bloomTint[0]); F(s.post.bloomTint[1]); F(s.post.bloomTint[2]);
     I(s.post.ssaoEnabled); F(s.post.ssaoRadius); F(s.post.ssaoIntensity); F(s.post.ssaoBias); F(s.post.ssaoStrength);
     I(s.post.ssaoSamples); F(s.post.ssaoDirectFade); I(s.post.ssaoHalfRes); F(s.post.ssaoFadeDist);
+    I(s.post.ssrEnabled); F(s.post.ssrIntensity); F(s.post.ssrMaxDistance); F(s.post.ssrThickness);
+    I(s.post.ssrSteps); F(s.post.ssrMaxRoughness); F(s.post.ssrEdgeFade);
     {
         const GhostFogSettings& f = s.fog;
         I(f.enabled); F(f.density); F(f.color[0]); F(f.color[1]); F(f.color[2]); F(f.brightness); F(f.followAmbient);

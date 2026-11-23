@@ -719,6 +719,7 @@ int GhostEngine_LoadScene(const char* path, char* msg, int msgSize)
     g_hoverId = 0; g_dragging = false; g_dragId = 0; g_inputCameraId = 0;
     FreeAllTileInstances();
     FreeAllProbes();
+    GhostPost_SSRReset(g_post);
     g_scenePath = GhostPath_Normalize(path);
     GhostParticles_ResetAll();
     g_scene.version++;
@@ -734,6 +735,8 @@ void GhostEngine_ClearScene()
     g_scene.objects.clear(); g_scenePath.clear();
     FreeAllTileInstances();
     FreeAllProbes();
+    GhostPost_SSRReset(g_post);
+
     g_scene.lights.clear();
     g_scene.cameras.clear(); g_scene.mods.clear(); g_scene.volumes.clear(); g_scene.particles.clear();
     GhostParticles_ResetAll();
@@ -1975,6 +1978,7 @@ static void PerformSceneSwitch()
     GhostParticles_ResetAll();
     FreeAllTileInstances();
     FreeAllProbes();
+    GhostPost_SSRReset(g_post);
     g_scene.version++;
     if (g_scene.gameStartCameraId && FindCamera(g_scene.gameStartCameraId))
         g_scene.activeCameraId = g_scene.gameStartCameraId;
@@ -3836,7 +3840,8 @@ void GhostEngine_GetPostSettings(GhostPostInfo* out)
              p.bloomEnabled, p.bloomThreshold, p.bloomKnee, p.bloomIntensity, p.bloomScatter, p.bloomMips,
              p.bloomTint[0], p.bloomTint[1], p.bloomTint[2],
              p.ssaoEnabled, p.ssaoRadius, p.ssaoIntensity, p.ssaoBias, p.ssaoStrength,
-             p.ssaoSamples, p.ssaoDirectFade, p.ssaoHalfRes, p.ssaoShowOnly, p.ssaoFadeDist };
+             p.ssaoSamples, p.ssaoDirectFade, p.ssaoHalfRes, p.ssaoShowOnly, p.ssaoFadeDist,
+             p.ssrEnabled, p.ssrIntensity, p.ssrMaxDistance, p.ssrThickness, p.ssrSteps, p.ssrMaxRoughness, p.ssrEdgeFade };
 }
 
 void GhostEngine_SetPostSettings(const GhostPostInfo* in)
@@ -3851,6 +3856,9 @@ void GhostEngine_SetPostSettings(const GhostPostInfo* in)
     p.ssaoBias = in->ssaoBias; p.ssaoStrength = in->ssaoStrength; p.ssaoSamples = in->ssaoSamples;
     p.ssaoDirectFade = in->ssaoDirectFade; p.ssaoHalfRes = in->ssaoHalfRes; p.ssaoShowOnly = in->ssaoShowOnly;
     p.ssaoFadeDist = in->ssaoFadeDist;
+    p.ssrEnabled = in->ssrEnabled; p.ssrIntensity = in->ssrIntensity; p.ssrMaxDistance = in->ssrMaxDistance;
+    p.ssrThickness = in->ssrThickness; p.ssrSteps = in->ssrSteps; p.ssrMaxRoughness = in->ssrMaxRoughness;
+    p.ssrEdgeFade = in->ssrEdgeFade;
     GhostPostSettings_Clamp(p);
 }
 

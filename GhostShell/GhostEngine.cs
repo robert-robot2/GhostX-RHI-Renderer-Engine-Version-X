@@ -274,6 +274,10 @@ namespace GhostShell
         public float ssaoDirectFade;
         public int ssaoHalfRes, ssaoShowOnly;
         public float ssaoFadeDist;
+        public int ssrEnabled;
+        public float ssrIntensity, ssrMaxDistance, ssrThickness;
+        public int ssrSteps;
+        public float ssrMaxRoughness, ssrEdgeFade;
     }
 
     [StructLayout(LayoutKind.Sequential)]

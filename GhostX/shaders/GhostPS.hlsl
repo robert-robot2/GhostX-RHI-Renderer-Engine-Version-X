@@ -55,6 +55,11 @@ cbuffer SceneBuffer : register(b1)
     float4 fogG;            // xy noise offset, w volume count
     float4 fogCam[6];       // eye, right, up, forward, (p00 p11 p02 p12), (p22 p23 width height)
     FogVol fogVols[MAX_FOGVOLS];
+    float4 ssrA;            // x on (0 / 1), y max distance, z thickness, w steps
+    float4 ssrB;            // x intensity, y max roughness, z edge fade, w noise offset
+    float4 ssrC;            // previous frame's p00, p11, p02, p12
+    float4 ssrD;            // previous frame's p22, p23, width, height
+    float4 ssrView[3];      // previous frame's view matrix, rows 0..2 (xyz axis, w translation)
 };
 
 Texture2D    gTexture : register(t0);
@@ -64,6 +69,8 @@ SamplerState sPtWrap : register(s2);
 SamplerState sPtClamp : register(s3);
 Texture2DArray<float> gShadowMap : register(t1);
 TextureCube<float4> gProbe[MAX_PROBES] : register(t2);      // Reflection Captures (descriptor table is contiguous with the shadow map)
+Texture2D<float4> gSsrColor : register(t12);                // last frame's HDR image (gamma-encoded floats)
+Texture2D<float>  gSsrDepth : register(t13);                // last frame's view-space depth (1e6 = sky)
 
 cbuffer ObjectBuffer : register(b0)       // same layout as MVPBuffer in GhostVS.hlsl
 {
@@ -448,6 +455,112 @@ float3 ProbeLookup(float3 dirW, float3 posW, float rough, float3 fallback, float
     return result;
 }
 
+// ============================================================
+//  Screen-space reflections: a ray march in the PREVIOUS frame's camera space against last frame's depth + colour
+// ============================================================
+float3 SsrPoint(float3 w)
+{
+    return float3(dot(ssrView[0].xyz, w) + ssrView[0].w,
+        dot(ssrView[1].xyz, w) + ssrView[1].w,
+        dot(ssrView[2].xyz, w) + ssrView[2].w);
+}
+float3 SsrDir(float3 d) { return float3(dot(ssrView[0].xyz, d), dot(ssrView[1].xyz, d), dot(ssrView[2].xyz, d)); }
+
+float2 SsrToPixel(float3 p)
+{
+    float2 ndc = float2(p.x / p.z * ssrC.x + ssrC.z, p.y / p.z * ssrC.y + ssrC.w);
+    return float2(ndc.x * 0.5f + 0.5f, 0.5f - ndc.y * 0.5f) * ssrD.zw;
+}
+float3 SsrFromPixel(float2 px, float z)
+{
+    float2 ndc = float2(px.x / ssrD.z * 2.0f - 1.0f, 1.0f - px.y / ssrD.w * 2.0f);
+    return float3((ndc.x - ssrC.z) / ssrC.x, (ndc.y - ssrC.w) / ssrC.y, 1.0f) * z;
+}
+float SsrSceneZ(float2 px)
+{
+    int2 ip = clamp(int2(px), int2(0, 0), int2(ssrD.zw) - 1);
+    return gSsrDepth.Load(int3(ip, 0));
+}
+float3 SsrColorAt(float2 px) { return gSsrColor.SampleLevel(sLinClamp, px / ssrD.zw, 0).rgb; }
+
+// returns linear radiance in rgb and a confidence in a (0 = no hit, fall back to the probe / ambient)
+float4 SSRTrace(float3 posW, float3 Rw, float3 Nw, float rough, float2 pixelPos)
+{
+    const float4 none = float4(0.0f, 0.0f, 0.0f, 0.0f);
+    const float  maxDist = ssrA.y;
+    const int    steps = clamp((int)(ssrA.w + 0.5f), 8, 96);
+
+    const float3 R = normalize(SsrDir(Rw));
+    const float  dirFade = smoothstep(0.0f, 0.2f, R.z);     // rays pointing back at the camera can't be found on screen
+    if (dirFade <= 0.0f) return none;
+    const float3 N = normalize(SsrDir(Nw));
+    float3 P0 = SsrPoint(posW);
+    if (P0.z < 0.1f) return none;
+    P0 += N * (0.015f + P0.z * 0.003f);                      // start just off the surface
+    const float3 P1 = P0 + R * maxDist;
+
+    const float2 s0 = SsrToPixel(P0), s1 = SsrToPixel(P1);
+    const float2 d = s1 - s0;
+    if (length(d) < 2.0f) return none;
+
+    float tEnd = 1.0f;                                       // stop where the ray leaves the screen
+    if (d.x > 0.0f) tEnd = min(tEnd, (ssrD.z - 1.0f - s0.x) / d.x); else if (d.x < 0.0f) tEnd = min(tEnd, -s0.x / d.x);
+    if (d.y > 0.0f) tEnd = min(tEnd, (ssrD.w - 1.0f - s0.y) / d.y); else if (d.y < 0.0f) tEnd = min(tEnd, -s0.y / d.y);
+    if (tEnd <= 0.002f) return none;
+
+    const float iz0 = 1.0f / P0.z, iz1 = 1.0f / P1.z;        // 1/z is linear in screen space: perspective-correct depth
+    const float stepT = tEnd / (float)steps;
+    const float ign = frac(52.9829189f * frac(dot(pixelPos + ssrB.w, float2(0.06711056f, 0.00583715f))));
+
+    float t = stepT * (0.2f + 0.8f * ign);
+    float tPrev = 0.0f;
+    float thick = 0.0f;
+    bool  hit = false;
+    [loop] for (int i = 0; i < steps; i++)
+    {
+        const float rz = 1.0f / lerp(iz0, iz1, t);
+        const float rzN = 1.0f / lerp(iz0, iz1, min(t + stepT, 1.0f));
+        const float sz = SsrSceneZ(s0 + d * t);
+        thick = max(ssrA.z * (1.0f + rz * 0.05f), (rzN - rz) * 1.5f);     // never thinner than the depth change per step: no tunnelling
+        const float dz = rz - sz;
+        if (dz > 0.0f && dz < thick) { hit = true; break; }
+        tPrev = t;
+        t += stepT;
+    }
+    if (!hit) return none;
+
+    float lo = tPrev, hi = t;                                // binary refinement between the last two steps
+    [unroll] for (int k = 0; k < 6; k++)
+    {
+        const float mid = 0.5f * (lo + hi);
+        const float rzm = 1.0f / lerp(iz0, iz1, mid);
+        if (rzm - SsrSceneZ(s0 + d * mid) > 0.0f) hi = mid; else lo = mid;
+    }
+    const float2 sp = s0 + d * hi;
+    const float  rz = 1.0f / lerp(iz0, iz1, hi);
+    if (rz - SsrSceneZ(sp) > thick * 1.5f) return none;      // landed on a depth discontinuity, not a surface
+
+    const float2 uv = sp / ssrD.zw;
+    const float2 e = min(uv, 1.0f - uv);
+    const float  edge = smoothstep(0.0f, max(ssrB.z, 0.001f), min(e.x, e.y));
+    const float  hitDist = length(SsrFromPixel(sp, rz) - P0);
+    const float  distFade = 1.0f - smoothstep(0.6f * maxDist, maxDist, hitDist);
+    const float  roughFade = 1.0f - smoothstep(0.5f * ssrB.y, ssrB.y, rough);
+    const float  conf = saturate(edge * distFade * roughFade * dirFade);
+    if (conf <= 0.001f) return none;
+
+    // rougher surface = wider blur, growing with how far the ray travelled on screen
+    const float  blur = min(rough * length(sp - s0) * 0.15f, 24.0f);
+    const float  ang = ign * 6.2831853f;
+    const float2 o1 = float2(cos(ang), sin(ang)) * blur;
+    const float2 o2 = float2(-o1.y, o1.x);
+    float3 c = SsrColorAt(sp) * 0.4f
+        + (SsrColorAt(sp + o1) + SsrColorAt(sp - o1) + SsrColorAt(sp + o2) + SsrColorAt(sp - o2)) * 0.15f;
+    c = pow(max(c, 0.0f), 2.2f) * ssrB.x;
+    return float4(min(c, 32.0f), conf);
+}
+
+
 float4 PSMain(PSInput input, bool isFront : SV_IsFrontFace) : SV_TARGET
 {
     // gradients for the extra maps, computed before any branch
@@ -674,6 +787,12 @@ float4 PSMain(PSInput input, bool isFront : SV_IsFrontFace) : SV_TARGET
         }
         else if (probeInfo.x > 0.5f)                              // no Reflection map on the material: use the probes
             envRefl = ProbeLookup(reflect(-V, N), input.worldPos, rough, ambientColor.rgb, 0.0f);
+        if (ssrA.x > 0.5f && rough < ssrB.y)                      // screen-space reflections replace the environment where the ray finds something
+        {
+            float4 sr = SSRTrace(input.worldPos, reflect(-V, N), Ng, rough, input.pos.xy);
+            envRefl = lerp(envRefl, sr.rgb, sr.a);
+        }
+
         float3 ambDiff = ambientColor.rgb;
         if (probeInfo.x > 0.5f) ambDiff = ProbeLookup(N, input.worldPos, 1.0f, ambientColor.rgb, 1.0f);
 

@@ -316,9 +316,13 @@ GhostResult GhostTAA_Ensure(IGhostRHI* rhi, GhostTAA& t, int id, unsigned int w,
     rd.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
 
     ComPtr<ID3D12Resource> sc, h0, h1, dp;
-
+    /*
     rd.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     rd.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+    */
+    rd.Format = GHOST_HDR_FORMAT;                         // scene colour: matches the scene PSOs
+    rd.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+
     if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd,
         D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr, IID_PPV_ARGS(&sc)))) return GHOST_FAIL;
 
@@ -330,8 +334,13 @@ GhostResult GhostTAA_Ensure(IGhostRHI* rhi, GhostTAA& t, int id, unsigned int w,
     /*
     rd.Format = DXGI_FORMAT_R24G8_TYPELESS;
     */
+    /*
     rd.Format = GHOST_HDR_FORMAT;                       // was DXGI_FORMAT_R8G8B8A8_UNORM
     rd.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+    */
+    rd.Format = DXGI_FORMAT_R24G8_TYPELESS;               // depth
+    rd.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+
     D3D12_CLEAR_VALUE cv = {};
     cv.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
     cv.DepthStencil.Depth = 1.0f;

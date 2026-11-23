@@ -177,6 +177,10 @@ struct GhostPostInfo
     float ssaoDirectFade;
     int   ssaoHalfRes, ssaoShowOnly;
     float ssaoFadeDist;
+    int   ssrEnabled;
+    float ssrIntensity, ssrMaxDistance, ssrThickness;
+    int   ssrSteps;
+    float ssrMaxRoughness, ssrEdgeFade;
 };
 
 struct GhostSurfaceInfo

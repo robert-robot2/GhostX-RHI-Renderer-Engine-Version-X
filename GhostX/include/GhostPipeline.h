@@ -93,6 +93,8 @@ struct GhostSceneCB                 // matches cbuffer SceneBuffer (b1)
     float        fogA[4], fogB[4], fogC[4], fogD[4], fogE[4], fogF[4], fogG[4];
     float        fogCam[6][4];
     GhostGPUFogVol fogVols[GHOST_MAX_FOGVOLS];
+    float        ssrA[4], ssrB[4], ssrC[4], ssrD[4];     // see GhostPS.hlsl
+    float        ssrView[3][4];                           // previous frame's view matrix, rows 0..2
 
 };                               // 32 + 16*80 = 1312 bytes
 
@@ -114,9 +116,26 @@ constexpr unsigned int GHOST_TILE_MESH_BASE = GHOST_MAX_MESHES + GHOST_MAX_SKINS
 constexpr unsigned int GHOST_MAX_SHADOW_CASTERS = 512;          // was 256: this is also the object limit
 constexpr unsigned int GHOST_SHADOW_SRV_INDEX = GHOST_MAX_TEXTURES + GHOST_MAX_SURFACES;   // last slot of the SRV heap
 
+/*
 constexpr unsigned int GHOST_PROBE_SRV_BASE = GHOST_SHADOW_SRV_INDEX + 1;                  // probe cubemaps: heap slots right after the shadow map (t2..t9)
 constexpr unsigned int GHOST_FOG_SRV_BASE = GHOST_PROBE_SRV_BASE + GHOST_MAX_PROBES;       // t10 = scene depth, t11 = scene colour copy (the fog pass writes both every frame)
 constexpr unsigned int GHOST_DATA_SRV_BASE = GHOST_FOG_SRV_BASE + 2;                       // linear (UNORM) view of every texture, same order as the ids
+
+constexpr unsigned int GHOST_SSR_SRV_BASE = GHOST_FOG_SRV_BASE + 2;                        // t12 = SSR history colour, t13 = SSR history view depth
+constexpr unsigned int GHOST_DATA_SRV_BASE = GHOST_SSR_SRV_BASE + 2;                       // linear (UNORM) view of every texture, same order as the ids
+*/
+
+constexpr unsigned int GHOST_PROBE_SRV_BASE = GHOST_SHADOW_SRV_INDEX + 1;  // t2..t9
+
+constexpr unsigned int GHOST_FOG_SRV_BASE =
+GHOST_PROBE_SRV_BASE + GHOST_MAX_PROBES;                               // t10..t11
+
+constexpr unsigned int GHOST_SSR_SRV_BASE =
+GHOST_FOG_SRV_BASE + 2;                                                // t12..t13
+
+constexpr unsigned int GHOST_DATA_SRV_BASE =
+GHOST_SSR_SRV_BASE + 2;                                                // t14 onward
+
 
 struct GhostMesh
 {
