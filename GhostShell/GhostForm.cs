@@ -267,6 +267,7 @@ namespace GhostShell
             _menuBuilder.OnSaveProject += (s, e) => GhostProjectFlow.SaveProject(this);
             _menuBuilder.OnSaveProjectAs += (s, e) => GhostProjectFlow.SaveProjectAs(this);
             _menuBuilder.OnSetStartScene += (s, e) => GhostProjectFlow.SetStartScene(this);
+            _menuBuilder.OnCleanAssets += (s, e) => GhostSceneFile.CleanReload(this);
             // Title bar: scene name, with * when there are unsaved changes
 
             var titleTimer = new System.Windows.Forms.Timer { Interval = 200 };

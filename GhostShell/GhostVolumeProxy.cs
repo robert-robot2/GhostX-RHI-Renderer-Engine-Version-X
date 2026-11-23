@@ -1,5 +1,6 @@
 ﻿// GhostVolumeProxy.cs — Details panel for Utilities volumes
 using System.ComponentModel;
+using System.Drawing;
 
 namespace GhostShell
 {
@@ -154,11 +155,55 @@ namespace GhostShell
         public float AmbientDiffuse { get => P(9); set => SetP(9, value); }
     }
 
-    // Phase 5 adds fog parameters here (density, color, height falloff, cubemap / texture, light scattering ...)
     internal sealed class FogVolumeProxy : VolumeProxy
     {
         public FogVolumeProxy(int id) : base(id) { }
-        [Category("Details")] public string Status => "Placeholder: fog arrives in Phase 5";
+
+        private float P(int i) => Get().p[i];
+        private void SetP(int i, float x) => Change((ref GhostVolumeInfo v) => v.p[i] = x);
+
+        [Category("Fog"), DisplayName("Density (0-5, try 0.15)")]
+        public float Density { get => P(0); set => SetP(0, value); }
+
+        [Category("Fog"), DisplayName("Color")]
+        public Color FogColor
+        {
+            get { var v = Get(); return GhostColorUtil.ToColor(v.p[1], v.p[2], v.p[3]); }
+            set => Change((ref GhostVolumeInfo v) => { v.p[1] = value.R / 255f; v.p[2] = value.G / 255f; v.p[3] = value.B / 255f; });
+        }
+
+        [Category("Fog"), DisplayName("Gradient (0 = uniform, 1 = fades out toward the top)")]
+        public float Gradient { get => P(4); set => SetP(4, value); }
+
+        [Category("Fog"), DisplayName("God Rays Scatter (0-2)")]
+        public float LightScatter { get => P(5); set => SetP(5, value); }
+
+        [Category("Fog Noise"), DisplayName("Noise Texture")]
+        [TypeConverter(typeof(TextureChoiceConverter))]
+        public string NoiseTexture
+        {
+            get => GhostTextures.DisplayName(Get().tex[0]);
+            set
+            {
+                int tex = (value == GhostTextures.ImportLabel) ? GhostTextures.ImportFromDisk() : GhostTextures.IdFromDisplay(value);
+                if (tex < 0) return;
+                Change((ref GhostVolumeInfo v) => v.tex[0] = tex);
+            }
+        }
+
+        [Category("Fog Noise"), DisplayName("Noise Amount (0-1)")]
+        public float NoiseAmount { get => P(6); set => SetP(6, value); }
+
+        [Category("Fog Noise"), DisplayName("Noise Scale")]
+        public float NoiseScale { get => P(7); set => SetP(7, value); }
+
+        [Category("Fog Noise"), DisplayName("Wind X (units/s)")]
+        public float WindX { get => P(8); set => SetP(8, value); }
+
+        [Category("Fog Noise"), DisplayName("Wind Z (units/s)")]
+        public float WindZ { get => P(9); set => SetP(9, value); }
+
+        [Category("Details")] public string Info => "Adds to the global fog. Use Blend Distance for soft edges.";
     }
 
     internal class ProbeModeConverter : FixedListConverter

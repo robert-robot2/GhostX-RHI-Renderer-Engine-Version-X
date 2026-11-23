@@ -3,6 +3,8 @@
 //
 // The emitter DATA lives in GhostScene::particles (so save / load, undo, Play restore and the
 // unsaved-changes check all work like they do for objects). This module only owns the live particles.
+// Emitter ids come from the scene's id space (GhostScene::nextId), so a particle system is a normal entity:
+// hierarchy, selection, picking and the gizmo all work through its id.
 // The module never calls D3D: it produces GhostParticleDraw entries and GhostEngine.cpp draws them.
 #pragma once
 #include "GhostMath.h"
@@ -23,7 +25,7 @@ constexpr unsigned int GHOST_PFX_MAX_DRAWS = 384;      // constant-buffer slots 
 
 // ---------------------------------------------------------------
 //  Everything the editor can change. Plain data (no strings) so C# can mirror it.
-//  Only ever add fields at the END. Strings (animation path, clip) are in GhostParticleDef.
+//  Only ever add fields at the END. Strings (name, animation path, clip) are in GhostParticleDef.
 // ---------------------------------------------------------------
 struct GhostParticleParams
 {
@@ -64,12 +66,17 @@ struct GhostParticleParams
     int   randomStartFrame;
     int   meshId;                           // -1 = sprite quad, otherwise a mesh id from the registry
     float drawDistance;                     // not drawn farther than this from the camera
+
+    // ---- transform (added in Phase 4) ----
+    float rotX, rotY, rotZ;                 // degrees, same order as objects (Y, X, Z). Turns the spawn volume and every direction
+    float scaleX, scaleY, scaleZ;           // scales the whole effect: volume, speeds, accelerations (per axis) and particle size (average)
 };
 
 // One emitter as the scene stores it
 struct GhostParticleDef
 {
     GhostParticleParams p = {};
+    std::string name;                       // shown in the hierarchy
     std::string anim;                       // stored path of a .ghostanim ("" = none)
     std::string clip;                       // clip name ("" = the animation's first clip)
 };
@@ -87,7 +94,8 @@ struct GhostParticleDef
     X(rotMin) X(rotMax) X(spinMin) X(spinMax) \
     X(billboard) X(unlit) X(additive) X(alphaClip) X(pixelArt) \
     X(source) X(cols) X(rows) X(animFps) X(animSpeed) X(animOverLife) X(randomStartFrame) \
-    X(drawDistance)
+    X(drawDistance) \
+    X(rotX) X(rotY) X(rotZ) X(scaleX) X(scaleY) X(scaleZ)
 
 // What the engine tells us about one sprite clip of a .ghostanim
 struct GhostParticleClipInfo
@@ -122,6 +130,7 @@ struct GhostParticleDraw
 
 // ---- lifecycle ----
 void GhostParticles_Bind(std::vector<GhostParticleDef>* defs);                      // the scene's emitter list (once, at Init)
+void GhostParticles_SetIdAllocator(int (*fn)());                                    // hands out scene ids (GhostScene::nextId++)
 void GhostParticles_Shutdown();
 void GhostParticles_SetHost(const GhostParticleHost* host);
 void GhostParticles_SetDefaultTexture(int textureId);
@@ -130,8 +139,14 @@ void GhostParticles_InvalidateClips();                                          
 void GhostParticles_ResetAll();                                                     // drops every live particle (a different scene was loaded)
 
 // ---- emitters ----
+GhostParticleDef* GhostParticles_Find(int id);                                      // null when no emitter has this id
+GhostVec3* GhostParticles_PositionPtr(int id);                                      // views of px,py,pz / rotX..Z / scaleX..Z (gizmo and dragging write through these)
+GhostVec3* GhostParticles_RotationPtr(int id);
+GhostVec3* GhostParticles_ScalePtr(int id);
+void GhostParticles_Axes(const GhostParticleParams& p, GhostVec3 outAxes[3]);       // the emitter's local X, Y, Z in world space, already scaled
+std::string GhostParticles_DefaultName(int type, int id);
 void GhostParticles_Clamp(GhostParticleParams& p);                                  // used by the scene loader too
-void GhostParticles_FillPreset(int type, GhostParticleParams& p);                   // keeps id and position
+void GhostParticles_FillPreset(int type, GhostParticleParams& p);                   // keeps id, position, rotation and scale
 int  GhostParticles_Add(int type, float x, float y, float z);                       // new id, 0 = failed. x,y,z = a ground point
 void GhostParticles_Clear();
 

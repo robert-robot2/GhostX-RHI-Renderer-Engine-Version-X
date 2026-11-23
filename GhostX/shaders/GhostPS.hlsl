@@ -1,6 +1,18 @@
 #define MAX_LIGHTS 16
 #define MAX_PROBES 8
+#define MAX_FOGVOLS 8
 
+struct FogVol
+{
+    float4 row0;    // world -> volume space
+    float4 row1;
+    float4 row2;
+    float4 shp;     // x 0 box / 1 sphere, yzw half extents (sphere: y = radius)
+    float4 dens;    // x density, y blend distance, z gradient
+    float4 col;     // rgb linear colour, w light scatter amount
+    float4 nz;      // x noise texture id, y amount, z scale
+    float4 scr;     // xy noise offset
+};
 struct Probe
 {
     float4 row0;    // world -> volume space: xyz = rotation row, w = translation
@@ -18,7 +30,7 @@ struct Light
     float4 colorIntensity;  // rgb color, w intensity
     float4 rectRight;       // xyz right axis, w half-width
     float4 rectUp;          // xyz up axis, w half-height
-    float4 shadow;          // x first map slice (-1 = none), y far, z texel size
+    float4 shadow;         // x first map slice (-1 = none), y far, z texel size, w god rays strength.
 };
 
 cbuffer SceneBuffer : register(b1)
@@ -34,6 +46,15 @@ cbuffer SceneBuffer : register(b1)
     float4 flick[MAX_LIGHTS * 6];     // per light, 2 layers x 3 float4: colour+intensity / texture id, speed, tiling, amount / diffuse, specular, roughness, metallic
     float4 probeInfo;       // x = probe count
     Probe  probes[MAX_PROBES];
+    float4 fogA;            // x global fog on, y density, z height base, w height falloff
+    float4 fogB;            // rgb fog colour (linear), w brightness
+    float4 fogC;            // x start, y max distance, z sky fog, w anisotropy
+    float4 fogD;            // x god rays on, y follow ambient, z steps, w noise frame offset
+    float4 fogE;            // x env mode, y env amount, z env texture, w env yaw (rad)
+    float4 fogF;            // x noise texture, y amount, z scale
+    float4 fogG;            // xy noise offset, w volume count
+    float4 fogCam[6];       // eye, right, up, forward, (p00 p11 p02 p12), (p22 p23 width height)
+    FogVol fogVols[MAX_FOGVOLS];
 };
 
 Texture2D    gTexture : register(t0);
@@ -732,6 +753,12 @@ float4 IconPS(IconPSInput input) : SV_TARGET
         bool beam = p.y <= 0.25f && p.y > -0.9f && abs(p.x) < 0.30f + (0.25f - p.y) * 0.55f;
         inside = head || beam;
     }
+    else if (type == 7)               // particle system: a flame
+    {
+        bool lower = length(p - float2(0.0f, -0.25f)) < 0.52f;
+        bool tip = p.y >= -0.25f && p.y < 0.95f && abs(p.x) < (0.95f - p.y) * 0.45f;
+        inside = lower || tip;
+    }
     else                              // arrow: u = p.x along the arrow, v = p.y across
     {
         bool shaft = p.x < 0.3f && abs(p.y) < 0.15f;
@@ -1133,3 +1160,5 @@ float ShadowPS(ShadowPSInput input) : SV_Depth
         return saturate(length(input.worldPos - lightPosFar.xyz) / max(lightPosFar.w, 1e-3f));
     return input.pos.z;                                       // directional: orthographic depth
 }
+
+

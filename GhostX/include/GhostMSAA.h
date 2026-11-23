@@ -21,6 +21,10 @@ struct GhostMSAA
     unsigned int maxSamples = 1;      // best count the GPU supports for both formats (1, 2, 4 or 8)
     unsigned int active = 1;          // count the PSOs and targets are currently built for
     unsigned int failedFor = 0;       // a count whose PSO rebuild failed (not retried every frame)
+    ComPtr<ID3D12DescriptorHeap> srvHeap;                // shader visible: the multisampled depth, one slot per surface
+    ComPtr<ID3D12RootSignature>  depthRootSig;
+    ComPtr<ID3D12PipelineState>  depthPso;               // multisampled depth -> 1x depth (nearest sample)
+    unsigned int                 srvInc = 0;
 };
 
 GhostResult  GhostMSAA_Init(IGhostRHI* rhi, GhostMSAA& m);
@@ -42,3 +46,7 @@ void         GhostMSAA_Release(GhostMSAA& m, int id);
 void GhostMSAA_Begin(IGhostRHI* rhi, GhostPipeline* p, GhostMSAA& m, int id,
     const GhostColor* clear, unsigned int w, unsigned int h);
 void GhostMSAA_End(IGhostRHI* rhi, GhostPipeline* p, GhostMSAA& m, int id, ID3D12Resource* resolveTarget);
+
+// Writes the nearest sample of the multisampled depth into the surface's 1x depth buffer (p->depthBuffers[id]).
+// Call after GhostMSAA_End. That depth then serves the editor overlays and the fog pass.
+void GhostMSAA_ResolveDepth(IGhostRHI* rhi, GhostPipeline* p, GhostMSAA& m, int id, unsigned int w, unsigned int h);

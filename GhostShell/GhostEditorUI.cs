@@ -90,12 +90,26 @@ namespace GhostShell
             {
                 if (i == GhostFontAtlas.TextureId || GhostFontAtlas.ExtraTextures.Contains(i)) continue;
                 string dn = DisplayName(i);
-                if (dn.StartsWith("[Splat")) continue;               // Tile Map weight maps
+                if (dn.StartsWith("[Splat") || dn.StartsWith("[Free")) continue;   // weight maps, purged slots
+                if (i >= 3 && IsStale(i)) continue;                                 // file gone, or outside this project
                 list.Add(dn);
             }
 
             list.Add(ImportLabel);
             return list;
+        }
+
+        private static bool IsStale(int id)
+        {
+            var buf = new byte[1024];
+            if (GhostEngine.GhostEngine_GetTexturePath(id, buf, buf.Length) == 0) return false;   // no source file (font, etc.)
+            int n = Array.IndexOf(buf, (byte)0);
+            string path = Encoding.UTF8.GetString(buf, 0, n < 0 ? buf.Length : n);
+            if (!File.Exists(path)) return true;
+            string? root = GhostProject.Root;
+            if (root == null) return false;
+            string prefix = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root)) + Path.DirectorySeparatorChar;
+            return !Path.GetFullPath(path).StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
         }
 
         public static int IdFromDisplay(string text)
@@ -184,6 +198,11 @@ namespace GhostShell
         protected override string[] Items => Names;
     }
 
+    internal class FogEnvConverter : FixedListConverter
+    {
+        public static readonly string[] Names = { "Fog Color", "Reflection Capture (cubemap)", "Texture (lat-long image)" };
+        protected override string[] Items => Names;
+    }
     internal class MapModeConverter : FixedListConverter
     {
         public static readonly string[] Names =
@@ -1493,6 +1512,9 @@ namespace GhostShell
             get => GhostEngine.GhostEngine_GetLightShadows(Id) > 0;
             set => GhostEngine.GhostEngine_SetLightShadows(Id, value ? 1 : 0);
         }
+
+        [Category("Volumetric Lighting"), DisplayName("God Rays Strength (0-5, needs Scene Settings)")]
+        public float Volumetric { get => Get().volumetric; set { var i = Get(); i.volumetric = value; Set(i); } }
     }
 
     internal class DirectionalLightProxy : LightProxy
@@ -1743,6 +1765,135 @@ namespace GhostShell
             get { var p = GetPost(); return GhostColorUtil.ToColor(p.bloomTintR, p.bloomTintG, p.bloomTintB); }
             set { var p = GetPost(); p.bloomTintR = value.R / 255f; p.bloomTintG = value.G / 255f; p.bloomTintB = value.B / 255f; SetPost(p); }
         }
+        [Category("Ambient Occlusion (SSAO)"), DisplayName("SSAO Enabled")]
+        public bool SsaoEnabled { get => GetPost().ssaoEnabled != 0; set { var p = GetPost(); p.ssaoEnabled = value ? 1 : 0; SetPost(p); } }
+
+        [Category("Ambient Occlusion (SSAO)"), DisplayName("Radius (world units, 0.05-5)")]
+        public float SsaoRadius { get => GetPost().ssaoRadius; set { var p = GetPost(); p.ssaoRadius = value; SetPost(p); } }
+
+        [Category("Ambient Occlusion (SSAO)"), DisplayName("Intensity (contrast, 0-4)")]
+        public float SsaoIntensity { get => GetPost().ssaoIntensity; set { var p = GetPost(); p.ssaoIntensity = value; SetPost(p); } }
+
+        [Category("Ambient Occlusion (SSAO)"), DisplayName("Strength (0-1)")]
+        public float SsaoStrength { get => GetPost().ssaoStrength; set { var p = GetPost(); p.ssaoStrength = value; SetPost(p); } }
+
+        [Category("Ambient Occlusion (SSAO)"), DisplayName("Direct Light Fade (0-1, lit areas get less AO)")]
+        public float SsaoDirectFade { get => GetPost().ssaoDirectFade; set { var p = GetPost(); p.ssaoDirectFade = value; SetPost(p); } }
+
+        [Category("Ambient Occlusion (SSAO)"), DisplayName("Bias (world units)")]
+        public float SsaoBias { get => GetPost().ssaoBias; set { var p = GetPost(); p.ssaoBias = value; SetPost(p); } }
+
+        [Category("Ambient Occlusion (SSAO)"), DisplayName("Samples (4-32)")]
+        public int SsaoSamples { get => GetPost().ssaoSamples; set { var p = GetPost(); p.ssaoSamples = value; SetPost(p); } }
+
+        [Category("Ambient Occlusion (SSAO)"), DisplayName("Fade Distance (0 = no fade)")]
+        public float SsaoFadeDist { get => GetPost().ssaoFadeDist; set { var p = GetPost(); p.ssaoFadeDist = value; SetPost(p); } }
+
+        [Category("Ambient Occlusion (SSAO)"), DisplayName("Half Resolution (faster)")]
+        public bool SsaoHalfRes { get => GetPost().ssaoHalfRes != 0; set { var p = GetPost(); p.ssaoHalfRes = value ? 1 : 0; SetPost(p); } }
+
+        [Category("Ambient Occlusion (SSAO)"), DisplayName("Show AO Only (debug)")]
+        public bool SsaoShowOnly { get => GetPost().ssaoShowOnly != 0; set { var p = GetPost(); p.ssaoShowOnly = value ? 1 : 0; SetPost(p); } }
+        private static GhostFogInfo GetFog() { GhostEngine.GhostEngine_GetFogSettings(out var f); return f; }
+        private static void SetFog(GhostFogInfo f) => GhostEngine.GhostEngine_SetFogSettings(ref f);
+
+        [Category("Fog"), DisplayName("Fog Enabled")]
+        public bool FogEnabled { get => GetFog().enabled != 0; set { var f = GetFog(); f.enabled = value ? 1 : 0; SetFog(f); } }
+
+        [Category("Fog"), DisplayName("Density (0-1, try 0.02)")]
+        public float FogDensity { get => GetFog().density; set { var f = GetFog(); f.density = value; SetFog(f); } }
+
+        [Category("Fog"), DisplayName("Color")]
+        public Color FogColor
+        {
+            get { var f = GetFog(); return GhostColorUtil.ToColor(f.colorR, f.colorG, f.colorB); }
+            set { var f = GetFog(); f.colorR = value.R / 255f; f.colorG = value.G / 255f; f.colorB = value.B / 255f; SetFog(f); }
+        }
+
+        [Category("Fog"), DisplayName("Brightness (self-lit glow)")]
+        public float FogBrightness { get => GetFog().brightness; set { var f = GetFog(); f.brightness = value; SetFog(f); } }
+
+        [Category("Fog"), DisplayName("Follow Ambient (0-1, dims at night with the Sky Sphere)")]
+        public float FogFollowAmbient { get => GetFog().followAmbient; set { var f = GetFog(); f.followAmbient = value; SetFog(f); } }
+
+        [Category("Fog"), DisplayName("Height Base (world Y, densest here)")]
+        public float FogHeightBase { get => GetFog().heightBase; set { var f = GetFog(); f.heightBase = value; SetFog(f); } }
+
+        [Category("Fog"), DisplayName("Height Falloff (0 = uniform)")]
+        public float FogHeightFalloff { get => GetFog().heightFalloff; set { var f = GetFog(); f.heightFalloff = value; SetFog(f); } }
+
+        [Category("Fog"), DisplayName("Start Distance")]
+        public float FogStart { get => GetFog().startDistance; set { var f = GetFog(); f.startDistance = value; SetFog(f); } }
+
+        [Category("Fog"), DisplayName("Max Distance")]
+        public float FogMaxDistance { get => GetFog().maxDistance; set { var f = GetFog(); f.maxDistance = value; SetFog(f); } }
+
+        [Category("Fog"), DisplayName("Sky Fog (0-1)")]
+        public float FogSky { get => GetFog().skyFog; set { var f = GetFog(); f.skyFog = value; SetFog(f); } }
+
+        [Category("Fog Environment"), DisplayName("Color Source")]
+        [TypeConverter(typeof(FogEnvConverter))]
+        public string FogEnvSource
+        {
+            get => FogEnvConverter.Names[Math.Clamp(GetFog().envMode, 0, 2)];
+            set { int i = Array.IndexOf(FogEnvConverter.Names, value); if (i >= 0) { var f = GetFog(); f.envMode = i; SetFog(f); } }
+        }
+
+        [Category("Fog Environment"), DisplayName("Source Amount (0-1)")]
+        public float FogEnvAmount { get => GetFog().envAmount; set { var f = GetFog(); f.envAmount = value; SetFog(f); } }
+
+        [Category("Fog Environment"), DisplayName("Texture (Source = Texture)")]
+        [TypeConverter(typeof(TextureChoiceConverter))]
+        public string FogEnvTexture
+        {
+            get => GhostTextures.DisplayName(GetFog().envTexture);
+            set
+            {
+                int tex = (value == GhostTextures.ImportLabel) ? GhostTextures.ImportFromDisk() : GhostTextures.IdFromDisplay(value);
+                if (tex < 0) return;
+                var f = GetFog(); f.envTexture = tex; SetFog(f);
+            }
+        }
+
+        [Category("Fog Environment"), DisplayName("Texture Rotation (deg)")]
+        public float FogEnvYaw { get => GetFog().envYaw; set { var f = GetFog(); f.envYaw = value; SetFog(f); } }
+
+        [Category("Fog Noise"), DisplayName("Noise Texture")]
+        [TypeConverter(typeof(TextureChoiceConverter))]
+        public string FogNoiseTexture
+        {
+            get => GhostTextures.DisplayName(GetFog().noiseTexture);
+            set
+            {
+                int tex = (value == GhostTextures.ImportLabel) ? GhostTextures.ImportFromDisk() : GhostTextures.IdFromDisplay(value);
+                if (tex < 0) return;
+                var f = GetFog(); f.noiseTexture = tex; SetFog(f);
+            }
+        }
+
+        [Category("Fog Noise"), DisplayName("Noise Amount (0-1)")]
+        public float FogNoiseAmount { get => GetFog().noiseAmount; set { var f = GetFog(); f.noiseAmount = value; SetFog(f); } }
+
+        [Category("Fog Noise"), DisplayName("Noise Scale")]
+        public float FogNoiseScale { get => GetFog().noiseScale; set { var f = GetFog(); f.noiseScale = value; SetFog(f); } }
+
+        [Category("Fog Noise"), DisplayName("Wind X (units/s)")]
+        public float FogScrollX { get => GetFog().scrollX; set { var f = GetFog(); f.scrollX = value; SetFog(f); } }
+
+        [Category("Fog Noise"), DisplayName("Wind Z (units/s)")]
+        public float FogScrollZ { get => GetFog().scrollZ; set { var f = GetFog(); f.scrollZ = value; SetFog(f); } }
+
+        [Category("Volumetric Lighting"), DisplayName("God Rays Enabled")]
+        public bool VolLight { get => GetFog().volLight != 0; set { var f = GetFog(); f.volLight = value ? 1 : 0; SetFog(f); } }
+
+        [Category("Volumetric Lighting"), DisplayName("Intensity (0-10)")]
+        public float VolIntensity { get => GetFog().volIntensity; set { var f = GetFog(); f.volIntensity = value; SetFog(f); } }
+
+        [Category("Volumetric Lighting"), DisplayName("Anisotropy (-0.9 to 0.95, forward = rays toward the light)")]
+        public float VolAnisotropy { get => GetFog().anisotropy; set { var f = GetFog(); f.anisotropy = value; SetFog(f); } }
+
+        [Category("Volumetric Lighting"), DisplayName("Quality (steps, 8-64)")]
+        public int VolSteps { get => GetFog().steps; set { var f = GetFog(); f.steps = value; SetFog(f); } }
 
 
         [Category("Audio"), DisplayName("Scene Music (plays during Play)")]
@@ -1765,9 +1916,8 @@ namespace GhostShell
         private static readonly Color Accent = Color.FromArgb(0xFF, 0xC8, 0x6E);
         private static readonly Color CamColor = Color.FromArgb(0x7F, 0xD4, 0xFF);
         private static readonly Color ModColor = Color.FromArgb(0xC8, 0xA0, 0xFF);
-
         private static readonly Color VolColor = Color.FromArgb(0x7F, 0xE0, 0xB0);
-
+        private static readonly Color FxColor = Color.FromArgb(0xFF, 0x9A, 0x4A);
         private sealed class PaletteItem
         {
             public string Text = "";
@@ -2864,7 +3014,8 @@ namespace GhostShell
                 var node = new TreeNode(text)
                 {
                     Tag = buf[i].id,
-                    ForeColor = buf[i].kind == 1 ? Accent : (buf[i].kind == 2 ? CamColor : (buf[i].kind == 3 ? ModColor : (buf[i].kind == 4 ? VolColor : Fg))),
+                    ForeColor = buf[i].kind == 1 ? Accent : (buf[i].kind == 2 ? CamColor : (buf[i].kind == 3 ? ModColor : (buf[i].kind == 4 ? VolColor : (buf[i].kind == 4 ? FxColor :  Fg)))),
+                   
                 };
                 _tree.Nodes.Add(node);
                 _nodes[buf[i].id] = node;
@@ -2941,6 +3092,7 @@ namespace GhostShell
                     else if (l.type == 3) proxy = new SpotLightProxy(id);
                     else proxy = new RectLightProxy(id);
                 }
+              
                 else
                 {
                     var c = new GhostCameraInfo();
@@ -2950,7 +3102,14 @@ namespace GhostShell
                         proxy = VolumeProxy.Create(id, vi.type);
                     else if (GhostModProxy.Exists(id))
                         proxy = new GhostModProxy(id);
+                    else
+                    {
+                        var pp = new GhostParticleParams();
+                        if (GhostEngine.GhostEngine_GetParticle(id, ref pp) != 0) proxy = new ParticleProxy(id);
+                    }
                 }
+
+
             }
             _grid.SelectedObject = proxy;
         }
@@ -2963,6 +3122,7 @@ namespace GhostShell
                 GhostEngine.GhostEngine_GetShadowSettings(out int se, out float ss);
                 GhostEngine.GhostEngine_GetShadowTuning(out GhostShadowTuning st);
                 GhostEngine.GhostEngine_GetPostSettings(out GhostPostInfo pi);
+                GhostEngine.GhostEngine_GetFogSettings(out GhostFogInfo fogi);
                 return (r, g, b, k, GhostEngine.GhostEngine_GetGameStartCamera(), se, ss, GhostEngine.GhostEngine_GetShadowResolution(), st, pi);
             }
             var o = new GhostObjectInfo();
@@ -2982,6 +3142,8 @@ namespace GhostShell
                 return (vol.shape, vol.enabled, vol.priority, vol.px, vol.py, vol.pz, vol.rx, vol.ry, vol.rz,
                         vol.sx, vol.sy, vol.sz, vol.radius, vol.blend, string.Join(",", vol.p), string.Join(",", vol.tex),
                         GhostEngine.GhostEngine_GetProbeStatus(id));
+            var pp = new GhostParticleParams();
+            if (GhostEngine.GhostEngine_GetParticle(id, ref pp) != 0) return pp;
             if (GhostModProxy.Exists(id)) return GhostMods.Signature(id);
             return null;
         }

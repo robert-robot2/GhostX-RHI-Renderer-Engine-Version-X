@@ -254,3 +254,10 @@ UIPSInput OverlayVS(OverlayVSInput i)
     o.color = i.color;
     return o;
 }
+
+// ---------------- Fog: one full-screen triangle (everything is reconstructed from depth in the pixel shader) ----------------
+float4 FogVS(uint vid : SV_VertexID) : SV_POSITION
+{
+    float2 c = float2((vid << 1) & 2, vid & 2);
+    return float4(c * 2.0f - 1.0f, 0.0f, 1.0f);
+}

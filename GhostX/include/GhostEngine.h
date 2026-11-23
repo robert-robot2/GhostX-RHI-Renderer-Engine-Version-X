@@ -31,8 +31,23 @@ struct GhostLightInfo
     float innerDeg, outerDeg;                 // spot cone
     int   shadowObjects, shadowLandscape;     // spot shadow toggles
     float spinYaw, spinPitch;                 // deg/sec while playing
+    float volumetric;                         // god rays strength
 };
-
+struct GhostFogInfo
+{
+    int   enabled;
+    float density, colorR, colorG, colorB, brightness, followAmbient;
+    float heightBase, heightFalloff, startDistance, maxDistance, skyFog;
+    int   envMode;                            // 0 colour, 1 reflection capture, 2 texture
+    float envAmount;
+    int   envTexture;
+    float envYaw;
+    int   noiseTexture;
+    float noiseAmount, noiseScale, scrollX, scrollZ;
+    int   volLight;
+    float volIntensity, anisotropy;
+    int   steps;
+};
 struct GhostFlickerInfo
 {
     int   enabled, pattern, smoothSteps, textureId;
@@ -156,6 +171,12 @@ struct GhostPostInfo
     float bloomThreshold, bloomKnee, bloomIntensity, bloomScatter;
     int   bloomMips;
     float bloomTintR, bloomTintG, bloomTintB;
+    int   ssaoEnabled;
+    float ssaoRadius, ssaoIntensity, ssaoBias, ssaoStrength;
+    int   ssaoSamples;
+    float ssaoDirectFade;
+    int   ssaoHalfRes, ssaoShowOnly;
+    float ssaoFadeDist;
 };
 
 struct GhostSurfaceInfo
@@ -207,6 +228,7 @@ extern "C"
     GHOST_API void GhostEngine_Tick();
     GHOST_API void GhostEngine_Resize(unsigned int width, unsigned int height);
     GHOST_API void GhostEngine_Shutdown();
+    GHOST_API int  GhostEngine_PurgeProjectAssets();
     // ---- Input (client coordinates of the render panel) ----
     GHOST_API void GhostEngine_SetInputEnabled(int enabled);
     GHOST_API void GhostEngine_MouseDown(int x, int y, int button);   // 0 = left
@@ -511,6 +533,9 @@ extern "C"
 
     GHOST_API void GhostEngine_GetPostSettings(GhostPostInfo* out);
     GHOST_API void GhostEngine_SetPostSettings(const GhostPostInfo* in);
+
+    GHOST_API void GhostEngine_GetFogSettings(GhostFogInfo* out);
+    GHOST_API void GhostEngine_SetFogSettings(const GhostFogInfo* in);
 
     GHOST_API void GhostEngine_SetLoadProgress(GhostLoadProgressFn fn);
 

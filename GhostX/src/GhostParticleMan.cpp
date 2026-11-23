@@ -12,6 +12,8 @@
 #include <utility>
 #include <vector>
 
+static_assert(sizeof(GhostVec3) == 3 * sizeof(float), "GhostVec3 must be exactly three floats (the particle gizmo views px,py,pz as one)");
+
 namespace
 {
     struct Particle { float x, y, z, vx, vy, vz, age, life, size, rot, spin, phase, animOff; };
@@ -28,15 +30,26 @@ namespace
         GhostParticleClipInfo clipInfo = {};
     };
 
+    // The emitter's own coordinate frame: rotation (3x3) and per-axis scale
+    struct Xf { float r[3][3]; float sx, sy, sz, su; };
+
     std::vector<GhostParticleDef>* g_defs = nullptr;      // GhostScene::particles
     std::map<int, Runtime>         g_rt;
     int                            g_nextId = 1;
+    int                          (*g_alloc)() = nullptr;
     GhostParticleHost              g_host = {};
     int                            g_defaultTex = 0;
 
     float CF(float v, float lo, float hi) { return v != v ? lo : (v < lo ? lo : (v > hi ? hi : v)); }
     int   CI(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
     void  Order(float& a, float& b) { if (a > b) { const float t = a; a = b; b = t; } }
+    float Scl(float v)                           // a scale: never zero, never NaN
+    {
+        if (v != v) return 1.0f;
+        v = v < -1000.0f ? -1000.0f : (v > 1000.0f ? 1000.0f : v);
+        if (fabsf(v) < 0.01f) v = v < 0.0f ? -0.01f : 0.01f;
+        return v;
+    }
 
     float Rnd(Runtime& r)                       // xorshift32, 0..1
     {
@@ -47,11 +60,30 @@ namespace
     }
     float RndR(Runtime& r, float a, float b) { return a + (b - a) * Rnd(r); }
 
-    GhostParticleDef* FindDef(int id)
+    void MakeXf(const GhostParticleParams& p, Xf& x)
     {
-        if (!g_defs) return nullptr;
-        for (GhostParticleDef& d : *g_defs) if (d.p.id == id) return &d;
-        return nullptr;
+        const float d2r = GHOST_PI / 180.0f;
+        const GhostMat4 R = GhostMat4::RotationY(p.rotY * d2r) * GhostMat4::RotationX(p.rotX * d2r) * GhostMat4::RotationZ(p.rotZ * d2r);
+        for (int i = 0; i < 3; i++) for (int k = 0; k < 3; k++) x.r[i][k] = R.m[i][k];       // column k = the local axis k in world space
+        x.sx = p.scaleX; x.sy = p.scaleY; x.sz = p.scaleZ;
+        x.su = (fabsf(x.sx) + fabsf(x.sy) + fabsf(x.sz)) / 3.0f;
+    }
+
+    // local (emitter space) -> world offset: scale, then rotate
+    void ToWorld(const Xf& x, float lx, float ly, float lz, float& wx, float& wy, float& wz)
+    {
+        lx *= x.sx; ly *= x.sy; lz *= x.sz;
+        wx = x.r[0][0] * lx + x.r[0][1] * ly + x.r[0][2] * lz;
+        wy = x.r[1][0] * lx + x.r[1][1] * ly + x.r[1][2] * lz;
+        wz = x.r[2][0] * lx + x.r[2][1] * ly + x.r[2][2] * lz;
+    }
+
+    // world offset -> local (emitter space, unscaled box units)
+    void ToLocal(const Xf& x, float wx, float wy, float wz, float& lx, float& ly, float& lz)
+    {
+        lx = (x.r[0][0] * wx + x.r[1][0] * wy + x.r[2][0] * wz) / x.sx;
+        ly = (x.r[0][1] * wx + x.r[1][1] * wy + x.r[2][1] * wz) / x.sy;
+        lz = (x.r[0][2] * wx + x.r[1][2] * wy + x.r[2][2] * wz) / x.sz;
     }
 
     void ResolveClip(const GhostParticleDef& d, Runtime& r)
@@ -66,20 +98,21 @@ namespace
         if (h >= 0 && info.cols > 0 && info.rows > 0) { r.clipHandle = h; r.clipInfo = info; }
     }
 
-    void Spawn(const GhostParticleParams& p, Runtime& r)
+    void Spawn(const GhostParticleParams& p, const Xf& xf, Runtime& r)
     {
         Particle q = {};
         const float fx = Rnd(r) - 0.5f, fy = Rnd(r) - 0.5f, fz = Rnd(r) - 0.5f;
-        q.x = p.px + fx * p.boxX;
-        q.z = p.pz + fz * p.boxZ;
-        if (p.spawnMode == 1)      q.y = p.py + p.boxY * 0.5f;
-        else if (p.spawnMode == 2) q.y = p.py - p.boxY * 0.5f;
-        else                       q.y = p.py + fy * p.boxY;
-        q.vx = RndR(r, p.velMinX, p.velMaxX);
-        q.vy = RndR(r, p.velMinY, p.velMaxY);
-        q.vz = RndR(r, p.velMinZ, p.velMaxZ);
+        float ly;
+        if (p.spawnMode == 1)      ly = p.boxY * 0.5f;
+        else if (p.spawnMode == 2) ly = -p.boxY * 0.5f;
+        else                       ly = fy * p.boxY;
+        float wx, wy, wz;
+        ToWorld(xf, fx * p.boxX, ly, fz * p.boxZ, wx, wy, wz);
+        q.x = p.px + wx; q.y = p.py + wy; q.z = p.pz + wz;
+
+        ToWorld(xf, RndR(r, p.velMinX, p.velMaxX), RndR(r, p.velMinY, p.velMaxY), RndR(r, p.velMinZ, p.velMaxZ), q.vx, q.vy, q.vz);
         q.life = RndR(r, p.lifeMin, p.lifeMax);
-        q.size = RndR(r, p.sizeMin, p.sizeMax);
+        q.size = RndR(r, p.sizeMin, p.sizeMax) * xf.su;
         q.rot = RndR(r, p.rotMin, p.rotMax);
         q.spin = RndR(r, p.spinMin, p.spinMax);
         q.phase = Rnd(r) * 6.2831853f;
@@ -91,17 +124,23 @@ namespace
     {
         if ((int)r.live.size() > p.maxParticles) r.live.resize((size_t)p.maxParticles);
 
+        Xf xf;
+        MakeXf(p, xf);
+
         if (emit && p.enabled)
         {
             r.emitAccum += p.rate * dt;
             while (r.emitAccum >= 1.0f)
             {
                 r.emitAccum -= 1.0f;
-                if ((int)r.live.size() < p.maxParticles) Spawn(p, r);
+                if ((int)r.live.size() < p.maxParticles) Spawn(p, xf, r);
             }
         }
 
-        const float floorY = p.py - p.boxY * 0.5f - 0.01f;
+        float ax, ay, az;
+        ToWorld(xf, p.accelX, p.accelY, p.accelZ, ax, ay, az);
+        const float sway = p.swayAmp * xf.su;
+
         for (size_t i = 0; i < r.live.size(); )
         {
             Particle& q = r.live[i];
@@ -109,7 +148,7 @@ namespace
             bool dead = q.age >= q.life;
             if (!dead)
             {
-                q.vx += p.accelX * dt; q.vy += p.accelY * dt; q.vz += p.accelZ * dt;
+                q.vx += ax * dt; q.vy += ay * dt; q.vz += az * dt;
                 if (p.drag > 0.0f)
                 {
                     float k = 1.0f - p.drag * dt;
@@ -117,14 +156,19 @@ namespace
                     q.vx *= k; q.vy *= k; q.vz *= k;
                 }
                 q.x += q.vx * dt; q.y += q.vy * dt; q.z += q.vz * dt;
-                if (p.swayAmp > 0.0f)
+                if (sway > 0.0f)
                 {
                     const float w = q.age * p.swayFreq + q.phase;
-                    q.x += sinf(w) * p.swayAmp * dt;
-                    q.z += cosf(w) * p.swayAmp * dt;
+                    q.x += sinf(w) * sway * dt;
+                    q.z += cosf(w) * sway * dt;
                 }
                 q.rot += q.spin * dt;
-                if (p.killOutside && q.y < floorY) dead = true;
+                if (p.killOutside)                                  // below the bottom of the (rotated, scaled) box
+                {
+                    float lx, ly, lz;
+                    ToLocal(xf, q.x - p.px, q.y - p.py, q.z - p.pz, lx, ly, lz);
+                    if (ly < -p.boxY * 0.5f - 0.01f) dead = true;
+                }
             }
             if (dead) { q = r.live.back(); r.live.pop_back(); }
             else i++;
@@ -163,7 +207,7 @@ namespace
         }
         for (auto it = g_rt.begin(); it != g_rt.end(); )
         {
-            if (!FindDef(it->first)) it = g_rt.erase(it);
+            if (!GhostParticles_Find(it->first)) it = g_rt.erase(it);
             else ++it;
         }
     }
@@ -173,9 +217,35 @@ namespace
 //  Module
 // ============================================================
 void GhostParticles_Bind(std::vector<GhostParticleDef>* defs) { g_defs = defs; }
+void GhostParticles_SetIdAllocator(int (*fn)()) { g_alloc = fn; }
 void GhostParticles_Shutdown() { g_defs = nullptr; g_rt.clear(); g_nextId = 1; }
 void GhostParticles_ResetAll() { g_rt.clear(); }
 void GhostParticles_Clear() { if (g_defs) g_defs->clear(); g_rt.clear(); }
+
+GhostParticleDef* GhostParticles_Find(int id)
+{
+    if (!g_defs) return nullptr;
+    for (GhostParticleDef& d : *g_defs) if (d.p.id == id) return &d;
+    return nullptr;
+}
+
+GhostVec3* GhostParticles_PositionPtr(int id) { GhostParticleDef* d = GhostParticles_Find(id); return d ? reinterpret_cast<GhostVec3*>(&d->p.px) : nullptr; }
+GhostVec3* GhostParticles_RotationPtr(int id) { GhostParticleDef* d = GhostParticles_Find(id); return d ? reinterpret_cast<GhostVec3*>(&d->p.rotX) : nullptr; }
+GhostVec3* GhostParticles_ScalePtr(int id) { GhostParticleDef* d = GhostParticles_Find(id); return d ? reinterpret_cast<GhostVec3*>(&d->p.scaleX) : nullptr; }
+
+void GhostParticles_Axes(const GhostParticleParams& p, GhostVec3 out[3])
+{
+    Xf x;
+    MakeXf(p, x);
+    const float s[3] = { x.sx, x.sy, x.sz };
+    for (int k = 0; k < 3; k++) out[k] = GhostVec3(x.r[0][k] * s[k], x.r[1][k] * s[k], x.r[2][k] * s[k]);
+}
+
+std::string GhostParticles_DefaultName(int type, int id)
+{
+    static const char* names[GHOST_PFX_TYPE_COUNT] = { "Fire", "Snow", "Particle System" };
+    return std::string(names[CI(type, 0, GHOST_PFX_TYPE_COUNT - 1)]) + " " + std::to_string(id);
+}
 
 void GhostParticles_SetHost(const GhostParticleHost* host)
 {
@@ -247,14 +317,23 @@ void GhostParticles_Clamp(GhostParticleParams& p)
     p.randomStartFrame = p.randomStartFrame ? 1 : 0;
     if (p.meshId < 0 || !GhostMesh_Valid(p.meshId)) p.meshId = -1;
     p.drawDistance = CF(p.drawDistance, 1.0f, 500.0f);
+
+    p.rotX = CF(p.rotX, -3600.0f, 3600.0f); p.rotY = CF(p.rotY, -3600.0f, 3600.0f); p.rotZ = CF(p.rotZ, -3600.0f, 3600.0f);
+    p.scaleX = Scl(p.scaleX); p.scaleY = Scl(p.scaleY); p.scaleZ = Scl(p.scaleZ);
 }
 
 void GhostParticles_FillPreset(int type, GhostParticleParams& p)
 {
     const int   id = p.id;
     const float x = p.px, y = p.py, z = p.pz;
+    const float rx = p.rotX, ry = p.rotY, rz = p.rotZ;
+    const float sx = p.scaleX != 0.0f ? p.scaleX : 1.0f;        // a brand new (zeroed) struct starts at scale 1
+    const float sy = p.scaleY != 0.0f ? p.scaleY : 1.0f;
+    const float sz = p.scaleZ != 0.0f ? p.scaleZ : 1.0f;
     p = GhostParticleParams();
     p.id = id; p.px = x; p.py = y; p.pz = z;
+    p.rotX = rx; p.rotY = ry; p.rotZ = rz;
+    p.scaleX = sx; p.scaleY = sy; p.scaleZ = sz;
     p.type = CI(type, 0, GHOST_PFX_TYPE_COUNT - 1);
 
     // ---- Custom (also the starting point of the other two) ----
@@ -310,13 +389,14 @@ int GhostParticles_Add(int type, float x, float y, float z)
     if (type < 0 || type >= GHOST_PFX_TYPE_COUNT) return 0;
     if ((int)g_defs->size() >= GHOST_PFX_MAX_EMITTERS) return 0;
 
-    for (const GhostParticleDef& d : *g_defs) if (d.p.id >= g_nextId) g_nextId = d.p.id + 1;
+    for (const GhostParticleDef& e : *g_defs) if (e.p.id >= g_nextId) g_nextId = e.p.id + 1;
 
     GhostParticleDef d;
     GhostParticles_FillPreset(type, d.p);
-    d.p.id = g_nextId++;
+    d.p.id = g_alloc ? g_alloc() : g_nextId++;
     d.p.px = x; d.p.py = y; d.p.pz = z;
     if (type == GHOST_PFX_SNOW) d.p.py += d.p.boxY * 0.5f;      // (x,y,z) is a ground point: the snow volume rests on it
+    d.name = GhostParticles_DefaultName(type, d.p.id);
     g_defs->push_back(d);                                       // live state is created (and prewarmed) by the next Update
     return d.p.id;
 }
@@ -443,10 +523,11 @@ GhostMat4 GhostParticles_Model(const GhostParticleDraw& d, const GhostVec3& camR
 }
 
 // ============================================================
-//  Exported API (declared in GhostEngine.h) — unchanged, so the C# side stays as it is
+//  Exported API (declared in GhostEngine.h)
 // ============================================================
 int GhostEngine_AddParticleAt(int type, float x, float y, float z) { return GhostParticles_Add(type, x, y, z); }
 
+// (the editor removes emitters with GhostEngine_RemoveEntity, which also refreshes the hierarchy)
 int GhostEngine_RemoveParticle(int id)
 {
     if (!g_defs) return 0;
@@ -472,7 +553,7 @@ int GhostEngine_GetParticleIds(int* outIds, int maxCount)
 
 int GhostEngine_GetParticle(int id, GhostParticleParams* out)
 {
-    GhostParticleDef* d = FindDef(id);
+    GhostParticleDef* d = GhostParticles_Find(id);
     if (!d || !out) return 0;
     *out = d->p;
     return 1;
@@ -481,7 +562,7 @@ int GhostEngine_GetParticle(int id, GhostParticleParams* out)
 void GhostEngine_SetParticle(const GhostParticleParams* in)
 {
     if (!in) return;
-    GhostParticleDef* d = FindDef(in->id);
+    GhostParticleDef* d = GhostParticles_Find(in->id);
     if (!d) return;
     GhostParticleParams n = *in;
     n.id = d->p.id;
@@ -495,7 +576,7 @@ int GhostEngine_GetParticleText(int id, int which, char* buf, int bufSize)
 {
     if (!buf || bufSize <= 0) return 0;
     buf[0] = 0;
-    GhostParticleDef* d = FindDef(id);
+    GhostParticleDef* d = GhostParticles_Find(id);
     if (!d) return 0;
     if (which == 2)
         return (g_host.ClipNames && !d->anim.empty()) ? g_host.ClipNames(d->anim.c_str(), buf, bufSize) : 0;
@@ -506,7 +587,7 @@ int GhostEngine_GetParticleText(int id, int which, char* buf, int bufSize)
 
 void GhostEngine_SetParticleText(int id, int which, const char* utf8)
 {
-    GhostParticleDef* d = FindDef(id);
+    GhostParticleDef* d = GhostParticles_Find(id);
     if (!d) return;
     std::string t = utf8 ? utf8 : "";
     if (which == 0)
@@ -523,9 +604,9 @@ void GhostEngine_SetParticleText(int id, int which, const char* utf8)
 
 void GhostEngine_ApplyParticlePreset(int id, int type)
 {
-    GhostParticleDef* d = FindDef(id);
+    GhostParticleDef* d = GhostParticles_Find(id);
     if (!d || type < 0 || type >= GHOST_PFX_TYPE_COUNT) return;
-    GhostParticles_FillPreset(type, d->p);          // keeps id and position
+    GhostParticles_FillPreset(type, d->p);          // keeps id, position, rotation and scale
     g_rt.erase(id);                                 // starts over (prewarmed) on the next Update
 }
 

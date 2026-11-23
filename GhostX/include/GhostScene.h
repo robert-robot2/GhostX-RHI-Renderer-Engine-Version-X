@@ -637,6 +637,7 @@ struct GhostLight
     bool           shadowObjects = true;                 // spot: objects cast shadows from this light
     bool           shadowLandscape = true;               // spot: Tile Maps cast shadows from this light
     float          spinYaw = 0.0f, spinPitch = 0.0f;     // deg/sec, applied while playing
+    float          volumetric = 1.0f;                    // god rays strength (needs Scene Settings > Volumetric Lighting)
     GhostFlickerLayer flicker[GHOST_FLICKER_LAYERS];     // Point lights
     GhostLight() { flicker[0].baseInfluence = 1.0f; flicker[0].brightness = 0.0f; }   // layer 1 = flicker the main light
 };
@@ -743,7 +744,37 @@ inline void GhostProbeParams_Fix(GhostVolume& v)
     p[PROBE_ENV_YAW] = cf(p[PROBE_ENV_YAW], -360.0f, 360.0f);
     p[PROBE_DIFFUSE] = cf(p[PROBE_DIFFUSE], 0.0f, 1.0f);
 }
+// Fog Volume parameter slots (GhostVolume::p). tex[0] = the density noise texture.
+enum GhostFogVolParam
+{
+    FOGV_DENSITY = 0,
+    FOGV_R, FOGV_G, FOGV_B,           // display colour
+    FOGV_GRADIENT,                    // 0 uniform .. 1 fades out toward the top
+    FOGV_LIGHT_SCATTER,               // how much god rays scatter in it (0..2)
+    FOGV_NOISE_AMOUNT, FOGV_NOISE_SCALE, FOGV_SCROLL_X, FOGV_SCROLL_Z,
+    FOGV_VERSION = 15
+};
 
+inline void GhostFogVolParams_Fix(GhostVolume& v)
+{
+    float* p = v.p;
+    auto cf = [](float x, float lo, float hi) { return x != x ? lo : (x < lo ? lo : (x > hi ? hi : x)); };
+    if (p[FOGV_VERSION] < 0.5f)
+    {
+        p[FOGV_DENSITY] = 0.15f; p[FOGV_R] = 0.80f; p[FOGV_G] = 0.85f; p[FOGV_B] = 0.90f;
+        p[FOGV_GRADIENT] = 0.0f; p[FOGV_LIGHT_SCATTER] = 1.0f;
+        p[FOGV_NOISE_AMOUNT] = 0.6f; p[FOGV_NOISE_SCALE] = 0.2f; p[FOGV_SCROLL_X] = 0.2f; p[FOGV_SCROLL_Z] = 0.05f;
+        p[FOGV_VERSION] = 1.0f;
+    }
+    p[FOGV_DENSITY] = cf(p[FOGV_DENSITY], 0.0f, 5.0f);
+    for (int i = FOGV_R; i <= FOGV_B; i++) p[i] = cf(p[i], 0.0f, 1.0f);
+    p[FOGV_GRADIENT] = cf(p[FOGV_GRADIENT], 0.0f, 1.0f);
+    p[FOGV_LIGHT_SCATTER] = cf(p[FOGV_LIGHT_SCATTER], 0.0f, 2.0f);
+    p[FOGV_NOISE_AMOUNT] = cf(p[FOGV_NOISE_AMOUNT], 0.0f, 1.0f);
+    p[FOGV_NOISE_SCALE] = cf(p[FOGV_NOISE_SCALE], 0.01f, 4.0f);
+    p[FOGV_SCROLL_X] = cf(p[FOGV_SCROLL_X], -5.0f, 5.0f);
+    p[FOGV_SCROLL_Z] = cf(p[FOGV_SCROLL_Z], -5.0f, 5.0f);
+}
 
 inline void GhostVolume_Clamp(GhostVolume& v)
 {
@@ -758,6 +789,7 @@ inline void GhostVolume_Clamp(GhostVolume& v)
     v.priority = v.priority < -100 ? -100 : (v.priority > 100 ? 100 : v.priority);
     for (int i = 0; i < GHOST_VOL_PARAMS; i++) if (v.p[i] != v.p[i]) v.p[i] = 0.0f;
     if (v.type == GHOST_VOL_REFLECTION) GhostProbeParams_Fix(v);
+    else if (v.type == GHOST_VOL_FOG) GhostFogVolParams_Fix(v);
 }
 
 // ---- Post processing (scene settings) ----
@@ -777,6 +809,17 @@ struct GhostPostSettings
     float bloomScatter = 0.7f;             // 0.1 tight .. 0.95 wide
     int   bloomMips = 5;                   // blur levels, 2 .. 6 (more = bigger glow)
     float bloomTint[3] = { 1.0f, 1.0f, 1.0f };
+    // ---- SSAO (Phase 6) ----
+    int   ssaoEnabled = 0;
+    float ssaoRadius = 0.5f;               // world units
+    float ssaoIntensity = 1.0f;            // contrast of the occlusion (exponent)
+    float ssaoBias = 0.03f;                // world units: ignores tiny depth differences (self-occlusion)
+    float ssaoStrength = 1.0f;             // 0 = no effect, 1 = full
+    int   ssaoSamples = 16;                // 4 .. 32
+    float ssaoDirectFade = 0.5f;           // 0 = AO on everything, 1 = bright (directly lit) pixels get almost none
+    int   ssaoHalfRes = 0;
+    int   ssaoShowOnly = 0;                // debug: show the AO buffer
+    float ssaoFadeDist = 50.0f;            // AO fades out toward this camera distance (0 = no fade)
 };
 
 inline void GhostPostSettings_Clamp(GhostPostSettings& p)
@@ -792,7 +835,69 @@ inline void GhostPostSettings_Clamp(GhostPostSettings& p)
     p.bloomScatter = cf(p.bloomScatter, 0.1f, 0.95f);
     p.bloomMips = p.bloomMips < 2 ? 2 : (p.bloomMips > 6 ? 6 : p.bloomMips);       // 6 = GHOST_BLOOM_MAX_MIPS
     for (int i = 0; i < 3; i++) p.bloomTint[i] = cf(p.bloomTint[i], 0.0f, 1.0f);
+    p.ssaoEnabled = p.ssaoEnabled ? 1 : 0;
+    p.ssaoRadius = cf(p.ssaoRadius, 0.05f, 5.0f);
+    p.ssaoIntensity = cf(p.ssaoIntensity, 0.0f, 4.0f);
+    p.ssaoBias = cf(p.ssaoBias, 0.0f, 0.5f);
+    p.ssaoStrength = cf(p.ssaoStrength, 0.0f, 1.0f);
+    p.ssaoSamples = p.ssaoSamples < 4 ? 4 : (p.ssaoSamples > 32 ? 32 : p.ssaoSamples);
+    p.ssaoDirectFade = cf(p.ssaoDirectFade, 0.0f, 1.0f);
+    p.ssaoHalfRes = p.ssaoHalfRes ? 1 : 0;
+    p.ssaoShowOnly = p.ssaoShowOnly ? 1 : 0;
+    p.ssaoFadeDist = cf(p.ssaoFadeDist, 0.0f, 1000.0f);
 }
+
+// ---- Global fog + volumetric lighting (scene settings) ----
+struct GhostFogSettings
+{
+    int   enabled = 0;
+    float density = 0.02f;                 // extinction per world unit
+    float color[3] = { 0.60f, 0.70f, 0.80f };   // display colour
+    float brightness = 1.0f;               // self-lit glow of the fog colour
+    float followAmbient = 0.0f;            // 0..1: fog dims with the scene ambient (Sky Sphere time of day)
+    float heightBase = 0.0f;               // world Y where the fog is densest
+    float heightFalloff = 0.0f;            // 0 = uniform, higher = thins out faster above heightBase
+    float startDistance = 0.0f;
+    float maxDistance = 80.0f;
+    float skyFog = 0.5f;                   // how much the sky is fogged (0..1)
+    int   envMode = 0;                     // 0 colour, 1 reflection capture (cubemap), 2 texture (lat-long)
+    float envAmount = 1.0f;
+    int   envTexture = 0;
+    float envYaw = 0.0f;
+    int   noiseTexture = 0;
+    float noiseAmount = 0.7f, noiseScale = 0.15f, scrollX = 0.3f, scrollZ = 0.1f;
+    int   volLight = 0;                    // god rays on/off
+    float volIntensity = 1.0f;
+    float anisotropy = 0.5f;               // -0.9 .. 0.95: forward scattering looks toward the light
+    int   steps = 32;                      // 8 .. 64
+};
+
+inline void GhostFogSettings_Clamp(GhostFogSettings& f)
+{
+    auto cf = [](float x, float lo, float hi) { return x != x ? lo : (x < lo ? lo : (x > hi ? hi : x)); };
+    f.enabled = f.enabled ? 1 : 0;
+    f.density = cf(f.density, 0.0f, 1.0f);
+    for (int i = 0; i < 3; i++) f.color[i] = cf(f.color[i], 0.0f, 1.0f);
+    f.brightness = cf(f.brightness, 0.0f, 10.0f);
+    f.followAmbient = cf(f.followAmbient, 0.0f, 1.0f);
+    f.heightBase = cf(f.heightBase, -10000.0f, 10000.0f);
+    f.heightFalloff = cf(f.heightFalloff, 0.0f, 5.0f);
+    f.startDistance = cf(f.startDistance, 0.0f, 1000.0f);
+    f.maxDistance = cf(f.maxDistance, f.startDistance + 1.0f, 1000.0f);
+    f.skyFog = cf(f.skyFog, 0.0f, 1.0f);
+    f.envMode = f.envMode < 0 ? 0 : (f.envMode > 2 ? 2 : f.envMode);
+    f.envAmount = cf(f.envAmount, 0.0f, 1.0f);
+    f.envYaw = cf(f.envYaw, -360.0f, 360.0f);
+    f.noiseAmount = cf(f.noiseAmount, 0.0f, 1.0f);
+    f.noiseScale = cf(f.noiseScale, 0.005f, 4.0f);
+    f.scrollX = cf(f.scrollX, -5.0f, 5.0f);
+    f.scrollZ = cf(f.scrollZ, -5.0f, 5.0f);
+    f.volLight = f.volLight ? 1 : 0;
+    f.volIntensity = cf(f.volIntensity, 0.0f, 10.0f);
+    f.anisotropy = cf(f.anisotropy, -0.9f, 0.95f);
+    f.steps = f.steps < 8 ? 8 : (f.steps > 64 ? 64 : f.steps);
+}
+
 
 struct GhostScene
 {
@@ -808,6 +913,7 @@ struct GhostScene
     float        ambientColor[3] = { 1, 1, 1 };
     float        ambientIntensity = 0.15f;
     GhostPostSettings post;
+    GhostFogSettings fog;
     int          nextId = 1;          // ONE id space for objects and lights
     int          selectedId = 0;      // 0 = nothing selected
     int          selectedFace = -1;   // -1 = all faces; always belongs to selectedId
@@ -889,6 +995,7 @@ inline GhostVolume* GhostScene_AddVolume(GhostScene& s, int type)
     if (type == GHOST_VOL_REFLECTION) { v.shape = GHOST_VOLSHAPE_SPHERE; v.radius = 5.0f; }
     else { v.shape = GHOST_VOLSHAPE_BOX; v.size = { 10, 5, 10 }; }
     if (type == GHOST_VOL_REFLECTION) GhostProbeParams_Fix(v);                 // defaults
+    if (type == GHOST_VOL_FOG) GhostFogVolParams_Fix(v);
     s.volumes.push_back(v);
     s.version++;
     return &s.volumes.back();
@@ -914,6 +1021,9 @@ inline bool GhostScene_Remove(GhostScene& s, int id)
         if (s.mods[i].id == id) { s.mods.erase(s.mods.begin() + i); goto removed; }
     for (size_t i = 0; i < s.volumes.size(); i++)
         if (s.volumes[i].id == id) { s.volumes.erase(s.volumes.begin() + i); goto removed; }
+    for (size_t i = 0; i < s.particles.size(); i++)
+        if (s.particles[i].p.id == id) { s.particles.erase(s.particles.begin() + i); goto removed; }
+
     return false;
 removed:
 

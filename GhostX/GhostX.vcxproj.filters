@@ -202,5 +202,8 @@
     <None Include="shaders\GhostPS.hlsl">
       <Filter>Shaders</Filter>
     </None>
+    <None Include="shaders\GhostFog.hlsl">
+      <Filter>Shaders</Filter>
+    </None>
   </ItemGroup>
 </Project>

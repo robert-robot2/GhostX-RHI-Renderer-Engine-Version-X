@@ -275,6 +275,41 @@ static bool RleDec(const std::vector<unsigned char>& in, size_t expect, std::vec
     return out.size() == expect;
 }
 
+// Texture ids the scene really uses, so a save never drags along registry leftovers
+static void CollectUsedTextures(const GhostScene& s, std::set<int>& used)
+{
+    auto add = [&](int id) { if (id >= GHOST_FIRST_USER_TEXTURE) used.insert(id); };
+    for (const GhostObject& o : s.objects)
+    {
+        const int n = GhostObject_FaceCount(o);
+        for (int f = 0; f < n; f++)
+        {
+            add(o.faces[f].textureId);
+            for (int k = 0; k < GHOST_MAP_COUNT; k++) add(o.faces[f].maps[k].textureId);
+        }
+        if (o.meshId == GHOST_MESH_QUAD) add(o.sprite.textureId);
+        if (!o.missingFaces.empty())
+        {
+            json mf = json::parse(o.missingFaces, nullptr, false);
+            if (mf.is_array()) for (const json& fj : mf) if (fj.is_object()) add(fj.value("texture", 0));
+        }
+    }
+    for (const GhostLight& l : s.lights)
+        for (int k = 0; k < GHOST_FLICKER_LAYERS; k++) add(l.flicker[k].textureId);
+    for (const GhostVolume& v : s.volumes) for (int t : v.tex) add(t);
+    for (const GhostParticleDef& d : s.particles) add(d.p.textureId);
+    for (const GhostModEntity& m : s.mods)
+    {
+        const GhostModType* t = GhostMods_Type(m.typeId);
+        if (!t) continue;
+        for (int p = 0; p < t->paramCount; p++)
+        {
+            if (t->params[p].kind != GHOST_PARAM_TEXTURE) continue;
+            const int off = GhostMods_ParamOffset(m.typeId, p);
+            if (off >= 0 && (size_t)off < m.values.size()) add((int)(m.values[(size_t)off] + 0.5f));
+        }
+    }
+}
 
 // ============================================================
 //  Save
@@ -301,10 +336,16 @@ bool GhostScene_Save(const GhostScene& s, const std::string& root, const std::st
          { "bloom", json{ { "enabled", s.post.bloomEnabled },{ "threshold", s.post.bloomThreshold },{ "knee", s.post.bloomKnee },
                           { "intensity", s.post.bloomIntensity },{ "scatter", s.post.bloomScatter },{ "mips", s.post.bloomMips },
                           { "tint", F3(s.post.bloomTint) } } } };
-        std::set<int> saved;
+        j["post"]["ssao"] = json{ { "enabled", s.post.ssaoEnabled },{ "radius", s.post.ssaoRadius },{ "intensity", s.post.ssaoIntensity },
+    { "bias", s.post.ssaoBias },{ "strength", s.post.ssaoStrength },{ "samples", s.post.ssaoSamples },
+    { "directFade", s.post.ssaoDirectFade },{ "halfRes", s.post.ssaoHalfRes },{ "fadeDist", s.post.ssaoFadeDist } };
+
+
+        std::set<int> saved, used;
+        CollectUsedTextures(s, used);
         json texs = json::array();
         for (const GhostTextureInfo& t : s.textures)
-            if (t.id >= GHOST_FIRST_USER_TEXTURE && !t.path.empty())
+            if (t.id >= GHOST_FIRST_USER_TEXTURE && !t.path.empty() && used.count(t.id))
             {
                 saved.insert(t.id);
                 json jt;
@@ -314,6 +355,20 @@ bool GhostScene_Save(const GhostScene& s, const std::string& root, const std::st
                 texs.push_back(jt);
             }
         j["textures"] = texs;
+
+
+
+        {
+            const GhostFogSettings& f = s.fog;
+            auto tex = [&](int t) { return (t < GHOST_FIRST_USER_TEXTURE || saved.count(t)) ? t : 0; };
+            j["fog"] = json{ { "enabled", f.enabled },{ "density", f.density },{ "color", F3(f.color) },{ "brightness", f.brightness },
+                { "followAmbient", f.followAmbient },{ "heightBase", f.heightBase },{ "heightFalloff", f.heightFalloff },
+                { "start", f.startDistance },{ "max", f.maxDistance },{ "sky", f.skyFog },
+                { "envMode", f.envMode },{ "envAmount", f.envAmount },{ "envTexture", tex(f.envTexture) },{ "envYaw", f.envYaw },
+                { "noiseTexture", tex(f.noiseTexture) },{ "noiseAmount", f.noiseAmount },{ "noiseScale", f.noiseScale },
+                { "scrollX", f.scrollX },{ "scrollZ", f.scrollZ },
+                { "volLight", f.volLight },{ "volIntensity", f.volIntensity },{ "anisotropy", f.anisotropy },{ "steps", f.steps } };
+        }
 
         json objs = json::array();
         for (const GhostObject& o : s.objects)
@@ -460,6 +515,7 @@ bool GhostScene_Save(const GhostScene& s, const std::string& root, const std::st
             jl["shadowLandscape"] = l.shadowLandscape;
             jl["spinYaw"] = l.spinYaw;
             jl["spinPitch"] = l.spinPitch;
+            jl["volumetric"] = l.volumetric;
             json fl = json::array();
             for (int k = 0; k < GHOST_FLICKER_LAYERS; k++) fl.push_back(FlickerToJson(l.flicker[k], saved));
             jl["flicker"] = fl;
@@ -548,6 +604,7 @@ bool GhostScene_Save(const GhostScene& s, const std::string& root, const std::st
             json jp;
             jp["id"] = p.id;
             jp["type"] = p.type;
+            jp["name"] = d.name;
 #define PP_SAVE(n) jp[#n] = p.n;
             GHOST_PARTICLE_FIELDS(PP_SAVE)
 #undef PP_SAVE
@@ -621,29 +678,38 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
             err = "This scene was saved by a newer version of GhostX."; return false;
         }
 
-        // ---- textures: old id -> engine id ----
-        std::map<int, int> texMap;
+      
+            // ---- textures: old id -> engine id. LAZY: a texture is only loaded when something in the scene uses it ----
+        struct TexRef { std::string stored, name; int newId = 0; bool tried = false; };
+        std::map<int, TexRef> texRefs;
         if (j.contains("textures") && j["textures"].is_array())
             for (const json& t : j["textures"])
             {
-                int oldId = t.value("id", -1);
-                std::string name = t.value("name", std::string("Texture"));
-                std::string stored = t.value("path", std::string());
-                int newId = 0;
-                if (!stored.empty() && loadTex) newId = loadTex(ResolveStoredPath(stored, root), name);
-                if (newId <= 0) { warn += "Missing texture: " + stored + "\n"; newId = 0; }
-                texMap[oldId] = newId;
+                TexRef r;
+                r.name = t.value("name", std::string("Texture"));
+                r.stored = t.value("path", std::string());
+                texRefs[t.value("id", -1)] = r;
             }
         std::function<int(int)> mapTex = [&](int old) -> int
             {
                 if (old < GHOST_FIRST_USER_TEXTURE) return old < 0 ? 0 : old;
-                auto it = texMap.find(old);
-                return it == texMap.end() ? 0 : it->second;
+                auto it = texRefs.find(old);
+                if (it == texRefs.end()) return 0;
+                TexRef& r = it->second;
+                if (!r.tried)
+                {
+                    r.tried = true;
+                    int id = 0;
+                    if (!r.stored.empty() && loadTex) id = loadTex(ResolveStoredPath(r.stored, root), r.name);
+                    if (id <= 0) { warn += "Missing texture: " + r.stored + "\n"; id = 0; }
+                    r.newId = id;
+                }
+                return r.newId;
             };
 
         // ---- ids: keep the saved ones, hand out new ones for missing or duplicate ids ----
         int maxId = 0;
-        for (const char* key : { "objects", "lights", "cameras", "mods", "volumes" })
+        for (const char* key : { "objects", "lights", "cameras", "mods", "volumes", "particles" })
             if (j.contains(key) && j[key].is_array())
                 for (const json& it : j[key]) maxId = (std::max)(maxId, it.value("id", 0));
         std::set<int> used;
@@ -709,8 +775,54 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
                 s.post.bloomMips = jb.value("mips", 5);
                 ReadF(jb, "tint", s.post.bloomTint, 3);
             }
+            if (jp.contains("ssao") && jp["ssao"].is_object())
+            {
+                const json& ja = jp["ssao"];
+                s.post.ssaoEnabled = ja.value("enabled", 0);
+                s.post.ssaoRadius = ja.value("radius", 0.5f);
+                s.post.ssaoIntensity = ja.value("intensity", 1.0f);
+                s.post.ssaoBias = ja.value("bias", 0.03f);
+                s.post.ssaoStrength = ja.value("strength", 1.0f);
+                s.post.ssaoSamples = ja.value("samples", 16);
+                s.post.ssaoDirectFade = ja.value("directFade", 0.5f);
+                s.post.ssaoHalfRes = ja.value("halfRes", 0);
+                s.post.ssaoFadeDist = ja.value("fadeDist", 50.0f);
+            }
             GhostPostSettings_Clamp(s.post);
         }
+
+        s.fog = GhostFogSettings();
+        if (j.contains("fog") && j["fog"].is_object())
+        {
+            const json& jf = j["fog"];
+            GhostFogSettings& f = s.fog;
+            f.enabled = jf.value("enabled", 0);
+            f.density = jf.value("density", 0.02f);
+            ReadF(jf, "color", f.color, 3);
+            f.brightness = jf.value("brightness", 1.0f);
+            f.followAmbient = jf.value("followAmbient", 0.0f);
+            f.heightBase = jf.value("heightBase", 0.0f);
+            f.heightFalloff = jf.value("heightFalloff", 0.0f);
+            f.startDistance = jf.value("start", 0.0f);
+            f.maxDistance = jf.value("max", 80.0f);
+            f.skyFog = jf.value("sky", 0.5f);
+            f.envMode = jf.value("envMode", 0);
+            f.envAmount = jf.value("envAmount", 1.0f);
+            f.envTexture = mapTex(jf.value("envTexture", 0));
+            f.envYaw = jf.value("envYaw", 0.0f);
+            f.noiseTexture = mapTex(jf.value("noiseTexture", 0));
+            f.noiseAmount = jf.value("noiseAmount", 0.7f);
+            f.noiseScale = jf.value("noiseScale", 0.15f);
+            f.scrollX = jf.value("scrollX", 0.3f);
+            f.scrollZ = jf.value("scrollZ", 0.1f);
+            f.volLight = jf.value("volLight", 0);
+            f.volIntensity = jf.value("volIntensity", 1.0f);
+            f.anisotropy = jf.value("anisotropy", 0.5f);
+            f.steps = jf.value("steps", 32);
+            GhostFogSettings_Clamp(f);
+        }
+
+
         if (j.contains("objects") && j["objects"].is_array())
             for (const json& jo : j["objects"])
             {
@@ -921,6 +1033,8 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
                 l.shadowLandscape = jl.value("shadowLandscape", true);
                 l.spinYaw = jl.value("spinYaw", 0.0f);
                 l.spinPitch = jl.value("spinPitch", 0.0f);
+                l.volumetric = jl.value("volumetric", 1.0f);
+                l.volumetric = l.volumetric != l.volumetric ? 1.0f : (l.volumetric < 0.0f ? 0.0f : (l.volumetric > 5.0f ? 5.0f : l.volumetric));
                 if (jl.contains("flicker") && jl["flicker"].is_array())
                     for (int k = 0; k < GHOST_FLICKER_LAYERS && k < (int)jl["flicker"].size(); k++)
                         if (jl["flicker"][k].is_object()) FlickerFromJson(jl["flicker"][k], l.flicker[k], mapTex);
@@ -1032,10 +1146,6 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
             }
 
         if (j.contains("particles") && j["particles"].is_array())
-        {
-            int maxP = 0;
-            for (const json& jp : j["particles"]) maxP = (std::max)(maxP, jp.value("id", 0));
-            std::set<int> usedP;
             for (const json& jp : j["particles"])
             {
                 if ((int)s.particles.size() >= GHOST_PFX_MAX_EMITTERS) { warn += "Too many particle systems: the rest were skipped.\n"; break; }
@@ -1045,10 +1155,7 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
 #define PP_LOAD(n) p.n = jp.value(#n, p.n);
                 GHOST_PARTICLE_FIELDS(PP_LOAD)
 #undef PP_LOAD
-                    int id = jp.value("id", 0);
-                if (id <= 0 || usedP.count(id)) id = ++maxP;
-                usedP.insert(id);
-                p.id = id;
+                    p.id = takeId(jp.value("id", 0));
                 p.textureId = mapTex(jp.value("texture", 0));
 
                 int mesh = jp.value("mesh", -1);
@@ -1058,6 +1165,9 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
                 else if (!meshName.empty()) mesh = GhostMesh_FindByName(meshName);
                 p.meshId = (GhostMesh_Valid(mesh) && mesh != GHOST_MESH_QUAD) ? mesh : -1;
 
+                d.name = jp.value("name", std::string());
+                if (d.name.empty()) d.name = GhostParticles_DefaultName(p.type, p.id);
+                if (d.name.size() > 63) d.name.resize(63);
                 d.anim = jp.value("anim", std::string());
                 d.clip = jp.value("clip", std::string());
                 if (d.anim.size() > 259) d.anim.resize(259);
@@ -1065,7 +1175,6 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
                 GhostParticles_Clamp(p);
                 s.particles.push_back(d);
             }
-        }
 
 
         if (s.cameras.empty()) GhostScene_AddCamera(s);          // there is always at least one camera
@@ -1122,7 +1231,16 @@ unsigned int GhostScene_Hash(const GhostScene& s)
     I(s.post.toneMode); F(s.post.exposureEV); F(s.post.whitePoint);
     I(s.post.bloomEnabled); F(s.post.bloomThreshold); F(s.post.bloomKnee); F(s.post.bloomIntensity);
     F(s.post.bloomScatter); I(s.post.bloomMips); F(s.post.bloomTint[0]); F(s.post.bloomTint[1]); F(s.post.bloomTint[2]);
-
+    I(s.post.ssaoEnabled); F(s.post.ssaoRadius); F(s.post.ssaoIntensity); F(s.post.ssaoBias); F(s.post.ssaoStrength);
+    I(s.post.ssaoSamples); F(s.post.ssaoDirectFade); I(s.post.ssaoHalfRes); F(s.post.ssaoFadeDist);
+    {
+        const GhostFogSettings& f = s.fog;
+        I(f.enabled); F(f.density); F(f.color[0]); F(f.color[1]); F(f.color[2]); F(f.brightness); F(f.followAmbient);
+        F(f.heightBase); F(f.heightFalloff); F(f.startDistance); F(f.maxDistance); F(f.skyFog);
+        I(f.envMode); F(f.envAmount); I(f.envTexture); F(f.envYaw);
+        I(f.noiseTexture); F(f.noiseAmount); F(f.noiseScale); F(f.scrollX); F(f.scrollZ);
+        I(f.volLight); F(f.volIntensity); F(f.anisotropy); I(f.steps);
+    }
     for (const GhostObject& o : s.objects)
     {
         I(o.id); I(o.meshId); S(o.name);
@@ -1159,7 +1277,7 @@ unsigned int GhostScene_Hash(const GhostScene& s)
         F(l.color[0]); F(l.color[1]); F(l.color[2]);
         F(l.intensity); F(l.range); F(l.width); F(l.height);
         I(l.castShadows ? 1 : 0);
-        F(l.innerDeg); F(l.outerDeg); I(l.shadowObjects ? 1 : 0); I(l.shadowLandscape ? 1 : 0); F(l.spinYaw); F(l.spinPitch);
+        F(l.innerDeg); F(l.outerDeg); I(l.shadowObjects ? 1 : 0); I(l.shadowLandscape ? 1 : 0); F(l.spinYaw); F(l.spinPitch); F(l.volumetric);
         for (int k = 0; k < GHOST_FLICKER_LAYERS; k++)
         {
             const GhostFlickerLayer& f = l.flicker[k];
@@ -1194,6 +1312,6 @@ unsigned int GhostScene_Hash(const GhostScene& s)
         for (float x : v.p) F(x);
         for (int t : v.tex) I(t);
     }
-    for (const GhostParticleDef& d : s.particles) { mix(&d.p, sizeof d.p); S(d.anim); S(d.clip); }
+    for (const GhostParticleDef& d : s.particles) { mix(&d.p, sizeof d.p); S(d.name); S(d.anim); S(d.clip); }
     return h;
 }

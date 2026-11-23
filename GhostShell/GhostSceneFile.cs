@@ -123,5 +123,24 @@ namespace GhostShell
             if (r == DialogResult.Cancel) return false;
             return r == DialogResult.No || SaveInteractive(owner);
         }
+
+        // Frees every file-backed texture, reloads the open scene (only what it uses gets loaded), then re-saves it
+        public static bool CleanReload(IWin32Window owner)
+        {
+            if (GhostPlay.State != 0)
+            { MessageBox.Show(owner, "Stop playing first.", "Clean Stale Textures", MessageBoxButtons.OK, MessageBoxIcon.Information); return false; }
+            if (CurrentPath == null)
+            { MessageBox.Show(owner, "Save the scene first.", "Clean Stale Textures", MessageBoxButtons.OK, MessageBoxIcon.Information); return false; }
+            if (MessageBox.Show(owner,
+                    "This frees every texture loaded from a file, reloads the scene so only the textures it really uses are loaded, and saves it again.\n\nUnsaved changes are saved first. Continue?",
+                    "Clean Stale Textures", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return false;
+
+            string path = CurrentPath;
+            if (IsDirty && !Save(path)) return false;
+            GhostEngine.GhostEngine_PurgeProjectAssets();
+            GhostAssets.ResetProjectTextures();
+            return Open(path) && Save(path);
+        }
+
     }
 }

@@ -67,7 +67,7 @@ namespace GhostShell
         }
 
         // Makes the project current. Loading its scene is the caller's job (GhostProjectFlow).
-        public static bool Open(string manifestPath, out string error, bool remember = true)
+        public static bool Open(string manifestPath, out string error, bool remember = true, bool purgeAssets = true)
         {
             error = "";
             try
@@ -75,6 +75,13 @@ namespace GhostShell
                 var m = JsonSerializer.Deserialize<ProjectManifest>(File.ReadAllText(manifestPath));
                 if (m == null || m.Format != "ghostproject") { error = "This is not a GhostX project file."; return false; }
                 if (m.Version > 1) { error = "This project was saved by a newer version of GhostX."; return false; }
+
+                // every project starts from a clean texture registry
+                if (purgeAssets)
+                {
+                    GhostEngine.GhostEngine_PurgeProjectAssets();
+                    GhostAssets.ResetProjectTextures();
+                }
 
                 Current = m;
                 ManifestPath = Path.GetFullPath(manifestPath);

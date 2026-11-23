@@ -190,6 +190,7 @@ void GhostEngine_Tick()
         if (GhostSetShadowSize(g_rhi, g_pipeline, (unsigned int)g_scene.shadowRes) != GHOST_OK)
             g_scene.shadowRes = (int)g_pipeline->shadowSize;              // could not allocate: keep what works
     GhostMSAA_Apply(g_rhi, g_pipeline, g_msaa, g_taaOn ? 1 : g_msaaWanted);   // TAA and MSAA are exclusive
+    g_frameNo++;
     UpdateProbes(dt);
     // ---- Render: camera windows first, the main view last (it carries the vsync) ----
     for (int vp = 1; vp < GHOST_MAX_SURFACES; vp++)
@@ -654,7 +655,14 @@ static int LoadSceneTexture(const std::string& absPath, const std::string& name)
         if (t.id >= GHOST_FIRST_USER_TEXTURE && !t.path.empty() && _stricmp(t.path.c_str(), absPath.c_str()) == 0)
             return t.id;
 
-    LoadNote("Texture", name);                       // only real loads are reported
+    std::error_code ec;                                   // missing file: skip it, don't announce it in the loader
+    if (!std::filesystem::exists(std::filesystem::path(GhostUtf8ToWide(absPath)), ec))
+    {
+        OutputDebugStringA(("[GhostX] Texture not found, skipped: " + absPath + "\n").c_str());
+        return 0;
+    }
+
+    LoadNote("Texture", name);
 
     std::vector<unsigned char> px;
     unsigned int w = 0, h = 0;
@@ -730,7 +738,7 @@ void GhostEngine_ClearScene()
     g_scene.cameras.clear(); g_scene.mods.clear(); g_scene.volumes.clear(); g_scene.particles.clear();
     GhostParticles_ResetAll();
     g_scene.ambientColor[0] = g_scene.ambientColor[1] = g_scene.ambientColor[2] = 1.0f;
-    g_scene.ambientIntensity = 0.15f; g_scene.post = GhostPostSettings(); g_scene.shadowsEnabled = true;
+    g_scene.ambientIntensity = 0.15f; g_scene.post = GhostPostSettings(); g_scene.fog = GhostFogSettings(); g_scene.shadowsEnabled = true;
     g_scene.shadowStrength = 1.0f;
     g_scene.shadowRes = 1024;
     g_scene.shadowFilter = 2; g_scene.shadowSoftness = 1.0f; g_scene.shadowBias = 1.0f;
@@ -756,6 +764,31 @@ void GhostEngine_SetTexturePath(int id, const char* path)
     if (id < GHOST_FIRST_USER_TEXTURE || id >= (int)g_scene.textures.size() || !path) return;
     g_scene.textures[id].path = GhostPath_Normalize(path);
 }
+
+// Called when a project is opened. Frees every texture that came from a file, plus caches that point at them.
+// Font atlases, weight maps and the particle texture have no source path, so they are left alone.
+int GhostEngine_PurgeProjectAssets()
+{
+    if (!g_rhi || !g_pipeline) return 0;
+    GhostEngine_Stop();
+    g_animRt.clear();
+    g_anims.clear();
+    g_skelClips.clear();
+    g_uiAssets.clear(); g_uiQuads.clear();
+    GhostParticles_InvalidateClips();
+
+    int n = 0;
+    for (GhostTextureInfo& t : g_scene.textures)
+    {
+        if (t.id < GHOST_FIRST_USER_TEXTURE || t.path.empty()) continue;
+        t.path.clear();
+        t.name = "[Free]";
+        g_freeTex.push_back(t.id);
+        n++;
+    }
+    return n;
+}
+
 
 int GhostEngine_GetTexturePath(int id, char* buf, int bufSize)
 {
@@ -1167,6 +1200,8 @@ static int LoadAnimFile(const std::string& stored)
     for (size_t i = 0; i < g_anims.size(); i++)
         if (_stricmp(g_anims[i].path.c_str(), abs.c_str()) == 0) return (int)i;
     if (g_anims.size() >= 64) return -1;
+    std::error_code ecA;
+    if (!std::filesystem::exists(std::filesystem::path(GhostUtf8ToWide(abs)), ecA)) return -1;   // missing: no loader entry, no disk retry
     LoadNote("Animation", stored);
     GhostAnimAsset a;
     std::string err, warn;
@@ -2205,6 +2240,20 @@ int GhostEngine_DuplicateEntity(int id)
 {
     if (g_playState != GhostPlayState::Editing) return 0;
 
+    if (GhostParticleDef* src = GhostParticles_Find(id))
+    {
+        if ((int)g_scene.particles.size() >= GHOST_PFX_MAX_EMITTERS) return 0;
+        GhostParticleDef copy = *src;                          // copy first: push_back can move the vector
+        copy.p.id = g_scene.nextId++;
+        copy.name = GhostParticles_DefaultName(copy.p.type, copy.p.id);
+        copy.p.px += 1.0f;
+        g_scene.particles.push_back(copy);
+        g_scene.selectedId = copy.p.id;
+        g_scene.selectedFace = -1;
+        g_scene.version++;
+        return copy.p.id;
+    }
+
     for (const GhostVolume& sv : g_scene.volumes)
         if (sv.id == id)
         {
@@ -2362,6 +2411,8 @@ void GhostEngine_SetEntityName(int id, const char* utf8)
     for (GhostCamera& c : g_scene.cameras) if (c.id == id) { c.name = n; g_scene.version++; return; }
     for (GhostModEntity& m : g_scene.mods) if (m.id == id) { m.name = n; g_scene.version++; return; }
     for (GhostVolume& v : g_scene.volumes) if (v.id == id) { v.name = n; g_scene.version++; return; }
+    if (GhostParticleDef* pd = GhostParticles_Find(id)) { pd->name = n; g_scene.version++; return; }
+
 }
 
 void GhostEngine_SetFaceMode(int on) { g_faceMode = (on != 0); }
@@ -3783,7 +3834,9 @@ void GhostEngine_GetPostSettings(GhostPostInfo* out)
     const GhostPostSettings& p = g_scene.post;
     *out = { p.toneMode, p.exposureEV, p.whitePoint,
              p.bloomEnabled, p.bloomThreshold, p.bloomKnee, p.bloomIntensity, p.bloomScatter, p.bloomMips,
-             p.bloomTint[0], p.bloomTint[1], p.bloomTint[2] };
+             p.bloomTint[0], p.bloomTint[1], p.bloomTint[2],
+             p.ssaoEnabled, p.ssaoRadius, p.ssaoIntensity, p.ssaoBias, p.ssaoStrength,
+             p.ssaoSamples, p.ssaoDirectFade, p.ssaoHalfRes, p.ssaoShowOnly, p.ssaoFadeDist };
 }
 
 void GhostEngine_SetPostSettings(const GhostPostInfo* in)
@@ -3794,6 +3847,10 @@ void GhostEngine_SetPostSettings(const GhostPostInfo* in)
     p.bloomEnabled = in->bloomEnabled; p.bloomThreshold = in->bloomThreshold; p.bloomKnee = in->bloomKnee;
     p.bloomIntensity = in->bloomIntensity; p.bloomScatter = in->bloomScatter; p.bloomMips = in->bloomMips;
     p.bloomTint[0] = in->bloomTintR; p.bloomTint[1] = in->bloomTintG; p.bloomTint[2] = in->bloomTintB;
+    p.ssaoEnabled = in->ssaoEnabled; p.ssaoRadius = in->ssaoRadius; p.ssaoIntensity = in->ssaoIntensity;
+    p.ssaoBias = in->ssaoBias; p.ssaoStrength = in->ssaoStrength; p.ssaoSamples = in->ssaoSamples;
+    p.ssaoDirectFade = in->ssaoDirectFade; p.ssaoHalfRes = in->ssaoHalfRes; p.ssaoShowOnly = in->ssaoShowOnly;
+    p.ssaoFadeDist = in->ssaoFadeDist;
     GhostPostSettings_Clamp(p);
 }
 
@@ -3875,4 +3932,33 @@ int GhostEngine_GetProbeStatus(int id)
             return GhostProbe_Valid(g_probe, it->second.slot) ? 1 : 0;
         }
     return -1;
+}
+
+
+void GhostEngine_GetFogSettings(GhostFogInfo* out)
+{
+    if (!out) return;
+    const GhostFogSettings& f = g_scene.fog;
+    *out = { f.enabled, f.density, f.color[0], f.color[1], f.color[2], f.brightness, f.followAmbient,
+             f.heightBase, f.heightFalloff, f.startDistance, f.maxDistance, f.skyFog,
+             f.envMode, f.envAmount, f.envTexture, f.envYaw,
+             f.noiseTexture, f.noiseAmount, f.noiseScale, f.scrollX, f.scrollZ,
+             f.volLight, f.volIntensity, f.anisotropy, f.steps };
+}
+
+void GhostEngine_SetFogSettings(const GhostFogInfo* in)
+{
+    if (!in) return;
+    GhostFogSettings& f = g_scene.fog;
+    f.enabled = in->enabled; f.density = in->density;
+    f.color[0] = in->colorR; f.color[1] = in->colorG; f.color[2] = in->colorB;
+    f.brightness = in->brightness; f.followAmbient = in->followAmbient;
+    f.heightBase = in->heightBase; f.heightFalloff = in->heightFalloff;
+    f.startDistance = in->startDistance; f.maxDistance = in->maxDistance; f.skyFog = in->skyFog;
+    f.envMode = in->envMode; f.envAmount = in->envAmount; f.envYaw = in->envYaw;
+    f.envTexture = (in->envTexture >= 0 && in->envTexture < (int)g_scene.textures.size()) ? in->envTexture : 0;
+    f.noiseTexture = (in->noiseTexture >= 0 && in->noiseTexture < (int)g_scene.textures.size()) ? in->noiseTexture : 0;
+    f.noiseAmount = in->noiseAmount; f.noiseScale = in->noiseScale; f.scrollX = in->scrollX; f.scrollZ = in->scrollZ;
+    f.volLight = in->volLight; f.volIntensity = in->volIntensity; f.anisotropy = in->anisotropy; f.steps = in->steps;
+    GhostFogSettings_Clamp(f);
 }

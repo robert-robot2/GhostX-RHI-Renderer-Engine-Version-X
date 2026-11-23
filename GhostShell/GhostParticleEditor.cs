@@ -1,5 +1,7 @@
-﻿// GhostParticleEditor.cs — particle editor window: emitter list + live property grid.
+﻿// GhostParticleEditor.cs — particle editor window + the property proxy shown in Details.
 // Edits go straight to the engine (GhostParticleMan), so the main viewport shows every change as you make it.
+// A particle system is a normal scene entity (same id space as objects and lights), so the hierarchy,
+// the viewport selection and the gizmo drive the same emitter this window edits.
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -7,8 +9,6 @@ using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Windows.Forms;
-
-
 
 namespace GhostShell
 {
@@ -87,8 +87,8 @@ namespace GhostShell
                                                   .OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
                         list.Add(Path.GetRelativePath(root, f).Replace('\\', '/'));
             }
-            catch {} // unreadable folder: just offer (none) 
-return new StandardValuesCollection(list);
+            catch { /* unreadable folder: just offer (none) */ }
+            return new StandardValuesCollection(list);
         }
     }
 
@@ -103,7 +103,7 @@ return new StandardValuesCollection(list);
     }
 
     // ============================================================
-    //  Property proxy for one emitter
+    //  Property proxy for one emitter (the Details panel and the Particle Editor window both use it)
     // ============================================================
     internal sealed class ParticleProxy
     {
@@ -116,6 +116,10 @@ return new StandardValuesCollection(list);
             _id = id;
             Position = new Vec3Edit(() => { var p = Get(); return (p.px, p.py, p.pz); },
                 (x, y, z) => Edit((ref GhostParticleParams p) => { p.px = x; p.py = y; p.pz = z; }));
+            Rotation = new Vec3Edit(() => { var p = Get(); return (p.rotX, p.rotY, p.rotZ); },
+                (x, y, z) => Edit((ref GhostParticleParams p) => { p.rotX = x; p.rotY = y; p.rotZ = z; }));
+            Scale = new Vec3Edit(() => { var p = Get(); return (p.scaleX, p.scaleY, p.scaleZ); },
+                (x, y, z) => Edit((ref GhostParticleParams p) => { p.scaleX = x; p.scaleY = y; p.scaleZ = z; }));
             VolumeSize = new Vec3Edit(() => { var p = Get(); return (p.boxX, p.boxY, p.boxZ); },
                 (x, y, z) => Edit((ref GhostParticleParams p) => { p.boxX = x; p.boxY = y; p.boxZ = z; }));
             VelocityMin = new Vec3Edit(() => { var p = Get(); return (p.velMinX, p.velMinY, p.velMinZ); },
@@ -145,8 +149,14 @@ return new StandardValuesCollection(list);
             return list;
         }
 
+        // ---- Details / Transform ----
+        [Category("Details")] public string Name => GhostNames.Of(_id);
+        [Category("Details")] public string Type => TypeNames[Math.Clamp(Get().type, 0, TypeNames.Length - 1)];
+        [Category("Transform")] public Vec3Edit Position { get; }
+        [Category("Transform"), DisplayName("Rotation (deg)")] public Vec3Edit Rotation { get; }
+        [Category("Transform"), DisplayName("Scale (volume, speed, size)")] public Vec3Edit Scale { get; }
+
         // ---- Emitter ----
-        [Category("Emitter")] public string Type => TypeNames[Math.Clamp(Get().type, 0, TypeNames.Length - 1)];
         [Category("Emitter"), DisplayName("Live Particles")] public int LiveParticles => GhostEngine.GhostEngine_GetParticleLive(_id);
 
         [Category("Emitter"), DisplayName("Reset To Preset")]
@@ -162,7 +172,6 @@ return new StandardValuesCollection(list);
         }
 
         [Category("Emitter")] public bool Enabled { get => Get().enabled != 0; set => Edit((ref GhostParticleParams p) => p.enabled = value ? 1 : 0); }
-        [Category("Emitter")] public Vec3Edit Position { get; }
 
         // ---- Emission ----
         [Category("Emission"), DisplayName("Rate (particles/s)")] public float Rate { get => Get().rate; set => Edit((ref GhostParticleParams p) => p.rate = value); }
@@ -210,8 +219,8 @@ return new StandardValuesCollection(list);
         [Category("Look"), DisplayName("Fade Start (0-1, additive)")] public float Alpha0 { get => Get().alpha0; set => Edit((ref GhostParticleParams p) => p.alpha0 = value); }
         [Category("Look"), DisplayName("Fade End (0-1, additive)")] public float Alpha1 { get => Get().alpha1; set => Edit((ref GhostParticleParams p) => p.alpha1 = value); }
 
-        [Category("Look"), DisplayName("Rotation Min (deg)")] public float RotMin { get => Get().rotMin; set => Edit((ref GhostParticleParams p) => p.rotMin = value); }
-        [Category("Look"), DisplayName("Rotation Max (deg)")] public float RotMax { get => Get().rotMax; set => Edit((ref GhostParticleParams p) => p.rotMax = value); }
+        [Category("Look"), DisplayName("Particle Rotation Min (deg)")] public float RotMin { get => Get().rotMin; set => Edit((ref GhostParticleParams p) => p.rotMin = value); }
+        [Category("Look"), DisplayName("Particle Rotation Max (deg)")] public float RotMax { get => Get().rotMax; set => Edit((ref GhostParticleParams p) => p.rotMax = value); }
         [Category("Look"), DisplayName("Spin Min (deg/s)")] public float SpinMin { get => Get().spinMin; set => Edit((ref GhostParticleParams p) => p.spinMin = value); }
         [Category("Look"), DisplayName("Spin Max (deg/s)")] public float SpinMax { get => Get().spinMax; set => Edit((ref GhostParticleParams p) => p.spinMax = value); }
 
@@ -305,7 +314,6 @@ return new StandardValuesCollection(list);
         private static readonly Color Bg2 = Color.FromArgb(0x1E, 0x1E, 0x1E);
         private static readonly Color Fg = Color.FromArgb(0xF2, 0xF2, 0xF2);
         private static readonly Color Accent = Color.FromArgb(0xFF, 0xC8, 0x6E);
-        private static readonly string[] TypeNames = { "Fire", "Snow", "Custom" };
 
         private sealed class Item
         {
@@ -317,7 +325,8 @@ return new StandardValuesCollection(list);
         private readonly ListBox _list;
         private readonly PropertyGrid _grid;
         private readonly System.Windows.Forms.Timer _timer;
-        private int[] _lastIds = Array.Empty<int>();
+        private string _lastKey = "";
+        private int _lastEngineSel = int.MinValue;
         private bool _syncing;
 
         public GhostParticleEditor()
@@ -333,7 +342,16 @@ return new StandardValuesCollection(list);
                 IntegralHeight = false,
                 Font = new Font("Segoe UI", 10.5f),
             };
-            _list.SelectedIndexChanged += (s, e) => { if (!_syncing) ShowSelected(); };
+            _list.SelectedIndexChanged += (s, e) =>
+            {
+                if (_syncing) return;
+                if (_list.SelectedItem is Item it)
+                {
+                    GhostEngine.GhostEngine_SelectEntity(it.Id);          // the viewport gizmo and the hierarchy follow
+                    _lastEngineSel = it.Id;
+                }
+                ShowSelected();
+            };
             _list.KeyDown += (s, e) => { if (e.KeyCode == Keys.Delete) { RemoveSelected(); e.Handled = true; } };
 
             _grid = new PropertyGrid
@@ -372,7 +390,7 @@ return new StandardValuesCollection(list);
             Controls.Add(bar);
 
             _timer = new System.Windows.Forms.Timer { Interval = 250 };
-            _timer.Tick += (s, e) => SyncList();
+            _timer.Tick += (s, e) => { SyncList(); FollowEngineSelection(); };
             _timer.Start();
             Disposed += (s, e) => _timer.Dispose();
             SyncList();
@@ -399,8 +417,9 @@ return new StandardValuesCollection(list);
         public void SelectEmitter(int id)
         {
             SyncList();
-            for (int i = 0; i < _list.Items.Count; i++)
-                if (_list.Items[i] is Item it && it.Id == id) { _list.SelectedIndex = i; break; }
+            SelectInList(id);
+            GhostEngine.GhostEngine_SelectEntity(id);
+            _lastEngineSel = id;
         }
 
         public void FocusCanvas() => _list.Focus();
@@ -415,7 +434,7 @@ return new StandardValuesCollection(list);
         private void RemoveSelected()
         {
             if (_list.SelectedItem is not Item it) return;
-            GhostEngine.GhostEngine_RemoveParticle(it.Id);
+            if (GhostEngine.GhostEngine_RemoveEntity(it.Id) == 0) System.Media.SystemSounds.Beep.Play();   // (also refreshes the hierarchy)
             SyncList();
         }
 
@@ -429,15 +448,39 @@ return new StandardValuesCollection(list);
             _grid.SelectedObject = _list.SelectedItem is Item it ? new ParticleProxy(it.Id) : null;
         }
 
-        // Rebuilds the list only when the set of emitters changed
+        private bool SelectInList(int id)
+        {
+            for (int i = 0; i < _list.Items.Count; i++)
+                if (_list.Items[i] is Item it && it.Id == id)
+                {
+                    _syncing = true;
+                    _list.SelectedIndex = i;
+                    _syncing = false;
+                    ShowSelected();
+                    return true;
+                }
+            return false;
+        }
+
+        // Clicking an emitter in the viewport or the hierarchy selects it here too
+        private void FollowEngineSelection()
+        {
+            int sel = GhostEngine.GhostEngine_GetSelected();
+            if (sel == _lastEngineSel) return;
+            _lastEngineSel = sel;
+            SelectInList(sel);
+        }
+
+        // Rebuilds the list only when the emitters (or their names) changed
         private void SyncList()
         {
             int n = GhostEngine.GhostEngine_GetParticleCount();
             var ids = new int[Math.Max(n, 1)];
             n = GhostEngine.GhostEngine_GetParticleIds(ids, ids.Length);
             int[] cur = ids.Take(n).ToArray();
-            if (cur.SequenceEqual(_lastIds)) return;
-            _lastIds = cur;
+            string key = string.Join("|", cur.Select(id => id + ":" + GhostNames.Of(id)));
+            if (key == _lastKey) return;
+            _lastKey = key;
 
             int keep = (_list.SelectedItem as Item)?.Id ?? 0;
             _syncing = true;
@@ -446,9 +489,7 @@ return new StandardValuesCollection(list);
             int select = -1;
             foreach (int id in cur)
             {
-                var p = new GhostParticleParams();
-                GhostEngine.GhostEngine_GetParticle(id, ref p);
-                _list.Items.Add(new Item { Id = id, Text = $"{TypeNames[Math.Clamp(p.type, 0, TypeNames.Length - 1)]} {id}" });
+                _list.Items.Add(new Item { Id = id, Text = GhostNames.Of(id) });
                 if (id == keep) select = _list.Items.Count - 1;
             }
             if (select < 0 && _list.Items.Count > 0) select = 0;

@@ -49,6 +49,7 @@ GhostResult GhostTAA_Ensure(IGhostRHI* rhi, GhostTAA& t, int id, unsigned int w,
 void        GhostTAA_Release(GhostTAA& t, int id);
 // The TAA depth buffer's DSV (D24S8, resting in DEPTH_WRITE between frames). The editor overlays test against it after tone mapping.
 D3D12_CPU_DESCRIPTOR_HANDLE GhostTAA_GetDSV(GhostTAA& t, int id);
+D3D12_CPU_DESCRIPTOR_HANDLE GhostTAA_SceneRTV(GhostTAA& t, int id);     // RTV of the jittered scene colour (the fog pass draws into it)
 // Sub-pixel jitter in pixels, each in [-0.5, 0.5]. speed = steps of the 16-sample sequence per frame.
 void GhostTAA_NextJitter(GhostTAA& t, int id, float speed, float& jx, float& jy);
 

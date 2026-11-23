@@ -813,8 +813,8 @@ static GhostResult CreateDepthBuffer(ID3D12Device* device,
     depthDesc.Width = width;
     depthDesc.Height = height;
     depthDesc.DepthOrArraySize = 1;
-    depthDesc.MipLevels = 1;
-    depthDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+    depthDesc.MipLevels = 1;  
+    depthDesc.Format = DXGI_FORMAT_R24G8_TYPELESS;                 // was D24_UNORM_S8_UINT: typeless so the fog pass can read it
     depthDesc.SampleDesc.Count = 1;
     depthDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
 
@@ -857,7 +857,19 @@ static GhostResult CompileShaderFromFile(const wchar_t* path,
     }
     return GHOST_OK;
 }
-
+// Same, but #include "..." works (relative to the file). Used by GhostFog.hlsl, which includes GhostPS.hlsl.
+static GhostResult CompileShaderFromFileInc(const wchar_t* path, const char* entry, const char* target, ID3DBlob** out)
+{
+    ComPtr<ID3DBlob> err;
+    HRESULT hr = D3DCompileFromFile(path, nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, entry, target,
+        D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION, 0, out, &err);
+    if (FAILED(hr))
+    {
+        if (err) OutputDebugStringA((char*)err->GetBufferPointer());
+        return GHOST_FAIL;
+    }
+    return GHOST_OK;
+}
 
 // Folder that GhostX.dll lives in (with the trailing backslash)
 static std::wstring ModuleDir()
@@ -1063,7 +1075,7 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
     // add after SRV range block this may be incorrrect
     D3D12_DESCRIPTOR_RANGE shadowRange = {};
     shadowRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-    shadowRange.NumDescriptors = 1 + GHOST_MAX_PROBES;       // t1 = shadow maps, t2..t9 = reflection probes
+    shadowRange.NumDescriptors = 1 + GHOST_MAX_PROBES + 2;   // t1 shadow maps, t2..t9 probes, t10 fog depth, t11 fog scene copy
     shadowRange.BaseShaderRegister = 1;                       // t1
     shadowRange.RegisterSpace = 0;
     shadowRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
@@ -1438,6 +1450,24 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
     {
         delete p; return GHOST_FAIL;
     }
+
+    {   // Volumetric fog pass. Optional: if it fails to compile, fog stays off and everything else keeps working
+        ComPtr<ID3DBlob> fvs, fps;
+        if (CompileShaderFromFile(ShaderPath(L"GhostVS.hlsl").c_str(), "FogVS", "vs_5_1", &fvs) == GHOST_OK &&
+            CompileShaderFromFileInc(ShaderPath(L"GhostFog.hlsl").c_str(), "FogPS", "ps_5_1", &fps) == GHOST_OK)
+        {
+            D3D12_GRAPHICS_PIPELINE_STATE_DESC fd = psoDesc;                 // HDR format, 1 sample, main root signature
+            fd.VS = { fvs->GetBufferPointer(), fvs->GetBufferSize() };
+            fd.PS = { fps->GetBufferPointer(), fps->GetBufferSize() };
+            fd.InputLayout = { nullptr, 0 };
+            fd.DepthStencilState.DepthEnable = FALSE;
+            fd.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+            fd.DSVFormat = DXGI_FORMAT_UNKNOWN;
+            if (FAILED(device->CreateGraphicsPipelineState(&fd, IID_PPV_ARGS(&p->fogPso)))) p->fogPso.Reset();
+        }
+        else OutputDebugStringA("[GhostX] Fog shader failed to compile: volumetric fog is disabled.\n");
+    }
+
      // ---- Constant Buffer ----
     const unsigned long long cbSizeTotal = GHOST_OBJECT_CB_STRIDE * GHOST_MAX_OBJECTS;
 
@@ -1489,6 +1519,18 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
         ch.ptr += (SIZE_T)GHOST_PROBE_SRV_BASE * p->srvIncrement;
         for (unsigned int i = 0; i < GHOST_MAX_PROBES; i++) { device->CreateShaderResourceView(nullptr, &cd, ch); ch.ptr += p->srvIncrement; }
     }
+    {   // the two fog slots: null 2D descriptors until the fog pass writes them
+        D3D12_SHADER_RESOURCE_VIEW_DESC nd = {};
+        nd.Format = GHOST_HDR_FORMAT;
+        nd.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        nd.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        nd.Texture2D.MipLevels = 1;
+        D3D12_CPU_DESCRIPTOR_HANDLE fh = p->cbvHeap->GetCPUDescriptorHandleForHeapStart();
+        fh.ptr += (SIZE_T)GHOST_FOG_SRV_BASE * p->srvIncrement;
+        for (int i = 0; i < 2; i++) { device->CreateShaderResourceView(nullptr, &nd, fh); fh.ptr += p->srvIncrement; }
+    }
+
+
     // ---- DSV Heap + Depth Buffer ----
     D3D12_DESCRIPTOR_HEAP_DESC dsvHeapDesc = {};
     dsvHeapDesc.NumDescriptors = GHOST_MAX_SURFACES;
@@ -2052,6 +2094,55 @@ void GhostDrawSky(IGhostRHI* rhi, GhostPipeline* p, unsigned int slot, unsigned 
     cmd->DrawInstanced(3, 1, 0, 0);
 }
 
+void GhostDrawFog(IGhostRHI* rhi, GhostPipeline* p, ID3D12Resource* sceneCopy, ID3D12Resource* depth,
+    D3D12_CPU_DESCRIPTOR_HANDLE dstRTV, unsigned int w, unsigned int h)
+{
+    if (!rhi || !p || !p->fogPso || !sceneCopy || !depth || w == 0 || h == 0) return;
+    ID3D12Device* device = rhi->GetDevice();
+    auto* cmd = rhi->GetCmdList();
+
+    // The two per-frame descriptors (the GPU is idle between viewport frames, so rewriting them is safe)
+    D3D12_SHADER_RESOURCE_VIEW_DESC sv = {};
+    sv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    sv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    sv.Texture2D.MipLevels = 1;
+    D3D12_CPU_DESCRIPTOR_HANDLE hd = p->cbvHeap->GetCPUDescriptorHandleForHeapStart();
+    hd.ptr += (SIZE_T)GHOST_FOG_SRV_BASE * p->srvIncrement;
+    sv.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+    device->CreateShaderResourceView(depth, &sv, hd);
+    hd.ptr += p->srvIncrement;
+    sv.Format = GHOST_HDR_FORMAT;
+    device->CreateShaderResourceView(sceneCopy, &sv, hd);
+
+    D3D12_RESOURCE_BARRIER b = {};
+    b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    b.Transition.pResource = depth;
+    b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    b.Transition.StateBefore = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+    b.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    cmd->ResourceBarrier(1, &b);
+
+    cmd->OMSetRenderTargets(1, &dstRTV, FALSE, nullptr);
+    D3D12_VIEWPORT vp = { 0.0f, 0.0f, (float)w, (float)h, 0.0f, 1.0f };
+    D3D12_RECT sc = { 0, 0, (LONG)w, (LONG)h };
+    cmd->RSSetViewports(1, &vp);
+    cmd->RSSetScissorRects(1, &sc);
+
+    ID3D12DescriptorHeap* heaps[] = { p->cbvHeap.Get() };
+    cmd->SetDescriptorHeaps(1, heaps);
+    cmd->SetPipelineState(p->fogPso.Get());
+    cmd->SetGraphicsRootSignature(p->rootSignature.Get());
+    BindShadowTable(cmd, p);                                    // shadow maps, probes, and the two fog slots
+    cmd->SetGraphicsRootConstantBufferView(0, p->constantBuffer->GetGPUVirtualAddress());
+    cmd->SetGraphicsRootConstantBufferView(1, p->sceneBuffer->GetGPUVirtualAddress());
+    cmd->SetGraphicsRootDescriptorTable(2, p->cbvHeap->GetGPUDescriptorHandleForHeapStart());
+    cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    cmd->DrawInstanced(3, 1, 0, 0);
+
+    b.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    b.Transition.StateAfter = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+    cmd->ResourceBarrier(1, &b);
+}
 
 // ============================================================
 //  Shadow pass

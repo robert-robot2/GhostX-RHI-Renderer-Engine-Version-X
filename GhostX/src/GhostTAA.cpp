@@ -494,3 +494,8 @@ D3D12_CPU_DESCRIPTOR_HANDLE GhostTAA_GetDSV(GhostTAA& t, int id)
 {
     return HandleAt(t.dsvHeap.Get(), (unsigned int)id, t.dsvInc);
 }
+
+D3D12_CPU_DESCRIPTOR_HANDLE GhostTAA_SceneRTV(GhostTAA& t, int id)
+{
+    return HandleAt(t.rtvHeap.Get(), (unsigned int)id * 3u, t.rtvInc);
+}

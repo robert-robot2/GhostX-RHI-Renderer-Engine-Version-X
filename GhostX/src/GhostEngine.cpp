@@ -46,6 +46,7 @@ static int        g_taaOn = 0;
 static float      g_taaSpeed = 1.0f;
 static GhostPost  g_post;
 static GhostProbeSys g_probe;
+static unsigned int g_frameNo = 0;                          // advances once per Tick (animates the fog dithering under TAA)
 struct ProbeRt { int slot = -1; unsigned int sig = 0; float stable = 0.0f, timer = 0.0f; bool dirty = true, request = false, seen = false; };
 static std::map<int, ProbeRt> g_probeRt;                   // key = volume id
 
@@ -342,9 +343,8 @@ static void SpawnCoords(int& sx, int& sy)
 static const float ICON_HALF_PX = 18.0f;
 static const float ICON_PICK_PX = ICON_HALF_PX + 4.0f;
 // the last 2 * GHOST_MAX_LIGHTS constant-buffer slots are reserved for light icons + arrows
-static const unsigned int MAX_SCENE_OBJECTS = GHOST_MAX_OBJECTS - 2 * GHOST_MAX_LIGHTS - 2 * GHOST_MAX_CAMERAS - GHOST_MAX_MODS - GHOST_MAX_VOLUMES - 12 - GHOST_PFX_MAX_DRAWS;
 
-
+static const unsigned int MAX_SCENE_OBJECTS = GHOST_MAX_OBJECTS - 2 * GHOST_MAX_LIGHTS - 2 * GHOST_MAX_CAMERAS - GHOST_MAX_MODS - GHOST_MAX_VOLUMES - 16 - GHOST_PFX_MAX_DRAWS - (unsigned int)GHOST_PFX_MAX_EMITTERS;
 
 // Hard cap on objects (shadow casters are limited to the same number)
 static const unsigned int MAX_SCENE_OBJECT_COUNT = GHOST_MAX_SHADOW_CASTERS;
@@ -382,10 +382,24 @@ static int LoadSceneTexture(const std::string& absPath, const std::string& name)
 
 
 // Creates the GPU texture and records it in the scene's registry (id == pipeline slot)
+static std::vector<int> g_freeTex;      // texture ids released by GhostEngine_PurgeProjectAssets, reused first
+
 static int RegisterTexture(const char* name, const unsigned char* rgba,
     unsigned int w, unsigned int h)
 {
     if (!g_rhi || !g_pipeline) return -1;
+
+    while (!g_freeTex.empty())                           // recycle a purged slot before growing the registry
+    {
+        const int id = g_freeTex.back();
+        g_freeTex.pop_back();
+        if (id < GHOST_FIRST_USER_TEXTURE || id >= (int)g_scene.textures.size()) continue;
+        if (GhostCreateTexture(g_rhi, g_pipeline, rgba, w, h, id) != id) continue;
+        GhostTextureInfo& t = g_scene.textures[(size_t)id];
+        t.id = id; t.name = name ? name : "Texture"; t.width = w; t.height = h; t.path.clear();
+        return id;
+    }
+
     int idx = GhostCreateTexture(g_rhi, g_pipeline, rgba, w, h);
     if (idx < 0) return -1;
     GhostTextureInfo t;
@@ -403,10 +417,13 @@ void GhostEngine_SetClearColor(float r, float g, float b)
     if (g_rhi) g_rhi->SetClearColor(r, g, b);
 }
 
+static int ParticleAllocId() { return g_scene.nextId++; }
+
+
 int GhostEngine_Init(HWND hwnd, unsigned int width, unsigned int height)
 {
     g_width = width; g_height = height;
-    GhostParticles_Bind(&g_scene.particles);
+    GhostParticles_Bind(&g_scene.particles); GhostParticles_SetIdAllocator(ParticleAllocId);
     g_rhi = CreateRHI(RHIType::DX12);
     if (!g_rhi) return -1;
     if (g_rhi->Init(hwnd, width, height) != GHOST_OK) return -1;
@@ -759,6 +776,7 @@ static GhostVec3* EntityPosition(int id)
     for (GhostCamera& c : g_scene.cameras) if (c.id == id) return &c.position;
     for (GhostModEntity& m : g_scene.mods) if (m.id == id) return &m.position;
     for (GhostVolume& v : g_scene.volumes) if (v.id == id) return &v.position;
+    if (GhostVec3* pp = GhostParticles_PositionPtr(id)) return pp;
     return nullptr;
 }
 
@@ -849,6 +867,15 @@ static int PickAt(int sx, int sy)
         float d2 = dx * dx + dy * dy;
         if (d2 <= bestD2) { bestD2 = d2; bestId = v.id; }
     }
+    for (const GhostParticleDef& pd : g_scene.particles)
+    {
+        float px, py;
+        if (!WorldToScreen(GhostVec3(pd.p.px, pd.p.py, pd.p.pz), px, py)) continue;
+        float dx = px - (float)sx, dy = py - (float)sy;
+        float d2 = dx * dx + dy * dy;
+        if (d2 <= bestD2) { bestD2 = d2; bestId = pd.p.id; }
+    }
+
     if (bestId) return bestId;
 
     GhostVec3 o, d;
@@ -1172,7 +1199,9 @@ int GhostEngine_AddParticleSystem(int type, int sx, int sy)
     if (g_playState != GhostPlayState::Editing) return 0;
     SpawnCoords(sx, sy);
     const GhostVec3 p = SpawnPoint(sx, sy);
-    return GhostEngine_AddParticleAt(type, p.x, p.y + 0.05f, p.z);
+    const int id = GhostEngine_AddParticleAt(type, p.x, p.y + 0.05f, p.z);
+    if (id != 0) { g_scene.selectedId = id; g_scene.selectedFace = -1; g_scene.version++; }
+    return id;
 }
 
 int GhostEngine_RemoveEntity(int id)
@@ -1202,6 +1231,7 @@ int GhostEngine_GetEntities(GhostEntityInfo* out, int maxCount)
     for (const GhostCamera& c : g_scene.cameras) { if (n >= maxCount) return n; out[n++] = { c.id, 2, 0 }; }
     for (const GhostModEntity& m : g_scene.mods) { if (n >= maxCount) return n; out[n++] = { m.id, 3, m.typeId }; }
     for (const GhostVolume& v : g_scene.volumes) { if (n >= maxCount) return n; out[n++] = { v.id, 4, v.type }; }
+    for (const GhostParticleDef& d : g_scene.particles) { if (n >= maxCount) return n; out[n++] = { d.p.id, 4, d.p.type }; }
     return n;
 }
 
@@ -1214,6 +1244,7 @@ int GhostEngine_GetEntityName(int id, char* buf, int bufSize)
     for (const GhostCamera& c : g_scene.cameras) if (c.id == id) name = &c.name;
     for (const GhostModEntity& m : g_scene.mods) if (m.id == id) name = &m.name;
     for (const GhostVolume& v : g_scene.volumes) if (v.id == id) name = &v.name;
+    if (const GhostParticleDef* pd = GhostParticles_Find(id)) name = &pd->name;
     if (!name) { buf[0] = 0; return 0; }
     strncpy_s(buf, bufSize, name->c_str(), _TRUNCATE);
     return 1;
@@ -1261,7 +1292,7 @@ int GhostEngine_GetLight(int id, GhostLightInfo* out)
                 l.color[0], l.color[1], l.color[2],
                 l.intensity, l.range, l.width, l.height,
                 l.innerDeg, l.outerDeg, l.shadowObjects ? 1 : 0, l.shadowLandscape ? 1 : 0,
-                l.spinYaw, l.spinPitch };
+                l.spinYaw, l.spinPitch, l.volumetric };
             return 1;
         }
     return 0;
@@ -1287,6 +1318,7 @@ void GhostEngine_SetLight(const GhostLightInfo* in)
             l.shadowLandscape = in->shadowLandscape != 0;
             l.spinYaw = cf(in->spinYaw, -720.0f, 720.0f);
             l.spinPitch = cf(in->spinPitch, -720.0f, 720.0f);
+            l.volumetric = cf(in->volumetric, 0.0f, 5.0f);
             return;                                    // type is fixed at creation
         }
 }
@@ -1715,8 +1747,9 @@ static bool GizmoFrameOf(int selId, GizmoFrame& f)
 
     int tool = g_viewCfg.tool;
     if (tool == 4) tool = 0;                                   // the Dimension tool has no handles
-    if (!o && tool == 3) tool = 0;                             // only objects can be scaled
-    if (!o && tool == 2)                                       // lights can be aimed (point lights have no direction)
+    const bool part = (!o && GhostParticles_Find(selId) != nullptr);
+    if (!o && !part && tool == 3) tool = 0;                    // only objects and particle systems can be scaled
+    if (!o && !part && tool == 2)                              // lights can be aimed (point lights have no direction)                                     // lights can be aimed (point lights have no direction)
     {
         const GhostLight* li = FindLight(selId);
         if (!li || li->type == GhostLightType::Point) tool = 0;
@@ -1731,7 +1764,12 @@ static bool GizmoFrameOf(int selId, GizmoFrame& f)
         const GhostMat4 M = GhostObjectModel(*o);
         for (int k = 0; k < 3; k++) f.ax[k] = GhostVec3(M.m[0][k], M.m[1][k], M.m[2][k]).Normalize();
     }
-
+    else if (part && (g_viewCfg.space == 1 || tool == 3))
+    {
+        GhostVec3 pa[3];
+        GhostParticles_Axes(GhostParticles_Find(selId)->p, pa);
+        for (int k = 0; k < 3; k++) f.ax[k] = pa[k].Normalize();
+    }
     const GhostVec3 v = XformPoint(g_view, f.pos, 1.0f);       // view-space depth
     if (v.z < 0.1f) return false;
     f.L = 90.0f * v.z / (g_proj.m[1][1] * (float)g_mainRH * 0.5f);   // 90 pixels
@@ -1837,6 +1875,11 @@ static bool GizmoBegin(int x, int y)
     g.local = (g_viewCfg.space == 1) || f.tool == 3;
     g.startPos = f.pos;
     if (o) { g.startRot = o->rotationDeg; g.startScale = o->scale; }
+    if (!o)                                                    // a particle system keeps rotation and scale in its params
+    {
+        if (const GhostVec3* pr = GhostParticles_RotationPtr(g.id)) g.startRot = *pr;
+        if (const GhostVec3* ps = GhostParticles_ScalePtr(g.id)) g.startScale = *ps;
+    }
     if (const GhostLight* li = FindLight(g.id)) { g.startYaw = li->yawDeg; g.startPitch = li->pitchDeg; }
     g.col = f.col;
     if (o) { g.startColSize = o->colliderSize; g.startColOff = o->colliderOffset; g.startColRot = o->colliderRotation; }
@@ -1925,7 +1968,9 @@ static void GizmoUpdate(int x, int y)
     GhostVec3* pos = EntityPosition(g.id);
     GhostObject* o = FindObject(g.id);
     GhostLight* li = o ? nullptr : FindLight(g.id);
-    if (!pos || ((g.tool == 3 || g.col) && !o) || (g.tool == 2 && !o && !li)) { g.active = false; return; }
+    GhostVec3* pRot = o ? nullptr : GhostParticles_RotationPtr(g.id);
+    GhostVec3* pScale = o ? nullptr : GhostParticles_ScalePtr(g.id);
+    if (!pos || (g.tool == 3 && !o && !pScale) || (g.col && !o) || (g.tool == 2 && !o && !li && !pRot)) { g.active = false; return; }
 
     if (GetAsyncKeyState(VK_ESCAPE) & 0x8000)                  // cancel: put everything back
     {
@@ -1933,6 +1978,8 @@ static void GizmoUpdate(int x, int y)
         else {
             *pos = g.startPos; if (o) { o->rotationDeg = g.startRot; o->scale = g.startScale; }
             if (li) { li->yawDeg = g.startYaw; li->pitchDeg = g.startPitch; }
+            if (pRot) *pRot = g.startRot;
+            if (pScale) *pScale = g.startScale;
         }
         for (const GroupItem& it : g_group)
         {
@@ -2000,6 +2047,7 @@ static void GizmoUpdate(int x, int y)
         {
             ApplyLightRotation(*li, g, rad);
         }
+        else if (pRot) { GhostVec3 r = *pRot; ApplyRotationTo(r, g, rad); *pRot = r; }
         else
         {
             ApplyRotation(*o, g, rad);
@@ -2027,6 +2075,7 @@ static void GizmoUpdate(int x, int y)
 
         auto apply = [&](GhostVec3 s0) { if (g.axis == 3) s0 = s0 * f; else if (g.axis == 0) s0.x *= f; else if (g.axis == 1) s0.y *= f; else s0.z *= f; return s0; };
         if (g.col) o->colliderSize = apply(g.startColSize);    // resize the collider
+        else if (pScale) *pScale = apply(g.startScale);        // a particle system
         else
         {
             o->scale = apply(g.startScale);
@@ -2347,6 +2396,23 @@ static void OverlayVolumes()
     }
 }
 
+static void OverlayParticle(const GhostParticleParams& p)
+{
+    GhostVec3 ax[3];
+    GhostParticles_Axes(p, ax);                                  // local axes in world space, already scaled
+    const GhostVec3 c(p.px, p.py, p.pz);
+    const float hx = p.boxX * 0.5f, hy = p.boxY * 0.5f, hz = p.boxZ * 0.5f;
+    GhostVec3 q[8];
+    for (int i = 0; i < 8; i++)
+        q[i] = c + ax[0] * ((i & 1) ? hx : -hx) + ax[1] * ((i & 2) ? hy : -hy) + ax[2] * ((i & 4) ? hz : -hz);
+    static const int E[12][2] = { { 0,1 },{ 2,3 },{ 4,5 },{ 6,7 },{ 0,2 },{ 1,3 },{ 4,6 },{ 5,7 },{ 0,4 },{ 1,5 },{ 2,6 },{ 3,7 } };
+    const float col[4] = { 1.0f, 0.62f, 0.2f, 0.95f };
+    for (int e = 0; e < 12; e++) g_ov.Line(q[E[e][0]], q[E[e][1]], col, 1.6f, false);
+
+    const GhostVec3 dir = ax[0] * ((p.velMinX + p.velMaxX) * 0.5f) + ax[1] * ((p.velMinY + p.velMaxY) * 0.5f) + ax[2] * ((p.velMinZ + p.velMaxZ) * 0.5f);
+    if (dir.Length() > 1e-3f) g_ov.Arrow(c, c + dir.Normalize(), col, 2.0f, 12.0f, false);
+}
+
 
 static void DrawViewportOverlay(const GhostMat4& view, const GhostMat4& proj, const GhostVec3& eye,
     unsigned int rw, unsigned int rh, bool editing)
@@ -2375,6 +2441,7 @@ static void DrawViewportOverlay(const GhostMat4& view, const GhostMat4& proj, co
                 if (o) OverlayBounds(*o, eye);
                 if (o && o->collider) OverlayCollider(*o);
                 if (!(g_paintMode && o && o->tileMap.enabled)) OverlayGizmo(sel);    // no gizmo while painting a Tile Map
+                if (!o) if (const GhostParticleDef* pd = GhostParticles_Find(sel)) OverlayParticle(pd->p);
             }
             if (o && s.showSelection)
             {
@@ -2843,6 +2910,72 @@ static void FillProbeCB(GhostSceneCB& cb)
     cb.probeInfo[0] = (float)n;
 }
 
+// ============================================================
+//  Volumetric fog: fills the fog part of the scene constant buffer
+// ============================================================
+static bool FogActive()
+{
+    if (g_scene.fog.enabled) return true;
+    for (const GhostVolume& v : g_scene.volumes) if (v.type == GHOST_VOL_FOG && v.enabled) return true;
+    return false;
+}
+
+// proj = the matrix the scene was drawn with (jittered under TAA), so the ray through each pixel matches the geometry
+static void FillFogCB(GhostSceneCB& cb, const GhostVec3& eye, const GhostVec3& fwd, const GhostVec3& right,
+    const GhostMat4& proj, unsigned int rw, unsigned int rh, bool animateNoise)
+{
+    const GhostFogSettings& f = g_scene.fog;
+    const float d2r = GHOST_PI / 180.0f;
+    auto lin = [](float c) { return powf(c < 0.0f ? 0.0f : c, 2.2f); };
+    auto set4 = [](float* d, float a, float b, float c, float e) { d[0] = a; d[1] = b; d[2] = c; d[3] = e; };
+
+    const GhostVec3 up = fwd.Cross(right);
+    set4(cb.fogCam[0], eye.x, eye.y, eye.z, 0.0f);
+    set4(cb.fogCam[1], right.x, right.y, right.z, 0.0f);
+    set4(cb.fogCam[2], up.x, up.y, up.z, 0.0f);
+    set4(cb.fogCam[3], fwd.x, fwd.y, fwd.z, 0.0f);
+    set4(cb.fogCam[4], proj.m[0][0], proj.m[1][1], proj.m[0][2], proj.m[1][2]);
+    set4(cb.fogCam[5], proj.m[2][2], proj.m[2][3], (float)rw, (float)rh);
+
+    set4(cb.fogA, f.enabled ? 1.0f : 0.0f, f.density, f.heightBase, f.heightFalloff);
+    set4(cb.fogB, lin(f.color[0]), lin(f.color[1]), lin(f.color[2]), f.brightness);
+    set4(cb.fogC, f.startDistance, f.maxDistance, f.skyFog, f.anisotropy);
+    set4(cb.fogD, f.volLight ? 1.0f : 0.0f, f.followAmbient, (float)f.steps, animateNoise ? (float)(g_frameNo % 64u) * 5.588238f : 0.0f);
+    const int envTex = (f.envTexture > 0 && f.envTexture < (int)g_scene.textures.size()) ? f.envTexture : 0;
+    set4(cb.fogE, (float)f.envMode, f.envAmount, (float)envTex, f.envYaw * d2r);
+    const int nTex = (f.noiseTexture > 0 && f.noiseTexture < (int)g_scene.textures.size()) ? f.noiseTexture : 0;
+    set4(cb.fogF, (float)nTex, f.noiseAmount, f.noiseScale, 0.0f);
+    set4(cb.fogG, fmodf(f.scrollX * g_timeSec * f.noiseScale, 1.0f), fmodf(f.scrollZ * g_timeSec * f.noiseScale, 1.0f), 0.0f, 0.0f);
+
+    // god rays: the first 4 lights with a strength > 0 (Light.shadow.w carries it to the shader)
+    int volLights = 0;
+    for (size_t i = 0; i < g_scene.lights.size() && i < cb.lightCount; i++)
+    {
+        float k = 0.0f;
+        if (f.volLight && volLights < 4 && g_scene.lights[i].volumetric > 0.001f) { k = g_scene.lights[i].volumetric * f.volIntensity; volLights++; }
+        cb.lights[i].shadow[3] = k;
+    }
+
+    int n = 0;
+    for (const GhostVolume& v : g_scene.volumes)
+    {
+        if (v.type != GHOST_VOL_FOG || !v.enabled) continue;
+        if (n >= (int)GHOST_MAX_FOGVOLS) break;
+        GhostGPUFogVol& g = cb.fogVols[n++];
+        const GhostMat4 inv = GhostMat4::RotationZ(-v.rotationDeg.z * d2r) * GhostMat4::RotationX(-v.rotationDeg.x * d2r)
+            * GhostMat4::RotationY(-v.rotationDeg.y * d2r) * GhostMat4::Translation(-v.position.x, -v.position.y, -v.position.z);
+        for (int c = 0; c < 4; c++) { g.row0[c] = inv.m[0][c]; g.row1[c] = inv.m[1][c]; g.row2[c] = inv.m[2][c]; }
+        if (v.shape == GHOST_VOLSHAPE_SPHERE) set4(g.shape, 1.0f, v.radius, 0.0f, 0.0f);
+        else set4(g.shape, 0.0f, v.size.x * 0.5f, v.size.y * 0.5f, v.size.z * 0.5f);
+        set4(g.dens, v.p[FOGV_DENSITY], v.blend, v.p[FOGV_GRADIENT], 0.0f);
+        set4(g.color, lin(v.p[FOGV_R]), lin(v.p[FOGV_G]), lin(v.p[FOGV_B]), v.p[FOGV_LIGHT_SCATTER]);
+        const int vt = (v.tex[0] > 0 && v.tex[0] < (int)g_scene.textures.size()) ? v.tex[0] : 0;
+        set4(g.noise, (float)vt, v.p[FOGV_NOISE_AMOUNT], v.p[FOGV_NOISE_SCALE], 0.0f);
+        set4(g.scroll, fmodf(v.p[FOGV_SCROLL_X] * g_timeSec * v.p[FOGV_NOISE_SCALE], 1.0f),
+            fmodf(v.p[FOGV_SCROLL_Z] * g_timeSec * v.p[FOGV_NOISE_SCALE], 1.0f), 0.0f, 0.0f);
+    }
+    cb.fogG[3] = (float)n;
+}
 
 // ============================================================
 //  One viewport = one surface + one camera. The GPU is idle between viewports
@@ -2953,7 +3086,13 @@ static void RenderViewport(int vp)
     else           GhostPost_BeginScene(g_rhi, g_pipeline, g_post, vp, &clr, dsv, rw, rh);
     GhostSceneCB sceneCB;
     if (preview) BuildPreviewSceneCB(sceneCB);
-    else { BuildSceneCB(g_scene, sceneCB,g_timeSec); FillProbeCB(sceneCB); RenderShadowPass(sceneCB, eye, forward, rw, rh); }
+    else
+    {
+        BuildSceneCB(g_scene, sceneCB, g_timeSec);
+        FillProbeCB(sceneCB);
+        FillFogCB(sceneCB, eye, forward, right, proj, rw, rh, taa);
+        RenderShadowPass(sceneCB, eye, forward, rw, rh);
+    }
     GhostUpdateSceneCB(g_pipeline, &sceneCB);
 
     // ---- Draw scene objects (one draw per run of faces that share a material) ----
@@ -2994,10 +3133,33 @@ DrawSceneColor(view, proj, eye, true, overlays, preview, preview ? g_vp[vp].solo
     // ---- End of the HDR scene: bring it down to the 1x HDR target ----
     {
         ID3D12Resource* hdrRes = GhostPost_Resource(g_post, vp);
+        const bool fogOn = !preview && g_pipeline->fogPso && FogActive();
+        const bool aoOn = !preview && g_post.ssaoReady && g_scene.post.ssaoEnabled;
+        const float proj6[6] = { proj.m[0][0], proj.m[1][1], proj.m[0][2], proj.m[1][2], proj.m[2][2], proj.m[2][3] };   // the matrix the scene was drawn with (jittered under TAA)
+        const float aoNoise = taa ? (float)(g_frameNo % 64u) * 5.588238f : 0.0f;
+
         if (msaa)
-            GhostMSAA_End(g_rhi, g_pipeline, g_msaa, vp, hdrRes);
+        {
+            GhostMSAA_End(g_rhi, g_pipeline, g_msaa, vp, hdrRes);                  // colour -> 1x HDR (rests in PIXEL_SHADER_RESOURCE)
+            GhostMSAA_ResolveDepth(g_rhi, g_pipeline, g_msaa, vp, rw, rh);         // nearest depth sample -> the 1x depth buffer
+            if (aoOn || fogOn)
+            {
+                ID3D12Resource* dep = g_pipeline->depthBuffers[vp].Get();
+                GhostPost_ToRT(g_rhi, g_post, vp);
+                if (aoOn) GhostPost_SSAO(g_rhi, g_post, vp, hdrRes, GhostPost_RTV(g_post, vp), dep, rw, rh, g_scene.post, proj6, aoNoise);
+                if (fogOn) GhostPost_Fog(g_rhi, g_pipeline, g_post, vp, hdrRes, GhostPost_RTV(g_post, vp), dep, rw, rh);
+                GhostPost_ToSRV(g_rhi, g_post, vp);
+            }
+        }
         else if (taa)
         {
+            if (aoOn)                                                              // on the jittered image: the TAA resolve averages the sampling noise
+                GhostPost_SSAO(g_rhi, g_post, vp, g_taa.scene[vp].Get(), GhostTAA_SceneRTV(g_taa, vp),
+                    g_taa.depth[vp].Get(), rw, rh, g_scene.post, proj6, aoNoise);
+            if (fogOn)
+                GhostPost_Fog(g_rhi, g_pipeline, g_post, vp, g_taa.scene[vp].Get(), GhostTAA_SceneRTV(g_taa, vp),
+                    g_taa.depth[vp].Get(), rw, rh);
+
             GhostTAAFrame tf = {};
             const GhostVec3 camUp = forward.Cross(right);
             tf.eye[0] = eye.x;      tf.eye[1] = eye.y;      tf.eye[2] = eye.z;
@@ -3009,12 +3171,19 @@ DrawSceneColor(view, proj, eye, true, overlays, preview, preview ? g_vp[vp].solo
             const GhostMat4 vpClean = projClean * view;
             memcpy(tf.vp, vpClean.m, 16 * sizeof(float));
 
-            GhostPost_ToRT(g_rhi, g_post, vp);                              // the TAA resolve writes its output here
+            GhostPost_ToRT(g_rhi, g_post, vp);                                     // the TAA resolve writes its output here
             GhostTAA_End(g_rhi, g_pipeline, g_taa, vp, GhostPost_RTV(g_post, vp), false, tf);
             GhostPost_ToSRV(g_rhi, g_post, vp);
         }
         else
+        {
+            ID3D12Resource* dep = g_pipeline->depthBuffers[vp].Get();              // the HDR target is still in RENDER_TARGET state here
+            if (aoOn) GhostPost_SSAO(g_rhi, g_post, vp, hdrRes, GhostPost_RTV(g_post, vp), dep, rw, rh, g_scene.post, proj6, aoNoise);
+            if (fogOn) GhostPost_Fog(g_rhi, g_pipeline, g_post, vp, hdrRes, GhostPost_RTV(g_post, vp), dep, rw, rh);
             GhostPost_EndScene(g_rhi, g_pipeline, g_post, vp);
+        }
+
+
         const GhostPostSettings postCfg = preview ? GhostPostSettings() : g_scene.post;     // the preview window never blooms
         GhostPost_Bloom(g_rhi, g_post, vp, rw, rh, postCfg);                                // HDR -> bloom chain (only if enabled)
         // ---- Tone map into the destination (offscreen image, or the window back buffer) ----
@@ -3065,6 +3234,13 @@ DrawSceneColor(view, proj, eye, true, overlays, preview, preview ? g_vp[vp].solo
             int state = (v.id == g_scene.selectedId) ? 2 : (v.id == g_hoverId ? 1 : 0);
             DrawIcon(slot, 5, v.position, GhostVec3(0, 0, 1), kVolColor[v.type], state, view, proj);
         }
+        static const float kFxColor[3] = { 1.0f, 0.62f, 0.2f };
+        for (const GhostParticleDef& pd : g_scene.particles)
+        {
+            int state = (pd.p.id == g_scene.selectedId) ? 2 : (pd.p.id == g_hoverId ? 1 : 0);
+            DrawIcon(slot, 7, GhostVec3(pd.p.px, pd.p.py, pd.p.pz), GhostVec3(0, 0, 1), kFxColor, state, view, proj);
+        }
+
     }
 
     if (mainView && (overlays || g_viewCfg.showFps)) DrawViewportOverlay(view, proj, eye, rw, rh, overlays);
@@ -3158,6 +3334,7 @@ struct UndoSnap
     std::vector<GhostVolume> volumes;
     GhostPostSettings post;
     std::vector<GhostParticleDef> particles;
+    GhostFogSettings fog;
  };
 static std::vector<UndoSnap> g_undo, g_redo;
 static UndoSnap     g_undoBase;
@@ -3179,6 +3356,7 @@ static void UndoCapture(UndoSnap& s)
     s.volumes = g_scene.volumes;
     s.post = g_scene.post;
     s.particles = g_scene.particles;
+    s.fog = g_scene.fog;
 }
 
 static void UndoReset() { g_undo.clear(); g_redo.clear(); g_undoHaveBase = false; }
@@ -3222,6 +3400,7 @@ static void UndoRestore(const UndoSnap& s)
     g_scene.activeCameraId = s.activeCameraId; g_scene.gameStartCameraId = s.gameStartCameraId;
     g_scene.volumes = s.volumes;
     g_scene.post = s.post;
+    g_scene.fog = s.fog;
 
     if (s.nextId > g_scene.nextId) g_scene.nextId = s.nextId;      // ids never go backwards
 

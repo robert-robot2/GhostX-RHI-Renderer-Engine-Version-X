@@ -201,6 +201,219 @@ static D3D12_STATIC_SAMPLER_DESC LinearClampSampler()
 }
 
 // ============================================================
+//  SSAO shaders
+// ============================================================
+static const char* kSsaoHLSL = R"HLSL(
+Texture2D<float>  gDepth : register(t0);
+Texture2D<float4> gTexA  : register(t1);     // blur: AO in.  composite: scene copy
+Texture2D<float4> gTexB  : register(t2);     // composite: AO
+SamplerState sLin : register(s0);
+
+cbuffer SsaoCB : register(b0)
+{
+    float4 cam;     // p00, p11, p02, p12
+    float4 cam2;    // p22, p23, full width, full height
+    float4 prm0;    // x radius, y intensity, z bias, w samples
+    float4 prm1;    // x resolution divisor, y noise offset, z strength, w direct light fade
+    float4 prm2;    // x fade distance, y show AO only, z blur dir x, w blur dir y
+};
+
+float4 SsaoVS(uint vid : SV_VertexID) : SV_POSITION
+{
+    float2 c = float2((vid << 1) & 2, vid & 2);
+    return float4(c * 2.0f - 1.0f, 0.0f, 1.0f);
+}
+
+float LinZ(int2 px)                              // view depth, 1e6 for the sky
+{
+    px = clamp(px, int2(0, 0), int2(cam2.zw) - 1);
+    float d = gDepth.Load(int3(px, 0));
+    return d >= 0.99999f ? 1e6f : cam2.y / (d - cam2.x);
+}
+
+float3 ViewPos(int2 px, float z)
+{
+    float2 ndc = float2(((float)px.x + 0.5f) / cam2.z * 2.0f - 1.0f, 1.0f - ((float)px.y + 0.5f) / cam2.w * 2.0f);
+    return float3((ndc.x - cam.z) / cam.x, (ndc.y - cam.w) / cam.y, 1.0f) * z;
+}
+
+float3 ReconNormal(int2 px, float3 P)
+{
+    float zl = LinZ(px + int2(-1, 0)), zr = LinZ(px + int2(1, 0));
+    float zu = LinZ(px + int2(0, -1)), zd = LinZ(px + int2(0, 1));
+    float3 dx, dy;                               // the closer neighbour on each axis, so silhouettes don't stretch
+    if (abs(zr - P.z) < abs(zl - P.z)) dx = ViewPos(px + int2(1, 0), zr) - P;  else dx = P - ViewPos(px + int2(-1, 0), zl);
+    if (abs(zd - P.z) < abs(zu - P.z)) dy = ViewPos(px + int2(0, 1), zd) - P;  else dy = P - ViewPos(px + int2(0, -1), zu);
+    float3 n = normalize(cross(dx, dy));
+    if (dot(n, P) > 0.0f) n = -n;                // always face the camera
+    return n;
+}
+
+float4 SsaoPS(float4 sp : SV_POSITION) : SV_TARGET
+{
+    const int div = (int)(prm1.x + 0.5f);
+    const int2 px = int2(sp.xy) * div;
+    const float z = LinZ(px);
+    if (z > 9e5f) return float4(1, 1, 1, 1);
+    if (prm2.x > 0.0f && z > prm2.x) return float4(1, 1, 1, 1);
+
+    const float3 P = ViewPos(px, z);
+    const float3 N = ReconNormal(px, P);
+    const float3 up = abs(N.y) < 0.99f ? float3(0, 1, 0) : float3(1, 0, 0);
+    const float3 T = normalize(cross(up, N));
+    const float3 B = cross(N, T);
+
+    const float ign  = frac(52.9829189f * frac(dot(float2(px) + prm1.y, float2(0.06711056f, 0.00583715f))));
+    const float ign2 = frac(52.9829189f * frac(dot(float2(px) + prm1.y + 17.0f, float2(0.06711056f, 0.00583715f))));
+
+    const float pxPerUnit = cam.y * 0.5f * cam2.w / z;            // pixels per world unit at this depth
+    const float R = min(prm0.x, 96.0f / max(pxPerUnit, 1e-4f));   // never reach more than ~96 pixels away
+    const float bias = prm0.z + z * 0.001f;
+    const int   count = clamp((int)(prm0.w + 0.5f), 4, 32);
+
+    float occ = 0.0f;
+    [loop] for (int i = 0; i < count; i++)
+    {
+        const float h = ((float)i + 0.5f) / (float)count;
+        const float phi = (float)i * 2.39996323f + ign * 6.2831853f;
+        const float r = sqrt(h), c = sqrt(1.0f - h);                // cosine-weighted hemisphere
+        const float3 d = float3(r * cos(phi), r * sin(phi), c);
+        const float t = frac((float)i * 0.618034f + ign2);
+        const float s = lerp(0.1f, 1.0f, t * t);                    // more samples close to the pixel
+        const float3 S = P + (T * d.x + B * d.y + N * d.z) * (R * s);
+        if (S.z <= 0.01f) continue;
+
+        const float2 ndc = float2(S.x / S.z * cam.x + cam.z, S.y / S.z * cam.y + cam.w);
+        const float2 suv = float2(ndc.x * 0.5f + 0.5f, 0.5f - ndc.y * 0.5f);
+        if (suv.x < 0.0f || suv.x > 1.0f || suv.y < 0.0f || suv.y > 1.0f) continue;
+        const float zs = LinZ(int2(suv * cam2.zw));
+        const float rangeW = smoothstep(0.0f, 1.0f, R / max(abs(P.z - zs), 1e-3f));
+        occ += ((S.z - zs) > bias ? 1.0f : 0.0f) * rangeW;
+    }
+
+    float ao = pow(saturate(1.0f - occ / (float)count), prm0.y);
+    if (prm2.x > 0.0f) ao = lerp(ao, 1.0f, smoothstep(prm2.x * 0.7f, prm2.x, z));
+    return float4(ao, ao, ao, 1.0f);
+}
+
+float4 SsaoBlurPS(float4 sp : SV_POSITION) : SV_TARGET
+{
+    const int div = (int)(prm1.x + 0.5f);
+    uint aw, ah;
+    gTexA.GetDimensions(aw, ah);
+    const int2 pc = int2(sp.xy);
+    const int2 dir = int2(prm2.z + 0.5f, prm2.w + 0.5f);
+    const float zc = LinZ(pc * div);
+    float sum = gTexA.Load(int3(pc, 0)).r, ws = 1.0f;
+    [unroll] for (int k = -3; k <= 3; k++)
+    {
+        if (k == 0) continue;
+        const int2 q = clamp(pc + dir * k, int2(0, 0), int2((int)aw - 1, (int)ah - 1));
+        const float zq = LinZ(q * div);
+        const float w = exp(-0.5f * (float)(k * k) / 4.0f) * exp(-abs(zq - zc) / (0.03f * zc + 0.02f));
+        sum += gTexA.Load(int3(q, 0)).r * w;
+        ws += w;
+    }
+    const float r = sum / ws;
+    return float4(r, r, r, 1.0f);
+}
+
+float4 SsaoCompPS(float4 sp : SV_POSITION) : SV_TARGET
+{
+    const float3 enc = gTexA.Load(int3(int2(sp.xy), 0)).rgb;
+    const float ao = gTexB.SampleLevel(sLin, sp.xy / cam2.zw, 0).r;
+    if (prm2.y > 0.5f) return float4(ao, ao, ao, 1.0f);
+    const float3 lin = pow(max(enc, 0.0f), 2.2f);
+    const float lum = dot(lin, float3(0.2126f, 0.7152f, 0.0722f));
+    const float influence = prm1.z * (1.0f - prm1.w * smoothstep(0.15f, 1.5f, lum));   // lit surfaces keep their highlights
+    const float f = lerp(1.0f, ao, influence);
+    if (f >= 0.9999f) return float4(enc, 1.0f);
+    return float4(pow(max(lin * f, 0.0f), 1.0f / 2.2f), 1.0f);
+}
+)HLSL";
+
+static void InitSsao(ID3D12Device* dev, GhostPost& t)
+{
+    t.ssaoReady = false;
+
+    D3D12_DESCRIPTOR_RANGE rg[3] = {};
+    D3D12_ROOT_PARAMETER rp[4] = {};
+    for (int i = 0; i < 3; i++)
+    {
+        rg[i].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+        rg[i].NumDescriptors = 1;
+        rg[i].BaseShaderRegister = (UINT)i;
+        rg[i].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+        rp[i].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        rp[i].DescriptorTable.NumDescriptorRanges = 1;
+        rp[i].DescriptorTable.pDescriptorRanges = &rg[i];
+        rp[i].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    }
+    rp[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+    rp[3].Constants.ShaderRegister = 0;
+    rp[3].Constants.Num32BitValues = 20;
+    rp[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+    D3D12_STATIC_SAMPLER_DESC samp = LinearClampSampler();
+    D3D12_ROOT_SIGNATURE_DESC rsd = {};
+    rsd.NumParameters = 4;
+    rsd.pParameters = rp;
+    rsd.NumStaticSamplers = 1;
+    rsd.pStaticSamplers = &samp;
+    ComPtr<ID3DBlob> blob, err;
+    if (FAILED(D3D12SerializeRootSignature(&rsd, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &err)) ||
+        FAILED(dev->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&t.ssaoRootSig))))
+        return;
+
+    ComPtr<ID3DBlob> vs, p1, p2, p3;
+    if (!CompilePost(kSsaoHLSL, "SsaoVS", "vs_5_1", &vs) || !CompilePost(kSsaoHLSL, "SsaoPS", "ps_5_1", &p1) ||
+        !CompilePost(kSsaoHLSL, "SsaoBlurPS", "ps_5_1", &p2) || !CompilePost(kSsaoHLSL, "SsaoCompPS", "ps_5_1", &p3))
+    {
+        OutputDebugStringA("[GhostX] SSAO shader failed to compile: SSAO is disabled.\n");
+        return;
+    }
+
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC d = {};
+    d.pRootSignature = t.ssaoRootSig.Get();
+    d.VS = { vs->GetBufferPointer(), vs->GetBufferSize() };
+    d.InputLayout = { nullptr, 0 };
+    d.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    d.NumRenderTargets = 1;
+    d.SampleDesc.Count = 1;
+    d.SampleMask = UINT_MAX;
+    d.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+    d.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+    d.RasterizerState.DepthClipEnable = TRUE;
+    d.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+    d.DepthStencilState.DepthEnable = FALSE;
+    d.DSVFormat = DXGI_FORMAT_UNKNOWN;
+
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC ao = d, bl = d, cp = d;
+    ao.RTVFormats[0] = DXGI_FORMAT_R8_UNORM;  ao.PS = { p1->GetBufferPointer(), p1->GetBufferSize() };
+    bl.RTVFormats[0] = DXGI_FORMAT_R8_UNORM;  bl.PS = { p2->GetBufferPointer(), p2->GetBufferSize() };
+    cp.RTVFormats[0] = GHOST_HDR_FORMAT;      cp.PS = { p3->GetBufferPointer(), p3->GetBufferSize() };
+    if (FAILED(dev->CreateGraphicsPipelineState(&ao, IID_PPV_ARGS(&t.ssaoPso))) ||
+        FAILED(dev->CreateGraphicsPipelineState(&bl, IID_PPV_ARGS(&t.ssaoBlurPso))) ||
+        FAILED(dev->CreateGraphicsPipelineState(&cp, IID_PPV_ARGS(&t.ssaoCompPso))))
+        return;
+
+    D3D12_DESCRIPTOR_HEAP_DESC rh = {};
+    rh.NumDescriptors = GHOST_MAX_SURFACES * 2;
+    rh.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+    D3D12_DESCRIPTOR_HEAP_DESC sh = {};
+    sh.NumDescriptors = GHOST_MAX_SURFACES * 4;
+    sh.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+    sh.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+    if (FAILED(dev->CreateDescriptorHeap(&rh, IID_PPV_ARGS(&t.ssaoRtvHeap))) ||
+        FAILED(dev->CreateDescriptorHeap(&sh, IID_PPV_ARGS(&t.ssaoSrvHeap))))
+        return;
+    t.ssaoRtvInc = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+    t.ssaoSrvInc = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    t.ssaoReady = true;
+}
+
+
+// ============================================================
 //  Lifecycle
 // ============================================================
 GhostResult GhostPost_Init(IGhostRHI* rhi, GhostPost& t)
@@ -332,7 +545,7 @@ GhostResult GhostPost_Init(IGhostRHI* rhi, GhostPost& t)
         return GHOST_FAIL;
     t.rtvInc = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
     t.srvInc = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-
+    InitSsao(dev, t);                                          // optional: a failure only disables SSAO
     t.ready = true;
     return GHOST_OK;
 }
@@ -345,6 +558,9 @@ void GhostPost_Release(GhostPost& t, int id)
     t.w[id] = t.h[id] = 0;
     t.bloomW[id] = t.bloomH[id] = t.bloomLevels[id] = 0;
     t.bloomValid[id] = false;
+    t.fogCopy[id].Reset();
+    t.ssaoA[id].Reset(); t.ssaoB[id].Reset();
+    t.ssaoW[id] = t.ssaoH[id] = 0;
 }
 
 void GhostPost_Shutdown(GhostPost& t)
@@ -359,6 +575,9 @@ void GhostPost_Shutdown(GhostPost& t)
     t.rtvHeap.Reset();
     t.srvHeap.Reset();
     t.ready = false;
+    t.ssaoPso.Reset(); t.ssaoBlurPso.Reset(); t.ssaoCompPso.Reset();
+    t.ssaoRootSig.Reset(); t.ssaoRtvHeap.Reset(); t.ssaoSrvHeap.Reset();
+    t.ssaoReady = false;
 }
 
 GhostResult GhostPost_Ensure(IGhostRHI* rhi, GhostPost& t, int id, unsigned int w, unsigned int h)
@@ -588,4 +807,185 @@ void GhostPost_Tonemap(IGhostRHI* rhi, GhostPost& t, int id, D3D12_CPU_DESCRIPTO
 
     cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     cmd->DrawInstanced(3, 1, 0, 0);
+}
+
+static GhostResult EnsureFogCopy(IGhostRHI* rhi, GhostPost& t, int id, unsigned int w, unsigned int h)
+{
+    if (t.fogCopy[id])
+    {
+        const D3D12_RESOURCE_DESC d = t.fogCopy[id]->GetDesc();
+        if (d.Width == w && d.Height == h) return GHOST_OK;
+    }
+    t.fogCopy[id].Reset();                                    // the GPU is idle between frames
+    D3D12_HEAP_PROPERTIES hp = {};
+    hp.Type = D3D12_HEAP_TYPE_DEFAULT;
+    D3D12_RESOURCE_DESC rd = {};
+    rd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    rd.Width = w;
+    rd.Height = h;
+    rd.DepthOrArraySize = 1;
+    rd.MipLevels = 1;
+    rd.Format = GHOST_HDR_FORMAT;
+    rd.SampleDesc.Count = 1;
+    rd.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    return FAILED(rhi->GetDevice()->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd,
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr, IID_PPV_ARGS(&t.fogCopy[id]))) ? GHOST_FAIL : GHOST_OK;
+}
+
+void GhostPost_Fog(IGhostRHI* rhi, GhostPipeline* p, GhostPost& t, int id, ID3D12Resource* color,
+    D3D12_CPU_DESCRIPTOR_HANDLE colorRTV, ID3D12Resource* depth, unsigned int w, unsigned int h)
+{
+    if (!t.ready || !p || !p->fogPso || !color || !depth || id < 0 || id >= GHOST_MAX_SURFACES) return;
+    if (EnsureFogCopy(rhi, t, id, w, h) != GHOST_OK) return;
+    auto* cmd = rhi->GetCmdList();
+    ID3D12Resource* cp = t.fogCopy[id].Get();
+
+    D3D12_RESOURCE_BARRIER b[2];
+    b[0] = PostTrans(color, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    b[1] = PostTrans(cp, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+    cmd->ResourceBarrier(2, b);
+    cmd->CopyResource(cp, color);
+    b[0] = PostTrans(color, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    b[1] = PostTrans(cp, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    cmd->ResourceBarrier(2, b);
+
+    GhostDrawFog(rhi, p, cp, depth, colorRTV, w, h);
+}
+
+static GhostResult EnsureSsaoTargets(IGhostRHI* rhi, GhostPost& t, int id, unsigned int aw, unsigned int ah)
+{
+    if (t.ssaoA[id] && t.ssaoB[id] && t.ssaoW[id] == aw && t.ssaoH[id] == ah) return GHOST_OK;
+    ID3D12Device* dev = rhi->GetDevice();
+    t.ssaoA[id].Reset();                                      // the GPU is idle between frames
+    t.ssaoB[id].Reset();
+
+    D3D12_HEAP_PROPERTIES hp = {};
+    hp.Type = D3D12_HEAP_TYPE_DEFAULT;
+    D3D12_RESOURCE_DESC rd = {};
+    rd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    rd.Width = aw;
+    rd.Height = ah;
+    rd.DepthOrArraySize = 1;
+    rd.MipLevels = 1;
+    rd.Format = DXGI_FORMAT_R8_UNORM;
+    rd.SampleDesc.Count = 1;
+    rd.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    rd.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+
+    ComPtr<ID3D12Resource> a, b;
+    if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr, IID_PPV_ARGS(&a))) ||
+        FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr, IID_PPV_ARGS(&b))))
+        return GHOST_FAIL;
+
+    const unsigned int rb = (unsigned int)id * 2, sb = (unsigned int)id * 4;
+    dev->CreateRenderTargetView(a.Get(), nullptr, PostHandle(t.ssaoRtvHeap.Get(), rb + 0, t.ssaoRtvInc));
+    dev->CreateRenderTargetView(b.Get(), nullptr, PostHandle(t.ssaoRtvHeap.Get(), rb + 1, t.ssaoRtvInc));
+    D3D12_SHADER_RESOURCE_VIEW_DESC sv = {};
+    sv.Format = DXGI_FORMAT_R8_UNORM;
+    sv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    sv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    sv.Texture2D.MipLevels = 1;
+    dev->CreateShaderResourceView(a.Get(), &sv, PostHandle(t.ssaoSrvHeap.Get(), sb + 2, t.ssaoSrvInc));
+    dev->CreateShaderResourceView(b.Get(), &sv, PostHandle(t.ssaoSrvHeap.Get(), sb + 3, t.ssaoSrvInc));
+
+    t.ssaoA[id] = a;
+    t.ssaoB[id] = b;
+    t.ssaoW[id] = aw;
+    t.ssaoH[id] = ah;
+    return GHOST_OK;
+}
+
+void GhostPost_SSAO(IGhostRHI* rhi, GhostPost& t, int id, ID3D12Resource* color, D3D12_CPU_DESCRIPTOR_HANDLE colorRTV,
+    ID3D12Resource* depth, unsigned int w, unsigned int h, const GhostPostSettings& s, const float* proj6, float noiseOffset)
+{
+    if (!t.ready || !t.ssaoReady || !s.ssaoEnabled || !color || !depth || !proj6 || id < 0 || id >= GHOST_MAX_SURFACES) return;
+    const unsigned int div = s.ssaoHalfRes ? 2u : 1u;
+    const unsigned int aw = (w + div - 1) / div, ah = (h + div - 1) / div;
+    if (EnsureSsaoTargets(rhi, t, id, aw, ah) != GHOST_OK || EnsureFogCopy(rhi, t, id, w, h) != GHOST_OK) return;
+
+    ID3D12Device* dev = rhi->GetDevice();
+    auto* cmd = rhi->GetCmdList();
+    ID3D12Resource* cp = t.fogCopy[id].Get();
+    ID3D12Resource* aoA = t.ssaoA[id].Get();
+    ID3D12Resource* aoB = t.ssaoB[id].Get();
+    const unsigned int sb = (unsigned int)id * 4, rb = (unsigned int)id * 2;
+
+    // descriptors for this frame: slot 0 = depth, slot 1 = scene copy (slots 2, 3 = the AO targets, written at creation)
+    D3D12_SHADER_RESOURCE_VIEW_DESC sv = {};
+    sv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    sv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    sv.Texture2D.MipLevels = 1;
+    sv.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+    dev->CreateShaderResourceView(depth, &sv, PostHandle(t.ssaoSrvHeap.Get(), sb + 0, t.ssaoSrvInc));
+    sv.Format = GHOST_HDR_FORMAT;
+    dev->CreateShaderResourceView(cp, &sv, PostHandle(t.ssaoSrvHeap.Get(), sb + 1, t.ssaoSrvInc));
+
+    auto gpu = [&](unsigned int slot)
+        {
+            D3D12_GPU_DESCRIPTOR_HANDLE g = t.ssaoSrvHeap->GetGPUDescriptorHandleForHeapStart();
+            g.ptr += (UINT64)(sb + slot) * t.ssaoSrvInc;
+            return g;
+        };
+    auto setup = [&](ID3D12PipelineState* pso, D3D12_CPU_DESCRIPTOR_HANDLE rtv, unsigned int tw, unsigned int th,
+        unsigned int slotB, unsigned int slotC, float dx, float dy)
+        {
+            cmd->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+            D3D12_VIEWPORT vp = { 0.0f, 0.0f, (float)tw, (float)th, 0.0f, 1.0f };
+            D3D12_RECT sc = { 0, 0, (LONG)tw, (LONG)th };
+            cmd->RSSetViewports(1, &vp);
+            cmd->RSSetScissorRects(1, &sc);
+            cmd->SetPipelineState(pso);
+            cmd->SetGraphicsRootDescriptorTable(0, gpu(0));
+            cmd->SetGraphicsRootDescriptorTable(1, gpu(slotB));
+            cmd->SetGraphicsRootDescriptorTable(2, gpu(slotC));
+            const float k[20] = { proj6[0], proj6[1], proj6[2], proj6[3],
+                                  proj6[4], proj6[5], (float)w, (float)h,
+                                  s.ssaoRadius, s.ssaoIntensity, s.ssaoBias, (float)s.ssaoSamples,
+                                  (float)div, noiseOffset, s.ssaoStrength, s.ssaoDirectFade,
+                                  s.ssaoFadeDist, (float)s.ssaoShowOnly, dx, dy };
+            cmd->SetGraphicsRoot32BitConstants(3, 20, k, 0);
+            cmd->DrawInstanced(3, 1, 0, 0);
+        };
+
+    D3D12_RESOURCE_BARRIER b = PostTrans(depth, D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    cmd->ResourceBarrier(1, &b);
+
+    ID3D12DescriptorHeap* heaps[] = { t.ssaoSrvHeap.Get() };
+    cmd->SetDescriptorHeaps(1, heaps);
+    cmd->SetGraphicsRootSignature(t.ssaoRootSig.Get());
+    cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+    // 1. raw AO -> A
+    b = PostTrans(aoA, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    cmd->ResourceBarrier(1, &b);
+    setup(t.ssaoPso.Get(), PostHandle(t.ssaoRtvHeap.Get(), rb + 0, t.ssaoRtvInc), aw, ah, 0, 0, 0.0f, 0.0f);
+    b = PostTrans(aoA, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    cmd->ResourceBarrier(1, &b);
+
+    // 2. blur horizontal A -> B, 3. blur vertical B -> A
+    b = PostTrans(aoB, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    cmd->ResourceBarrier(1, &b);
+    setup(t.ssaoBlurPso.Get(), PostHandle(t.ssaoRtvHeap.Get(), rb + 1, t.ssaoRtvInc), aw, ah, 2, 0, 1.0f, 0.0f);
+    b = PostTrans(aoB, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    cmd->ResourceBarrier(1, &b);
+
+    b = PostTrans(aoA, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    cmd->ResourceBarrier(1, &b);
+    setup(t.ssaoBlurPso.Get(), PostHandle(t.ssaoRtvHeap.Get(), rb + 0, t.ssaoRtvInc), aw, ah, 3, 0, 0.0f, 1.0f);
+    b = PostTrans(aoA, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    cmd->ResourceBarrier(1, &b);
+
+    // 4. copy the scene, then composite (scene copy * AO) over it
+    D3D12_RESOURCE_BARRIER cb[2];
+    cb[0] = PostTrans(color, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    cb[1] = PostTrans(cp, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+    cmd->ResourceBarrier(2, cb);
+    cmd->CopyResource(cp, color);
+    cb[0] = PostTrans(color, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    cb[1] = PostTrans(cp, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    cmd->ResourceBarrier(2, cb);
+    setup(t.ssaoCompPso.Get(), colorRTV, w, h, 1, 2, 0.0f, 0.0f);
+
+    b = PostTrans(depth, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+    cmd->ResourceBarrier(1, &b);
 }

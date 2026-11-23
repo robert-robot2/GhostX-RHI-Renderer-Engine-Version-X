@@ -13,7 +13,7 @@
 
 constexpr DXGI_FORMAT GHOST_HDR_FORMAT = DXGI_FORMAT_R16G16B16A16_FLOAT;   // scene color: gamma-encoded floats, values above 1.0 are kept
 constexpr unsigned int GHOST_MAX_PROBES = 8;                                // Reflection Captures sampled by the scene shader at once
-
+constexpr unsigned int GHOST_MAX_FOGVOLS = 8;                               // Fog Volumes the fog pass sees at once
 
 using Microsoft::WRL::ComPtr;
 
@@ -56,7 +56,7 @@ struct GhostGPULight                // matches struct Light in GhostPS.hlsl
     float colorIntensity[4];        // rgb color, w intensity
     float rectRight[4];             // xyz right axis, w half-width
     float rectUp[4];                // xyz up axis, w half-height
-    float shadow[4];                // x first map slice (-1 = no shadow), y far (world units), z texel size, w unused
+    float shadow[4];                // x first map slice (-1 = no shadow), y far, z texel size, w god rays strength (0 = none)
 };                                  // 96 bytes
 
 struct GhostGPUProbe                // matches struct Probe in GhostPS.hlsl (96 bytes)
@@ -65,6 +65,16 @@ struct GhostGPUProbe                // matches struct Probe in GhostPS.hlsl (96 
     float shape[4];                    // x 0 box / 1 sphere, yzw = half extents (sphere: y = radius)
     float params[4];                   // x blend distance, y intensity, z last mip index, w ambient diffuse amount
     float misc[4];                     // x parallax correction (0/1), y cube slot
+};
+
+struct GhostGPUFogVol               // matches struct FogVol in GhostPS.hlsl (128 bytes)
+{
+    float row0[4], row1[4], row2[4];   // world -> volume space
+    float shape[4];                    // x 0 box / 1 sphere, yzw half extents (sphere: y = radius)
+    float dens[4];                     // x density, y blend distance, z gradient, w unused
+    float color[4];                    // rgb linear colour, w light scatter amount
+    float noise[4];                    // x texture id, y amount, z scale
+    float scroll[4];                   // xy noise offset
 };
 
 struct GhostSceneCB                 // matches cbuffer SceneBuffer (b1)
@@ -80,6 +90,9 @@ struct GhostSceneCB                 // matches cbuffer SceneBuffer (b1)
     float        flick[GHOST_MAX_LIGHTS * GHOST_FLICKER_LAYERS * 3][4];   // per light, per layer: colour+intensity / texture / surface response
     float        probeInfo[4];                          // x = probe count
     GhostGPUProbe probes[GHOST_MAX_PROBES];
+    float        fogA[4], fogB[4], fogC[4], fogD[4], fogE[4], fogF[4], fogG[4];
+    float        fogCam[6][4];
+    GhostGPUFogVol fogVols[GHOST_MAX_FOGVOLS];
 
 };                               // 32 + 16*80 = 1312 bytes
 
@@ -102,8 +115,8 @@ constexpr unsigned int GHOST_MAX_SHADOW_CASTERS = 512;          // was 256: this
 constexpr unsigned int GHOST_SHADOW_SRV_INDEX = GHOST_MAX_TEXTURES + GHOST_MAX_SURFACES;   // last slot of the SRV heap
 
 constexpr unsigned int GHOST_PROBE_SRV_BASE = GHOST_SHADOW_SRV_INDEX + 1;                  // probe cubemaps: heap slots right after the shadow map (t2..t9)
-constexpr unsigned int GHOST_DATA_SRV_BASE = GHOST_PROBE_SRV_BASE + GHOST_MAX_PROBES;      // linear (UNORM) view of every texture, same order as the ids
-
+constexpr unsigned int GHOST_FOG_SRV_BASE = GHOST_PROBE_SRV_BASE + GHOST_MAX_PROBES;       // t10 = scene depth, t11 = scene colour copy (the fog pass writes both every frame)
+constexpr unsigned int GHOST_DATA_SRV_BASE = GHOST_FOG_SRV_BASE + 2;                       // linear (UNORM) view of every texture, same order as the ids
 
 struct GhostMesh
 {
@@ -177,6 +190,7 @@ struct GhostPipeline
     unsigned int                 ovCursor = 0;
 
     ComPtr<ID3D12PipelineState>  skyPso;
+    ComPtr<ID3D12PipelineState>  fogPso;                   // volumetric fog (null if GhostFog.hlsl failed to compile: fog stays off)
     // ---- Shadows ----
     ComPtr<ID3D12RootSignature>  shadowRootSig;
     ComPtr<ID3D12PipelineState>  shadowPso;
@@ -274,6 +288,11 @@ void GhostDrawUI(IGhostRHI* rhi, GhostPipeline* pipeline, const std::vector<Ghos
     unsigned int w, unsigned int h, float scale);
 
 void GhostDrawSky(IGhostRHI* rhi, GhostPipeline* pipeline, unsigned int slot, unsigned int textureIndex);
+
+// Volumetric fog: reads a copy of the scene colour + the scene depth, writes the fogged image into dstRTV (1x HDR format).
+// depth = typeless D24S8 resting in DEPTH_WRITE (moved to PIXEL_SHADER_RESOURCE and back). Not for use inside a render pass override.
+void GhostDrawFog(IGhostRHI* rhi, GhostPipeline* p, ID3D12Resource* sceneCopy, ID3D12Resource* depth,
+    D3D12_CPU_DESCRIPTOR_HANDLE dstRTV, unsigned int w, unsigned int h);
 
 // ---- Shadow pass ----
 void GhostUpdateShadowCB(GhostPipeline* pipeline, unsigned int slot, const GhostObjectCB* cb);

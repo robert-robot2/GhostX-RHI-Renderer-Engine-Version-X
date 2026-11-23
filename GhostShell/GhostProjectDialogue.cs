@@ -342,7 +342,7 @@ namespace GhostShell
                     string manifest = GhostProject.Create(name, parent);
                     GhostSettings.Data.LastProjectFolder = parent;
                     GhostSettings.Save();
-                    if (!GhostProject.Open(manifest, out string err))
+                    if (!GhostProject.Open(manifest, out string err, true, false))
                     { MessageBox.Show(owner, err, "Save Project As failed", MessageBoxButtons.OK, MessageBoxIcon.Warning); return false; }
                     if (!GhostSceneFile.Save(Path.Combine(GhostProject.ScenesDir!, "Main.ghostscene"))) return false;
                     GhostProject.Current!.StartScene = "Scenes/Main.ghostscene";

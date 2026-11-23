@@ -25,7 +25,26 @@ namespace GhostShell
         public float innerDeg, outerDeg;
         public int shadowObjects, shadowLandscape;
         public float spinYaw, spinPitch;
+        public float volumetric;
     }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GhostFogInfo
+    {
+        public int enabled;
+        public float density, colorR, colorG, colorB, brightness, followAmbient;
+        public float heightBase, heightFalloff, startDistance, maxDistance, skyFog;
+        public int envMode;
+        public float envAmount;
+        public int envTexture;
+        public float envYaw;
+        public int noiseTexture;
+        public float noiseAmount, noiseScale, scrollX, scrollZ;
+        public int volLight;
+        public float volIntensity, anisotropy;
+        public int steps;
+    }
+
 
     [StructLayout(LayoutKind.Sequential)]
     internal struct GhostFlickerInfo
@@ -249,6 +268,12 @@ namespace GhostShell
         public float bloomThreshold, bloomKnee, bloomIntensity, bloomScatter;
         public int bloomMips;
         public float bloomTintR, bloomTintG, bloomTintB;
+        public int ssaoEnabled;
+        public float ssaoRadius, ssaoIntensity, ssaoBias, ssaoStrength;
+        public int ssaoSamples;
+        public float ssaoDirectFade;
+        public int ssaoHalfRes, ssaoShowOnly;
+        public float ssaoFadeDist;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -276,6 +301,8 @@ namespace GhostShell
         public float animFps, animSpeed;
         public int animOverLife, randomStartFrame, meshId;
         public float drawDistance;
+        public float rotX, rotY, rotZ;
+        public float scaleX, scaleY, scaleZ;
     }
 
 
@@ -309,6 +336,9 @@ namespace GhostShell
         public static extern void GhostEngine_MouseUp(int x, int y, int button);
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern void GhostEngine_MouseLeave();
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_PurgeProjectAssets();
 
         // ---- Scene ----
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
@@ -752,6 +782,11 @@ namespace GhostShell
         public static extern int GhostEngine_GetFlickerText(int lightId, int layer, [Out] byte[] buf, int bufSize);
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern void GhostEngine_SetFlickerText(int lightId, int layer, [MarshalAs(UnmanagedType.LPUTF8Str)] string text);
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_GetFogSettings(out GhostFogInfo f);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void GhostEngine_SetFogSettings(ref GhostFogInfo f);
 
     }
 }

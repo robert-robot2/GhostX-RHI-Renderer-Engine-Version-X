@@ -13,9 +13,14 @@ namespace GhostShell
         public int Id;
         public string Name = "";
         public string? Path;          // null = built-in
-        public int OrigW, OrigH;      // the file's real size
-        public int MaxSize;           // 0 = Original
-        public Bitmap Thumb = null!;
+        public int OrigW, OrigH;
+        public int MaxSize;
+        private Bitmap? _thumb;
+        public Bitmap Thumb           // built on first use, so a scene load doesn't decode every image
+        {
+            get => _thumb ??= (Path != null ? GhostAssets.TryMakeThumb(Path) : null) ?? GhostAssets.PlaceholderThumb();
+            set => _thumb = value;
+        }
     }
 
     internal static class GhostAssets
@@ -35,6 +40,14 @@ namespace GhostShell
 
         public static IReadOnlyList<TextureAsset> All => _byId.Values.OrderBy(a => a.Id).ToList();
         public static TextureAsset? Get(int id) => _byId.TryGetValue(id, out var a) ? a : null;
+
+        internal static Bitmap PlaceholderThumb()
+        {
+            var b = new Bitmap(ThumbSize, ThumbSize);
+            using var g = Graphics.FromImage(b);
+            g.Clear(Color.FromArgb(0x55, 0x55, 0x5A));
+            return b;
+        }
 
         public static bool IsImage(string path)
         {
@@ -186,7 +199,6 @@ namespace GhostShell
                         OrigW = (int)w,
                         OrigH = (int)h,
                         MaxSize = 0,
-                        Thumb = MakeThumb(path),
                     };
                     changed = true;
                 }
@@ -215,7 +227,12 @@ namespace GhostShell
         {
             try { return MakeThumb(path); } catch { return null; }
         }
-
+        // Forget every file-backed texture (project switch). SyncFromEngine / Import re-register what the new project loads.
+        public static void ResetProjectTextures()
+        {
+            foreach (int id in _byId.Keys.Where(k => k >= 3).ToList()) _byId.Remove(id);
+            Changed?.Invoke();
+        }
 
     }
 }
