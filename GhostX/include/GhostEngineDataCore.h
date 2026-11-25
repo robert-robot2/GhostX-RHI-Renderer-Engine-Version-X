@@ -191,7 +191,9 @@ void GhostEngine_Tick()
             g_scene.shadowRes = (int)g_pipeline->shadowSize;              // could not allocate: keep what works
     GhostMSAA_Apply(g_rhi, g_pipeline, g_msaa, g_taaOn ? 1 : g_msaaWanted);   // TAA and MSAA are exclusive
     g_frameNo++;
+    UpdateCelestialLights();
     UpdateProbes(dt);
+
     // ---- Render: camera windows first, the main view last (it carries the vsync) ----
     for (int vp = 1; vp < GHOST_MAX_SURFACES; vp++)
         if (g_vp[vp].alive) RenderViewport(vp);
@@ -220,8 +222,9 @@ void GhostEngine_Shutdown()
     GhostMSAA_Shutdown(g_msaa);
     GhostTAA_Shutdown(g_taa);
     GhostProbe_Shutdown(g_probe);
+    GhostShafts_Shutdown(g_shafts);
     GhostPost_Shutdown(g_post);
-
+    GhostProf_Shutdown(g_prof);
     GhostPipelineDestroy(g_pipeline);
     g_pipeline = nullptr;
 
@@ -601,6 +604,7 @@ void GhostEngine_DestroyViewport(int vp)
     GhostMSAA_Release(g_msaa, vp);
     GhostTAA_Release(g_taa, vp);
     GhostPost_Release(g_post, vp);
+    GhostShafts_Release(g_shafts, vp);
     g_vp[vp] = EngineViewport();
 }
 
@@ -720,6 +724,7 @@ int GhostEngine_LoadScene(const char* path, char* msg, int msgSize)
     FreeAllTileInstances();
     FreeAllProbes();
     GhostPost_SSRReset(g_post);
+    GhostPost_SSGIReset(g_post);
     g_scenePath = GhostPath_Normalize(path);
     GhostParticles_ResetAll();
     g_scene.version++;
@@ -736,7 +741,7 @@ void GhostEngine_ClearScene()
     FreeAllTileInstances();
     FreeAllProbes();
     GhostPost_SSRReset(g_post);
-
+    GhostPost_SSGIReset(g_post);
     g_scene.lights.clear();
     g_scene.cameras.clear(); g_scene.mods.clear(); g_scene.volumes.clear(); g_scene.particles.clear();
     GhostParticles_ResetAll();
@@ -1979,6 +1984,8 @@ static void PerformSceneSwitch()
     FreeAllTileInstances();
     FreeAllProbes();
     GhostPost_SSRReset(g_post);
+    GhostPost_SSGIReset(g_post);
+
     g_scene.version++;
     if (g_scene.gameStartCameraId && FindCamera(g_scene.gameStartCameraId))
         g_scene.activeCameraId = g_scene.gameStartCameraId;
@@ -3841,7 +3848,10 @@ void GhostEngine_GetPostSettings(GhostPostInfo* out)
              p.bloomTint[0], p.bloomTint[1], p.bloomTint[2],
              p.ssaoEnabled, p.ssaoRadius, p.ssaoIntensity, p.ssaoBias, p.ssaoStrength,
              p.ssaoSamples, p.ssaoDirectFade, p.ssaoHalfRes, p.ssaoShowOnly, p.ssaoFadeDist,
-             p.ssrEnabled, p.ssrIntensity, p.ssrMaxDistance, p.ssrThickness, p.ssrSteps, p.ssrMaxRoughness, p.ssrEdgeFade };
+             p.ssrEnabled, p.ssrIntensity, p.ssrMaxDistance, p.ssrThickness, p.ssrSteps, p.ssrMaxRoughness, p.ssrEdgeFade,
+              p.ssgiEnabled, p.ssgiIntensity, p.ssgiRadius, p.ssgiSamples, p.ssgiTemporal, p.ssgiFadeDist, p.ssgiShowOnly,
+             p.shaftEnabled, p.shaftIntensity, p.shaftThreshold, p.shaftMaxBright, p.shaftLength, p.shaftDecay,
+             p.shaftDarkness, p.shaftDepthRange, p.shaftSteps, p.shaftOcclusion };
 }
 
 void GhostEngine_SetPostSettings(const GhostPostInfo* in)
@@ -3859,6 +3869,13 @@ void GhostEngine_SetPostSettings(const GhostPostInfo* in)
     p.ssrEnabled = in->ssrEnabled; p.ssrIntensity = in->ssrIntensity; p.ssrMaxDistance = in->ssrMaxDistance;
     p.ssrThickness = in->ssrThickness; p.ssrSteps = in->ssrSteps; p.ssrMaxRoughness = in->ssrMaxRoughness;
     p.ssrEdgeFade = in->ssrEdgeFade;
+    p.ssgiEnabled = in->ssgiEnabled; p.ssgiIntensity = in->ssgiIntensity; p.ssgiRadius = in->ssgiRadius;
+    p.ssgiSamples = in->ssgiSamples; p.ssgiTemporal = in->ssgiTemporal; p.ssgiFadeDist = in->ssgiFadeDist;
+    p.ssgiShowOnly = in->ssgiShowOnly;
+    p.shaftEnabled = in->shaftEnabled; p.shaftIntensity = in->shaftIntensity; p.shaftThreshold = in->shaftThreshold;
+    p.shaftMaxBright = in->shaftMaxBright; p.shaftLength = in->shaftLength; p.shaftDecay = in->shaftDecay;
+    p.shaftDarkness = in->shaftDarkness; p.shaftDepthRange = in->shaftDepthRange;
+    p.shaftSteps = in->shaftSteps; p.shaftOcclusion = in->shaftOcclusion;
     GhostPostSettings_Clamp(p);
 }
 
@@ -3969,4 +3986,133 @@ void GhostEngine_SetFogSettings(const GhostFogInfo* in)
     f.noiseAmount = in->noiseAmount; f.noiseScale = in->noiseScale; f.scrollX = in->scrollX; f.scrollZ = in->scrollZ;
     f.volLight = in->volLight; f.volIntensity = in->volIntensity; f.anisotropy = in->anisotropy; f.steps = in->steps;
     GhostFogSettings_Clamp(f);
+}
+
+int GhostEngine_ExpandLandscape(int id, int radius)
+{
+    if (g_playState != GhostPlayState::Editing) return 0;
+    GhostObject* src = FindObject(id);
+    if (!src || !src->tileMap.enabled || src->tileMap.direction != 1) return 0;
+    if (fabsf(src->rotationDeg.x) > 0.01f || fabsf(src->rotationDeg.y) > 0.01f || fabsf(src->rotationDeg.z) > 0.01f) return 0;
+    radius = radius < 1 ? 1 : (radius > 4 ? 4 : radius);
+
+    const GhostObject tmpl = *src;                         // copy first: push_back can move the vector
+    const float W = (float)tmpl.tileMap.gridX * tmpl.tileMap.tileSize * fabsf(tmpl.scale.x);
+    const float D = (float)tmpl.tileMap.gridY * tmpl.tileMap.tileSize * fabsf(tmpl.scale.z);
+
+    int count = 0;
+    for (const GhostObject& o : g_scene.objects) if (o.tileMap.enabled) count++;
+
+    int made = 0;
+    for (int dz = -radius; dz <= radius; dz++)
+        for (int dx = -radius; dx <= radius; dx++)
+        {
+            if (dx == 0 && dz == 0) continue;
+            const GhostVec3 pos(tmpl.position.x + (float)dx * W, tmpl.position.y, tmpl.position.z + (float)dz * D);
+            bool taken = false;
+            for (const GhostObject& o : g_scene.objects)
+                if (o.tileMap.enabled && fabsf(o.position.x - pos.x) < W * 0.45f && fabsf(o.position.z - pos.z) < D * 0.45f) { taken = true; break; }
+            if (taken) continue;
+            if (count >= kMaxTileMapObjects || !CanAddObject(tmpl.meshId)) goto done;
+
+            GhostObject copy = tmpl;
+            copy.id = g_scene.nextId++;
+            copy.name = "Tile Map " + std::to_string(copy.id);
+            copy.position = pos;
+            {
+                GhostTileMap& t = copy.tileMap;                                    // flat and on the base layer
+                std::fill(t.height.begin(), t.height.end(), 0.0f);
+                const size_t texels = (size_t)t.splatW * (size_t)t.splatH;
+                if (t.splat.size() == texels * 8)
+                    for (size_t i = 0; i < texels; i++) { memset(&t.splat[i * 8], 0, 8); t.splat[i * 8] = 255; }
+                GhostTileMap_UpdateRange(t);
+                t.hStamp = GhostTile_NextStamp();
+                t.sStamp = GhostTile_NextStamp();
+            }
+            g_scene.objects.push_back(copy);
+            made++; count++;
+        }
+done:
+    if (made > 0) g_scene.version++;
+    return made;
+}
+
+int GhostEngine_StitchLandscape()
+{
+    if (g_playState != GhostPlayState::Editing) return 0;
+    struct Ref { GhostObject* o; size_t idx; };
+    std::map<std::pair<long long, long long>, std::vector<Ref>> pts;      // shared lattice point -> every cell vertex sitting on it
+    GhostObject* refObj = nullptr;
+    float cellW = 0.0f, cellD = 0.0f;
+
+    for (GhostObject& o : g_scene.objects)
+    {
+        GhostTileMap& t = o.tileMap;
+        if (!t.enabled || t.direction != 1) continue;
+        if (o.scale.x <= 0.0f || o.scale.y <= 0.0f || o.scale.z <= 0.0f) continue;
+        if (fabsf(o.rotationDeg.x) > 0.01f || fabsf(o.rotationDeg.y) > 0.01f || fabsf(o.rotationDeg.z) > 0.01f) continue;
+        const int sub = GhostTileMap_EffSub(t.gridX, t.gridY, t.subdiv);
+        const int vx = t.gridX * sub + 1, vy = t.gridY * sub + 1;
+        if (t.height.size() != (size_t)vx * (size_t)vy) continue;
+        const float cell = t.tileSize / (float)sub;
+        if (!refObj) { refObj = &o; cellW = cell * o.scale.x; cellD = cell * o.scale.z; }
+        else if (fabsf(cell * o.scale.x - cellW) > 1e-3f * cellW || fabsf(cell * o.scale.z - cellD) > 1e-3f * cellD) continue;   // other resolution
+
+        const float u0 = -0.5f * (float)t.gridX * t.tileSize, v0 = -0.5f * (float)t.gridY * t.tileSize;
+        for (int q = 0; q < vy; q++)
+            for (int p = 0; p < vx; p++)
+            {
+                if (p != 0 && p != vx - 1 && q != 0 && q != vy - 1) continue;      // borders only
+                const float fx = (o.position.x + (u0 + (float)p * cell) * o.scale.x - refObj->position.x) / cellW;
+                const float fz = (o.position.z + (v0 + (float)q * cell) * o.scale.z - refObj->position.z) / cellD;
+                const long long ix = (long long)floorf(fx + 0.5f), iz = (long long)floorf(fz + 0.5f);
+                if (fabsf(fx - (float)ix) > 0.05f || fabsf(fz - (float)iz) > 0.05f) continue;   // not on the shared lattice
+                pts[{ ix, iz }].push_back({ &o, (size_t)q * vx + p });
+            }
+    }
+
+    int changed = 0;
+    std::set<GhostObject*> touched;
+    for (auto& kv : pts)
+    {
+        std::vector<Ref>& v = kv.second;
+        if (v.size() < 2) continue;
+        float sum = 0.0f, lo = 1e30f, hi = -1e30f;
+        for (const Ref& r : v)
+        {
+            const float h = r.o->position.y + r.o->tileMap.height[r.idx] * r.o->scale.y;
+            sum += h; lo = fminf(lo, h); hi = fmaxf(hi, h);
+        }
+        if (hi - lo < 1e-5f) continue;
+        const float mean = sum / (float)v.size();
+        for (const Ref& r : v) { r.o->tileMap.height[r.idx] = (mean - r.o->position.y) / r.o->scale.y; touched.insert(r.o); }
+        changed++;
+    }
+    for (GhostObject* o : touched) { GhostTileMap_UpdateRange(o->tileMap); o->tileMap.hStamp = GhostTile_NextStamp(); }
+    return changed;
+}
+void GhostEngine_GetWorldSettings(GhostWorldInfo* out)
+{
+    if (!out) return;
+    const GhostWorldCfg& c = g_world;
+    *out = { c.streaming, c.lod, c.cull, c.showCells, c.maxLoads, c.loadDist, c.unloadPad, c.msBudget, c.lodDist1, c.lodDist2, c.farPlane, c.nearPlane };
+}
+
+void GhostEngine_SetWorldSettings(const GhostWorldInfo* in)
+{
+    if (!in) return;
+    GhostWorldCfg c = g_world;
+    c.streaming = in->streaming; c.lod = in->lod; c.cull = in->cull; c.showCells = in->showCells; c.maxLoads = in->maxLoads;
+    c.loadDist = in->loadDist; c.unloadPad = in->unloadPad; c.msBudget = in->msBudget;
+    c.lodDist1 = in->lodDist1; c.lodDist2 = in->lodDist2; c.farPlane = in->farPlane; c.nearPlane = in->nearPlane;
+    GhostWorld_Sanitize(c);
+    g_world = c;
+    GhostWorld_Save(c);
+}
+
+void GhostEngine_GetWorldStats(GhostWorldStatsInfo* out)
+{
+    if (!out) return;
+    const GhostWorldStats& s = g_wstats;
+    *out = { s.cells, s.resident, (int)GHOST_MAX_TILEMAPS, s.starved, s.loadsLast, s.cellsDrawn, s.bandsDrawn, s.bandsCulled, s.trisDrawn, s.objectsCulled, s.lastLoadMs };
 }

@@ -120,6 +120,15 @@
     <ClInclude Include="include\GhostProbe.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="include\GhostGpuProf.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="include\GhostLightShafts.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="include\GhostWorldPart.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\GhostPipeline.cpp">
@@ -194,6 +203,9 @@
     <ClCompile Include="src\GhostProbe.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\GhostLightShafts.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <None Include="shaders\GhostVS.hlsl">
@@ -203,6 +215,9 @@
       <Filter>Shaders</Filter>
     </None>
     <None Include="shaders\GhostFog.hlsl">
+      <Filter>Shaders</Filter>
+    </None>
+    <None Include="shaders\GhostShafts.hlsl">
       <Filter>Shaders</Filter>
     </None>
   </ItemGroup>

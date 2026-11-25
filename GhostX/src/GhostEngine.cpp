@@ -24,6 +24,9 @@
 #include "../include/GhostParticleMan.h"
 #include "../include/GhostPost.h"
 #include "../include/GhostProbe.h"
+#include "../include/GhostGpuProf.h"
+#include "../include/GhostLightShafts.h"
+#include "../include/GhostWorldPart.h"
 #include <memory>
 #include <string.h>
 #include <filesystem>
@@ -46,7 +49,11 @@ static int        g_taaOn = 0;
 static float      g_taaSpeed = 1.0f;
 static GhostPost  g_post;
 static GhostProbeSys g_probe;
+static GhostGpuProf g_prof;
+static GhostShafts g_shafts;
 static unsigned int g_frameNo = 0;                          // advances once per Tick (animates the fog dithering under TAA)
+static GhostWorldCfg   g_world;
+static GhostWorldStats g_wstats;
 struct ProbeRt { int slot = -1; unsigned int sig = 0; float stable = 0.0f, timer = 0.0f; bool dirty = true, request = false, seen = false; };
 static std::map<int, ProbeRt> g_probeRt;                   // key = volume id
 
@@ -85,6 +92,7 @@ static bool       g_dragging = false;
 static int        g_dragId = 0;
 static GhostVec3  g_dragOffset;
 static GhostVec3  g_dragPlanePoint;
+static const float kShadowFilterLodFrac = 0.9f;   // soft filtering only within this fraction of the shadow-fit radius
 
 // ---- Paint mode (P): sculpt and paint the selected Tile Map (the code is further down, next to the Tile Map mesh code) ----
 struct PaintBrush { int tool = 0; float radius = 2.0f, strength = 0.5f, fade = 0.6f, setHeight = 0.0f; };
@@ -183,17 +191,35 @@ static void ReleaseSkinInstancesOfMesh(int meshId)
 // ---- Tile Maps: one generated mesh slot per Tile Map object, plus its weight map textures ----
 struct TileInst
 {
-    int   slot = -1;
+    int   slot = -1;                                      // -1 = not resident (no GPU mesh)
     float tileSize = 0.0f;
     int   gx = 0, gy = 0, dir = -1, sub = 0;
     unsigned int hStamp = 0, sStamp = 0;                  // the data stamps the GPU copies were built from
     int   splatA = 0, splatB = 0;                         // texture ids of the weight maps (0 = none)
     int   splatW = 0, splatH = 0;
     bool  seen = false;
+    // ---- world partition ----
+    unsigned int neighSig = 0;                            // signature of the neighbouring cells the border normals were built from
+    float dist = 1e30f;                                   // distance to the nearest streaming focus (last tick)
+    int   state = 0;                                      // 0 not wanted, 1 resident, 2 wanted but waiting for a slot
+    unsigned int visFrame = 0xFFFFFFFFu;                  // last frame it was drawn
+    int   lodCur = 0;
+    // ---- mesh layout, filled by BuildTileMeshLod ----
+    int   nx = 0, ny = 0, bandRows = 16, bandCount = 0, maxLod = 0;
+    float cell = 0.0f, u0 = 0.0f, v0 = 0.0f;
+    unsigned int lodFirst[3] = {}, skirtFirst[3] = {}, skirtCount[3] = {};
+    std::vector<float> bandMin, bandMax;                  // height range of each row band (local N axis)
+    // layers that have paint on them (bit 0 = layer 0, always drawn)
+    unsigned int usedMask = 0xFFFFFFFFu, maskStamp = 0xFFFFFFFFu;
+    int   maskLayers = -1;
 };
 static std::map<int, TileInst> g_tileInst;               // key = object id
 static bool g_tileSlotUsed[GHOST_MAX_TILEMAPS] = {};
-static std::vector<int> g_splatFree;                     // weight map texture ids that can be reused
+static std::vector<int> g_splatFree;
+static bool g_tileBurst = true;                           // first update after a scene load: load everything in range at once
+static const int kTileBandRows = 16;                      // terrain rows per cull band
+static const int kMaxTileMapObjects = 256;
+static void TileAxes(int dir, GhostVec3& U, GhostVec3& V, GhostVec3& N);      // defined with the Tile Map code below                   // weight map texture ids that can be reused
 
 // 0 = every light shadows the surface, n = only light n-1 of the scene does (the Tile Map's "Directional Light")
 static int ShadowLightSelector(const GhostObject& o)
@@ -442,6 +468,9 @@ int GhostEngine_Init(HWND hwnd, unsigned int width, unsigned int height)
     GhostTAA_Init(g_rhi, g_taa);                  // failure is not fatal: TAA just stays unavailable
     if (GhostPost_Init(g_rhi, g_post) != GHOST_OK) return -1;     // the HDR path is not optional
     GhostProbe_Init(g_rhi, g_probe);                          // not fatal: without it reflection captures stay unavailable
+    GhostWorld_Load(g_world);                                 // view distance + streaming settings from the last session
+    GhostShafts_Init(g_rhi, g_shafts);                        // not fatal: without it shafts stay off
+    GhostProf_Init(g_rhi, g_prof);                            // not fatal: no overlay timings without it
     GhostAudio_Init();                            // not fatal: with no sound device every audio call does nothing
     if (GhostAudioBank_Count() == 0) GhostAudioBank_Load(g_projectRoot);
     // ---- Built-in textures: id 0 = white (untextured draws), id 1 = checkerboard (UV debugging) ----
@@ -647,7 +676,7 @@ static void BuildSceneCB(const GhostScene& s, GhostSceneCB& out, float timeSec)
         g.dirType[0] = fwd.x; g.dirType[1] = fwd.y; g.dirType[2] = fwd.z;
         g.dirType[3] = (float)(int)l.type;
         g.colorIntensity[0] = l.color[0]; g.colorIntensity[1] = l.color[1];
-        g.colorIntensity[2] = l.color[2]; g.colorIntensity[3] = inten;
+        g.colorIntensity[2] = l.color[2]; g.colorIntensity[3] = l.intensity * l.celestialFade;
         g.rectRight[0] = right.x; g.rectRight[1] = right.y; g.rectRight[2] = right.z;
         g.rectRight[3] = l.width * 0.5f;
         g.rectUp[0] = up.x; g.rectUp[1] = up.y; g.rectUp[2] = up.z;
@@ -1161,7 +1190,7 @@ int GhostEngine_AddTileMap(int sx, int sy)
     if (!CanAddObject(GHOST_MESH_PLANE)) return 0;
     int have = 0;
     for (const GhostObject& x : g_scene.objects) if (x.tileMap.enabled) have++;
-    if (have >= (int)GHOST_MAX_TILEMAPS) return 0;
+    if (have >= kMaxTileMapObjects) return 0;
 
     GhostObject* o = GhostScene_AddObject(g_scene, GHOST_MESH_PLANE);       // the plane only supplies 1 material slot; the real mesh is generated
     if (!o) return 0;
@@ -1292,7 +1321,7 @@ int GhostEngine_GetLight(int id, GhostLightInfo* out)
                 l.color[0], l.color[1], l.color[2],
                 l.intensity, l.range, l.width, l.height,
                 l.innerDeg, l.outerDeg, l.shadowObjects ? 1 : 0, l.shadowLandscape ? 1 : 0,
-                l.spinYaw, l.spinPitch, l.volumetric };
+                l.spinYaw, l.spinPitch, l.volumetric, l.celestial };
             return 1;
         }
     return 0;
@@ -1319,6 +1348,7 @@ void GhostEngine_SetLight(const GhostLightInfo* in)
             l.spinYaw = cf(in->spinYaw, -720.0f, 720.0f);
             l.spinPitch = cf(in->spinPitch, -720.0f, 720.0f);
             l.volumetric = cf(in->volumetric, 0.0f, 5.0f);
+            l.celestial = (in->celestial < 0 || l.type != GhostLightType::Directional) ? 0 : (in->celestial > 2 ? 2 : in->celestial);
             return;                                    // type is fixed at creation
         }
 }
@@ -1431,6 +1461,15 @@ static bool ShadowEligible(const GhostObject& o, const GhostLight& l)
     return l.shadowObjects && normal;
 }
 
+// Does this model have a masked material with a texture (leaf cards, fences, grates)?
+static bool HasMaskedFace(const GhostObject& o)
+{
+    const int n = GhostMesh_FaceCount(o.meshId);
+    for (int f = 0; f < n; f++)
+        if (o.faces[f].alphaMode == 1 && o.faces[f].textureId > 0) return true;
+    return false;
+}
+
 static void RenderShadowPass(GhostSceneCB& cb, const GhostVec3& eye, const GhostVec3& forward, unsigned int rw, unsigned int rh)
 {
     for (unsigned int i = 0; i < GHOST_MAX_LIGHTS; i++) cb.lights[i].shadow[0] = -1.0f;   // "no shadow" by default
@@ -1445,7 +1484,7 @@ static void RenderShadowPass(GhostSceneCB& cb, const GhostVec3& eye, const Ghost
     const bool playing = g_playState != GhostPlayState::Editing;
 
     // ---- casters: written once into the shadow constant buffer, reused by every slice ----
-    struct Caster { const GhostObject* o; unsigned int slot; unsigned int tex; };
+    struct Caster { const GhostObject* o; unsigned int slot, tex, first, count; };
     static std::vector<Caster> casters;
     casters.clear();
 
@@ -1464,11 +1503,47 @@ static void RenderShadowPass(GhostSceneCB& cb, const GhostVec3& eye, const Ghost
         bmin.y = fminf(bmin.y, o.position.y - r); bmax.y = fmaxf(bmax.y, o.position.y + r);
         bmin.z = fminf(bmin.z, o.position.z - r); bmax.z = fmaxf(bmax.z, o.position.z + r);
 
-        if ((o.shadowMode == 0 && !o.tileMap.enabled) || slot >= GHOST_MAX_SHADOW_CASTERS) continue;
+        if ((o.shadowMode == 0 && !o.tileMap.enabled) || slot >= GHOST_SHADOW_CB_SLOTS) continue;
 
         GhostObjectCB c = {};
         float byw;
         c.model = GhostObjectModel(o, BillYaw(o, eye, byw));
+
+        if (!o.tileMap.enabled && o.meshId != GHOST_MESH_QUAD && HasMaskedFace(o))
+        {
+            // masked materials: one draw per run of faces that share a material, so each run punches its own holes
+            const int faceCount = GhostMesh_FaceCount(o.meshId);
+            int f = 0;
+            while (f < faceCount && slot < GHOST_SHADOW_CB_SLOTS)
+            {
+                int g = f + 1;
+                while (g < faceCount && GhostMaterial_Equal(o.faces[g], o.faces[f])) g++;
+
+                const GhostMaterial& m = o.faces[f];
+                const FaceSpan a = FaceSpanOf(o, f), b = FaceSpanOf(o, g - 1);
+                const unsigned int runCount = b.first + b.count - a.first;
+                if (runCount > 0)
+                {
+                    GhostObjectCB cc = c;
+                    unsigned int tex = 0;
+                    if (m.alphaMode == 1 && m.textureId > 0 && m.textureId < (int)g_scene.textures.size())
+                    {
+                        cc.pad[1] = 8.0f;                                   // shader flag: masked material
+                        cc.uvParams[0] = m.tiling[0]; cc.uvParams[1] = m.tiling[1];
+                        cc.uvParams[2] = m.offset[0]; cc.uvParams[3] = m.offset[1];
+                        cc.alphaP[1] = (float)m.alphaSource;
+                        cc.alphaP[2] = m.alphaCutoff;
+                        tex = (unsigned int)m.textureId;
+                    }
+                    GhostUpdateShadowCB(g_pipeline, slot, &cc);
+                    casters.push_back({ &o, slot, tex, a.first, runCount });
+                    slot++;
+                }
+                f = g;
+            }
+            continue;
+        }
+
         unsigned int texIdx = 0;
         if (o.meshId == GHOST_MESH_QUAD)                                        // sprite: alpha-tested, same frame as the main pass
         {
@@ -1484,7 +1559,7 @@ static void RenderShadowPass(GhostSceneCB& cb, const GhostVec3& eye, const Ghost
             texIdx = (unsigned int)(tex > 0 ? tex : 0);
         }
         GhostUpdateShadowCB(g_pipeline, slot, &c);
-        casters.push_back({ &o, slot, texIdx });
+        casters.push_back({ &o, slot, texIdx, 0, 0 });
         slot++;
     }
     if (casters.empty()) return;
@@ -1519,7 +1594,7 @@ static void RenderShadowPass(GhostSceneCB& cb, const GhostVec3& eye, const Ghost
     for (size_t li = 0; li < g_scene.lights.size() && li < cb.lightCount; li++)
     {
         const GhostLight& l = g_scene.lights[li];
-        if (!l.castShadows) continue;
+        if (!l.castShadows || l.celestialFade <= 0.002f) continue;
 
         bool has = false;
         for (const Caster& c : casters) if (ShadowEligible(*c.o, l)) { has = true; break; }
@@ -1580,13 +1655,13 @@ static void RenderShadowPass(GhostSceneCB& cb, const GhostVec3& eye, const Ghost
     if (jobs.empty()) return;
 
     cb.shadowGlobal[0] = g_scene.shadowStrength;
-
+    cb.shadowGlobal[2] = fit ? R * kShadowFilterLodFrac : 0.0f;
     GhostShadowBegin(g_rhi, g_pipeline);
     for (const Job& j : jobs)
     {
         GhostShadowSlice(g_rhi, g_pipeline, j.slice, j.vp, j.posFar, j.mode);
         for (const Caster& c : casters)
-            if (ShadowEligible(*c.o, *j.light)) GhostShadowDraw(g_rhi, g_pipeline, DrawMeshOf(*c.o), c.slot, c.tex);
+            if (ShadowEligible(*c.o, *j.light)) GhostShadowDraw(g_rhi, g_pipeline, DrawMeshOf(*c.o), c.slot, c.tex, c.first, c.count);
     }
     GhostShadowEnd(g_rhi, g_pipeline, rw, rh);
 }
@@ -2412,6 +2487,28 @@ static void OverlayParticle(const GhostParticleParams& p)
     const GhostVec3 dir = ax[0] * ((p.velMinX + p.velMaxX) * 0.5f) + ax[1] * ((p.velMinY + p.velMaxY) * 0.5f) + ax[2] * ((p.velMinZ + p.velMaxZ) * 0.5f);
     if (dir.Length() > 1e-3f) g_ov.Arrow(c, c + dir.Normalize(), col, 2.0f, 12.0f, false);
 }
+// Debug: every landscape cell's box. Green = drawn, amber = resident but out of view, red = wanted but waiting, grey = not streamed in
+static void OverlayLandscapeCells()
+{
+    static const int E[12][2] = { { 0,1 },{ 2,3 },{ 4,5 },{ 6,7 },{ 0,2 },{ 1,3 },{ 4,6 },{ 5,7 },{ 0,4 },{ 1,5 },{ 2,6 },{ 3,7 } };
+    for (const GhostObject& o : g_scene.objects)
+    {
+        if (!o.tileMap.enabled) continue;
+        auto it = g_tileInst.find(o.id);
+        const int state = it == g_tileInst.end() ? 0 : it->second.state;
+        const bool drawn = it != g_tileInst.end() && it->second.visFrame == g_frameNo;
+        float col[4] = { 0.55f, 0.55f, 0.60f, 0.55f };
+        if (state == 2) { col[0] = 1.0f; col[1] = 0.30f; col[2] = 0.30f; col[3] = 0.9f; }
+        else if (state == 1) { if (drawn) { col[0] = 0.35f; col[1] = 0.95f; col[2] = 0.45f; } else { col[0] = 1.0f; col[1] = 0.78f; col[2] = 0.25f; } col[3] = 0.9f; }
+        GhostVec3 mn, mx;
+        GhostTileMap_Box(o.tileMap, mn, mx);
+        const GhostMat4 M = GhostObjectModel(o);
+        GhostVec3 c[8];
+        for (int i = 0; i < 8; i++)
+            c[i] = XformPoint(M, GhostVec3((i & 1) ? mx.x : mn.x, (i & 2) ? mx.y : mn.y, (i & 4) ? mx.z : mn.z), 1.0f);
+        for (int e = 0; e < 12; e++) g_ov.Line(c[E[e][0]], c[E[e][1]], col, 2.0f, false);
+    }
+}
 
 
 static void DrawViewportOverlay(const GhostMat4& view, const GhostMat4& proj, const GhostVec3& eye,
@@ -2476,6 +2573,8 @@ static void DrawViewportOverlay(const GhostMat4& view, const GhostMat4& proj, co
 
         }
     }
+    if (g_world.showCells) OverlayLandscapeCells();
+
     // This May Be incorrect Order
     if (editing && g_faceMode)
     {
@@ -2512,6 +2611,25 @@ static void DrawViewportOverlay(const GhostMat4& view, const GhostMat4& proj, co
         const float col[4] = { g_fps >= 55.0f ? 0.45f : 1.0f, g_fps >= 30.0f ? 0.95f : 0.35f, 0.35f, 1.0f };
         const float tw = GhostText_Measure(g_font, 18.0f, t);
         g_ov.TextPx((float)rw - tw - 14.0f, 46.0f, 18.0f, t, col);
+        if (g_wstats.cells > 0)
+        {
+            const float wc[4] = { 0.75f, 1.0f, 0.80f, 1.0f };
+            char w[200];
+            snprintf(w, sizeof w, "land: %d cells  %d/%d resident  %d drawn  %dk tris  load %.1f ms%s",
+                g_wstats.cells, g_wstats.resident, (int)GHOST_MAX_TILEMAPS, g_wstats.cellsDrawn, g_wstats.trisDrawn / 1000,
+                g_wstats.lastLoadMs, g_wstats.starved > 0 ? "  SLOTS FULL" : "");
+            g_ov.TextPx((float)rw - GhostText_Measure(g_font, 16.0f, w) - 14.0f, 108.0f, 16.0f, w, wc);
+        }
+        if (g_prof.valid)
+        {
+            const float gc[4] = { 0.80f, 0.90f, 1.0f, 1.0f };
+            char a[96], b[160];
+            snprintf(a, sizeof a, "GPU %.1f ms   CPU record %.1f ms", g_prof.total, g_prof.cpuMs);
+            snprintf(b, sizeof b, "clr %.1f  shadow %.1f  scene %.1f  msaa %.1f  fx %.1f  tonemap %.1f  ui %.1f",
+                g_prof.seg[1], g_prof.seg[2], g_prof.seg[3], g_prof.seg[4], g_prof.seg[5], g_prof.seg[6], g_prof.seg[7]);
+            g_ov.TextPx((float)rw - GhostText_Measure(g_font, 16.0f, a) - 14.0f, 68.0f, 16.0f, a, gc);
+            g_ov.TextPx((float)rw - GhostText_Measure(g_font, 16.0f, b) - 14.0f, 88.0f, 16.0f, b, gc);
+        }
     }
 
     GhostOverlayBegin(g_pipeline);
@@ -2579,6 +2697,122 @@ static void BuildPreviewSceneCB(GhostSceneCB& out)
     out.shadowGlobal[0] = 0.0f;
 }
 
+// ============================================================
+//  World partition: frustum culling + terrain bands + LOD
+// ============================================================
+struct TileRun { unsigned int first, count; };
+
+// World-space AABB of a cell (its local box, through the object transform)
+static void TileWorldBox(const GhostObject& o, GhostVec3& wmin, GhostVec3& wmax)
+{
+    GhostVec3 mn, mx;
+    GhostTileMap_Box(o.tileMap, mn, mx);
+    const GhostMat4 M = GhostObjectModel(o);
+    wmin = { 1e30f, 1e30f, 1e30f };
+    wmax = { -1e30f, -1e30f, -1e30f };
+    for (int i = 0; i < 8; i++)
+    {
+        const GhostVec3 c = XformPoint(M, GhostVec3((i & 1) ? mx.x : mn.x, (i & 2) ? mx.y : mn.y, (i & 4) ? mx.z : mn.z), 1.0f);
+        wmin.x = fminf(wmin.x, c.x); wmin.y = fminf(wmin.y, c.y); wmin.z = fminf(wmin.z, c.z);
+        wmax.x = fmaxf(wmax.x, c.x); wmax.y = fmaxf(wmax.y, c.y); wmax.z = fmaxf(wmax.z, c.z);
+    }
+}
+
+// Floor maps are measured on the ground plane (flying high must not unload the ground), wall maps in 3D
+static float TileBoxDistance(const GhostObject& o, const GhostVec3& wmin, const GhostVec3& wmax, const GhostVec3& p)
+{
+    const float dx = fmaxf(fmaxf(wmin.x - p.x, p.x - wmax.x), 0.0f);
+    const float dz = fmaxf(fmaxf(wmin.z - p.z, p.z - wmax.z), 0.0f);
+    const float dy = (o.tileMap.direction == 1) ? 0.0f : fmaxf(fmaxf(wmin.y - p.y, p.y - wmax.y), 0.0f);
+    return sqrtf(dx * dx + dy * dy + dz * dz);
+}
+
+// Which index ranges of a cell's mesh to draw: visible bands of the chosen LOD, merged into runs, plus the skirt.
+// false = the whole cell is out of view.
+static bool TileBuildRuns(const GhostObject& o, TileInst& T, const GhostVec3& eye, const GhostFrustum& fr,
+    bool doCull, std::vector<TileRun>& runs)
+{
+    runs.clear();
+    if (T.nx <= 0 || T.ny <= 0 || T.bandCount <= 0 || (int)T.bandMin.size() != T.bandCount) return false;
+
+    GhostVec3 wmin, wmax;
+    TileWorldBox(o, wmin, wmax);
+
+    // LOD with hysteresis (no flicker at the threshold)
+    int lod = 0;
+    if (g_world.lod)
+    {
+        const float dist = TileBoxDistance(o, wmin, wmax, eye);
+        const float thr[3] = { 0.0f, g_world.lodDist1, g_world.lodDist2 };
+        int cur = T.lodCur < 0 ? 0 : (T.lodCur > T.maxLod ? T.maxLod : T.lodCur);
+        while (cur < T.maxLod && dist > thr[cur + 1] * 1.04f) cur++;
+        while (cur > 0 && dist < thr[cur] * 0.96f) cur--;
+        T.lodCur = cur;
+        lod = cur;
+    }
+    else T.lodCur = 0;
+
+    GhostVec3 U, V, N;
+    TileAxes(o.tileMap.direction, U, V, N);
+    const GhostMat4 M = GhostObjectModel(o);
+    const float uA = T.u0, uB = T.u0 + (float)T.nx * T.cell;
+    const int   B = T.bandRows, s = 1 << lod;
+    bool any = false;
+    unsigned int idxCount = 0;
+
+    for (int b = 0; b < T.bandCount; b++)
+    {
+        const int r0 = b * B, r1 = (r0 + B < T.ny) ? r0 + B : T.ny;
+        bool vis = true;
+        if (doCull)
+        {
+            const float vA = T.v0 + (float)r0 * T.cell, vB = T.v0 + (float)r1 * T.cell;
+            GhostVec3 c[8];
+            for (int i = 0; i < 8; i++)
+            {
+                const float pu = (i & 1) ? uB : uA, pv = (i & 2) ? vB : vA, h = (i & 4) ? T.bandMax[b] : T.bandMin[b];
+                c[i] = XformPoint(M, U * pu + V * pv + N * h, 1.0f);
+            }
+            vis = GhostFrustum_Box8(fr, c, 2.0f);
+        }
+        if (!vis) { g_wstats.bandsCulled++; continue; }
+        g_wstats.bandsDrawn++;
+        any = true;
+
+        const unsigned int first = T.lodFirst[lod] + (unsigned int)(r0 / s) * (unsigned int)(T.nx / s) * 6u;
+        const unsigned int count = (unsigned int)((r1 - r0) / s) * (unsigned int)(T.nx / s) * 6u;
+        if (count == 0) continue;
+        if (!runs.empty() && runs.back().first + runs.back().count == first) runs.back().count += count;
+        else runs.push_back({ first, count });
+        idxCount += count;
+    }
+    if (!any) return false;
+    if (T.skirtCount[lod] > 0) { runs.push_back({ T.skirtFirst[lod], T.skirtCount[lod] }); idxCount += T.skirtCount[lod]; }
+    g_wstats.trisDrawn += (int)(idxCount / 3u);
+    return !runs.empty();
+}
+
+// Bounding sphere around the pivot (rotation-proof) with room for wind / displacement and animated models
+static bool ObjectVisible(const GhostObject& o, const GhostFrustum& fr)
+{
+    const GhostVec3 mn = GhostObject_Min(o), mx = GhostObject_Max(o);
+    const float ex = fmaxf(fabsf(mn.x), fabsf(mx.x)) * fabsf(o.scale.x);
+    const float ey = fmaxf(fabsf(mn.y), fabsf(mx.y)) * fabsf(o.scale.y);
+    const float ez = fmaxf(fabsf(mn.z), fabsf(mx.z)) * fabsf(o.scale.z);
+    float r = sqrtf(ex * ex + ey * ey + ez * ez);
+    float infl = 0.0f;
+    const int n = GhostObject_FaceCount(o);
+    for (int f = 0; f < n && f < GHOST_MAX_FACES; f++)
+    {
+        const GhostMaterial& m = o.faces[f];
+        float w = fabsf(m.wpoSway) * 1.5f;
+        if (m.maps[GHOST_MAP_WPO].textureId > 0) w += fabsf(m.maps[GHOST_MAP_WPO].amount);
+        infl = fmaxf(infl, w);
+    }
+    r = r * 1.25f + infl + 0.5f;
+    return GhostFrustum_Sphere(fr, o.position, r);
+}
+
 
 
 // The sky and every object, drawn with the given camera into whatever target is currently set.
@@ -2608,26 +2842,36 @@ static void DrawSceneColor(const GhostMat4& view, const GhostMat4& proj, const G
     }
 
     if (!drawObjects) return;
-
+    GhostFrustum fr;
+    GhostFrustum_FromVP(fr, proj * view);
+    const bool cullOn = g_world.cull != 0 && !preview;
     g_translucent.clear();
     for (const GhostObject& o : g_scene.objects)
     {
         if (preview && o.id != soloId) continue;
         if (!o.visible && g_playState != GhostPlayState::Editing) continue;   // hidden in game
-
+        if (cullOn && !o.tileMap.enabled && !ObjectVisible(o, fr)) { g_wstats.objectsCulled++; continue; }
         const int       faceCount = GhostObject_DrawFaces(o);
         const GhostMat4 model = GhostObjectModel(o);
         const bool      selected = overlays && IsSelected(o.id);
         const int       hl = (selected && o.id == g_scene.selectedId && !o.tileMap.enabled) ? CurrentFace() : -1;
-        if (o.tileMap.enabled)                                 // Tile Map: one pass per material layer, weighted by the weight maps
+        if (o.tileMap.enabled)                                 // Tile Map = one streamed landscape cell
         {
             auto ti = g_tileInst.find(o.id);
-            if (ti == g_tileInst.end() || ti->second.slot < 0) continue;
-            const TileInst& T = ti->second;
+            if (ti == g_tileInst.end() || ti->second.slot < 0) continue;     // not streamed in
+            TileInst& T = ti->second;
+
+            static std::vector<TileRun> runs;
+            if (!TileBuildRuns(o, T, eye, fr, cullOn, runs)) continue;       // the whole cell is out of view
+            T.visFrame = g_frameNo;
+            g_wstats.cellsDrawn++;
+
             const int layers = o.tileMap.layerCount > 0 ? o.tileMap.layerCount : 1;
-            const int passes = (layers > 1 && T.splatA <= 0) ? 1 : layers;      // no weight map (yet): layer 0 only
+            const int passes = (layers > 1 && T.splatA <= 0) ? 1 : layers;   // no weight map (yet): layer 0 only
+            const int meshSlot = DrawMeshOf(o);
             for (int L = 0; L < passes && slot < MAX_SCENE_OBJECTS; L++)
             {
+                if (L > 0 && L < 32 && (T.usedMask & (1u << L)) == 0) continue;   // nothing painted on this layer
                 const GhostMaterial& m = o.faces[L];
                 GhostObjectCB cb = {};
                 cb.model = model;
@@ -2653,11 +2897,13 @@ static void DrawSceneColor(const GhostMat4& view, const GhostMat4& proj, const G
                 cb.tileP[6] = (o.tileMap.layerCount == 0) ? 1.0f : 0.0f;
                 if (layers > 1 && T.splatA > 0) { cb.tileP[0] = (float)T.splatA; cb.tileP[1] = (float)T.splatB; cb.tileP[2] = (float)L; }
                 GhostUpdateObjectCB(g_pipeline, slot, &cb);
-                GhostDrawMesh(g_rhi, g_pipeline, DrawMeshOf(o), slot, (unsigned int)m.textureId, 0, 0, false, L > 0);
+                for (const TileRun& r : runs)                                   // one constant buffer slot, several index ranges
+                    GhostDrawMesh(g_rhi, g_pipeline, meshSlot, slot, (unsigned int)m.textureId, r.first, r.count, false, L > 0);
                 slot++;
             }
             continue;
         }
+
         if (o.meshId == GHOST_MESH_QUAD)                       // sprite actor: one billboard quad
         {
             if (slot >= MAX_SCENE_OBJECTS) continue;
@@ -2952,7 +3198,7 @@ static void FillFogCB(GhostSceneCB& cb, const GhostVec3& eye, const GhostVec3& f
     for (size_t i = 0; i < g_scene.lights.size() && i < cb.lightCount; i++)
     {
         float k = 0.0f;
-        if (f.volLight && volLights < 4 && g_scene.lights[i].volumetric > 0.001f) { k = g_scene.lights[i].volumetric * f.volIntensity; volLights++; }
+        if (f.volLight && volLights < 4 && g_scene.lights[i].volumetric > 0.001f && g_scene.lights[i].celestialFade > 0.002f) { k = g_scene.lights[i].volumetric * f.volIntensity; volLights++; }
         cb.lights[i].shadow[3] = k;
     }
 
@@ -2994,6 +3240,41 @@ static void FillSsrCB(GhostSceneCB& cb, int vp)
     cb.ssrD[0] = pp[4]; cb.ssrD[1] = pp[5]; cb.ssrD[2] = pp[6]; cb.ssrD[3] = pp[7];
     for (int r = 0; r < 3; r++) for (int c = 0; c < 4; c++) cb.ssrView[r][c] = pv[r * 4 + c];
 }
+
+// ============================================================
+//  Light shafts: one job per Directional Light with God Rays Strength > 0
+// ============================================================
+static int BuildShaftJobs(const GhostMat4& view, const GhostMat4& proj, GhostShaftJob* out)
+{
+    const GhostPostSettings& s = g_scene.post;
+    int n = 0;
+    for (const GhostLight& l : g_scene.lights)
+    {
+        if (n >= (int)GHOST_MAX_SHAFT_LIGHTS) break;
+        if (l.type != GhostLightType::Directional || l.volumetric <= 0.001f || l.celestialFade <= 0.002f) continue;
+
+        const GhostVec3 toLight = LightForward(l).Normalize() * -1.0f;      // the light travels along its forward, the sun is the other way
+        const GhostVec3 v = XformPoint(view, toLight, 0.0f);                // direction in view space
+        if (v.z < 0.05f) continue;                                          // sun is behind the camera
+        const float u = (proj.m[0][0] * v.x / v.z) * 0.5f + 0.5f;
+        const float w = 0.5f - (proj.m[1][1] * v.y / v.z) * 0.5f;
+
+        const float ox = fmaxf(fabsf(u - 0.5f) - 0.5f, 0.0f), oy = fmaxf(fabsf(w - 0.5f) - 0.5f, 0.0f);
+        const float edge = 1.0f - fminf(fmaxf(ox, oy) / 0.75f, 1.0f);       // fade out as the sun leaves the screen
+        const float k = s.shaftIntensity * l.volumetric * l.celestialFade * edge;
+        if (k <= 0.002f) continue;
+
+        GhostShaftJob& j = out[n++];
+        j.sunU = u; j.sunV = w;
+        j.color[0] = l.color[0] * k; j.color[1] = l.color[1] * k; j.color[2] = l.color[2] * k;
+        j.length = s.shaftLength;       j.decay = s.shaftDecay;
+        j.darkness = s.shaftDarkness;   j.depthRange = s.shaftDepthRange;
+        j.threshold = s.shaftThreshold; j.maxBright = s.shaftMaxBright;
+        j.occlusion = s.shaftOcclusion; j.steps = s.shaftSteps;
+    }
+    return n;
+}
+
 
 // ============================================================
 //  One viewport = one surface + one camera. The GPU is idle between viewports
@@ -3065,7 +3346,7 @@ static void RenderViewport(int vp)
     GhostVec3 worldUp = { 0.0f, 1.0f, 0.0f };
     GhostVec3 right = worldUp.Cross(forward).Normalize();
     GhostMat4 view = GhostMat4::LookAtLH(eye, eye + forward, worldUp);
-    const GhostMat4 projClean = GhostMat4::PerspectiveFovLH(cam->fovDeg * d2r, (float)rw / (float)rh, 0.1f, 100.0f);
+    const GhostMat4 projClean = GhostMat4::PerspectiveFovLH(cam->fovDeg * d2r, (float)rw / (float)rh, g_world.nearPlane, g_world.farPlane);
     GhostMat4 proj = projClean;                       // what gets drawn with: jittered while TAA is on
     if (taa)
     {
@@ -3099,6 +3380,8 @@ static void RenderViewport(int vp)
     {
         g_rhi->BeginFrame(&clr, dsv);
     }
+    GhostProf_Begin(g_prof, mainView && !preview);
+    GhostProf_Mark(g_rhi, g_prof, GP_BEGIN);
 
     // The scene itself draws into an HDR target: multisampled, TAA, or the plain 1x one
     if (msaa)      GhostMSAA_Begin(g_rhi, g_pipeline, g_msaa, vp, &clr, rw, rh);
@@ -3113,7 +3396,9 @@ static void RenderViewport(int vp)
         FillProbeCB(sceneCB);
         FillFogCB(sceneCB, eye, forward, right, proj, rw, rh, taa);
         FillSsrCB(sceneCB, vp);
+        GhostProf_Mark(g_rhi, g_prof, GP_PRESHADOW);
         RenderShadowPass(sceneCB, eye, forward, rw, rh);
+        GhostProf_Mark(g_rhi, g_prof, GP_SHADOW);
     }
     GhostUpdateSceneCB(g_pipeline, &sceneCB);
 
@@ -3151,25 +3436,47 @@ DrawSceneColor(view, proj, eye, true, overlays, preview, preview ? g_vp[vp].solo
             slot++;
         }
     }
+    GhostProf_Mark(g_rhi, g_prof, GP_SCENE);
+    if (!msaa) GhostProf_Mark(g_rhi, g_prof, GP_RESOLVE);
 
     // ---- End of the HDR scene: bring it down to the 1x HDR target ----
     {
         ID3D12Resource* hdrRes = GhostPost_Resource(g_post, vp);
         const bool fogOn = !preview && g_pipeline->fogPso && FogActive();
         const bool aoOn = !preview && g_post.ssaoReady && g_scene.post.ssaoEnabled;
+        const bool giOn = !preview && g_post.ssgiReady && g_scene.post.ssgiEnabled;
         const float proj6[6] = { proj.m[0][0], proj.m[1][1], proj.m[0][2], proj.m[1][2], proj.m[2][2], proj.m[2][3] };   // the matrix the scene was drawn with (jittered under TAA)
         const float aoNoise = taa ? (float)(g_frameNo % 64u) * 5.588238f : 0.0f;
+        const float giNoise = (float)(g_frameNo % 64u) * 5.588238f;                // GI noise changes every frame in every AA mode: the temporal pass averages it
+
+        GhostSsgiFrame gf = {};
+        {
+            const GhostVec3 camUp2 = forward.Cross(right);
+            gf.eye[0] = eye.x;       gf.eye[1] = eye.y;       gf.eye[2] = eye.z;
+            gf.right[0] = right.x;   gf.right[1] = right.y;   gf.right[2] = right.z;
+            gf.up[0] = camUp2.x;     gf.up[1] = camUp2.y;     gf.up[2] = camUp2.z;
+            gf.fwd[0] = forward.x;   gf.fwd[1] = forward.y;   gf.fwd[2] = forward.z;
+            const GhostMat4 giVP = projClean * view;
+            memcpy(gf.vp, giVP.m, 16 * sizeof(float));
+        }
+        GhostShaftJob shaftJobs[GHOST_MAX_SHAFT_LIGHTS];
+        const int  shaftN = (!preview && g_shafts.ready && g_scene.post.shaftEnabled) ? BuildShaftJobs(view, projClean, shaftJobs) : 0;
+        const bool shaftOn = shaftN > 0;
 
         if (msaa)
         {
             GhostMSAA_End(g_rhi, g_pipeline, g_msaa, vp, hdrRes);                  // colour -> 1x HDR (rests in PIXEL_SHADER_RESOURCE)
             GhostMSAA_ResolveDepth(g_rhi, g_pipeline, g_msaa, vp, rw, rh);         // nearest depth sample -> the 1x depth buffer
-            if (aoOn || fogOn)
+            GhostProf_Mark(g_rhi, g_prof, GP_RESOLVE);
+            if (aoOn || giOn || fogOn || shaftOn)
             {
                 ID3D12Resource* dep = g_pipeline->depthBuffers[vp].Get();
                 GhostPost_ToRT(g_rhi, g_post, vp);
-                if (aoOn) GhostPost_SSAO(g_rhi, g_post, vp, hdrRes, GhostPost_RTV(g_post, vp), dep, rw, rh, g_scene.post, proj6, aoNoise);
+                if (aoOn)  GhostPost_SSAO(g_rhi, g_post, vp, hdrRes, GhostPost_RTV(g_post, vp), dep, rw, rh, g_scene.post, proj6, aoNoise);
+                if (giOn)  GhostPost_SSGI(g_rhi, g_post, vp, hdrRes, GhostPost_RTV(g_post, vp), dep, rw, rh, g_scene.post, proj6, gf, giNoise);
                 if (fogOn) GhostPost_Fog(g_rhi, g_pipeline, g_post, vp, hdrRes, GhostPost_RTV(g_post, vp), dep, rw, rh);
+                if (shaftOn) GhostShafts_Draw(g_rhi, g_shafts, vp, hdrRes, GhostPost_RTV(g_post, vp), dep,
+                    rw, rh, proj.m[2][2], proj.m[2][3], aoNoise, shaftJobs, shaftN);
                 GhostPost_ToSRV(g_rhi, g_post, vp);
             }
         }
@@ -3178,10 +3485,15 @@ DrawSceneColor(view, proj, eye, true, overlays, preview, preview ? g_vp[vp].solo
             if (aoOn)                                                              // on the jittered image: the TAA resolve averages the sampling noise
                 GhostPost_SSAO(g_rhi, g_post, vp, g_taa.scene[vp].Get(), GhostTAA_SceneRTV(g_taa, vp),
                     g_taa.depth[vp].Get(), rw, rh, g_scene.post, proj6, aoNoise);
+            if (giOn)
+                GhostPost_SSGI(g_rhi, g_post, vp, g_taa.scene[vp].Get(), GhostTAA_SceneRTV(g_taa, vp),
+                    g_taa.depth[vp].Get(), rw, rh, g_scene.post, proj6, gf, giNoise);
             if (fogOn)
                 GhostPost_Fog(g_rhi, g_pipeline, g_post, vp, g_taa.scene[vp].Get(), GhostTAA_SceneRTV(g_taa, vp),
                     g_taa.depth[vp].Get(), rw, rh);
-
+            if(shaftOn)
+                GhostShafts_Draw(g_rhi, g_shafts, vp, g_taa.scene[vp].Get(), GhostTAA_SceneRTV(g_taa, vp),
+                    g_taa.depth[vp].Get(), rw, rh, proj.m[2][2], proj.m[2][3], aoNoise, shaftJobs, shaftN);
             GhostTAAFrame tf = {};
             const GhostVec3 camUp = forward.Cross(right);
             tf.eye[0] = eye.x;      tf.eye[1] = eye.y;      tf.eye[2] = eye.z;
@@ -3200,11 +3512,16 @@ DrawSceneColor(view, proj, eye, true, overlays, preview, preview ? g_vp[vp].solo
         else
         {
             ID3D12Resource* dep = g_pipeline->depthBuffers[vp].Get();              // the HDR target is still in RENDER_TARGET state here
-            if (aoOn) GhostPost_SSAO(g_rhi, g_post, vp, hdrRes, GhostPost_RTV(g_post, vp), dep, rw, rh, g_scene.post, proj6, aoNoise);
+            if (aoOn)  GhostPost_SSAO(g_rhi, g_post, vp, hdrRes, GhostPost_RTV(g_post, vp), dep, rw, rh, g_scene.post, proj6, aoNoise);
+            if (giOn)  GhostPost_SSGI(g_rhi, g_post, vp, hdrRes, GhostPost_RTV(g_post, vp), dep, rw, rh, g_scene.post, proj6, gf, giNoise);
             if (fogOn) GhostPost_Fog(g_rhi, g_pipeline, g_post, vp, hdrRes, GhostPost_RTV(g_post, vp), dep, rw, rh);
+            if (shaftOn) GhostShafts_Draw(g_rhi, g_shafts, vp, hdrRes, GhostPost_RTV(g_post, vp), dep,
+                rw, rh, proj.m[2][2], proj.m[2][3], aoNoise, shaftJobs, shaftN);
             GhostPost_EndScene(g_rhi, g_pipeline, g_post, vp);
         }
+     
 
+        GhostProf_Mark(g_rhi, g_prof, GP_POSTFX);
         if (ssrWant)                                                       // this finished frame becomes next frame's reflection source
         {
             const float v12[12] = { view.m[0][0], view.m[0][1], view.m[0][2], view.m[0][3],
@@ -3227,7 +3544,7 @@ DrawSceneColor(view, proj, eye, true, overlays, preview, preview ? g_vp[vp].solo
         }
         else destRTV = g_rhi->GetRTV();
         GhostPost_Tonemap(g_rhi, g_post, vp, destRTV, rw, rh, postCfg);
-
+        GhostProf_Mark(g_rhi, g_prof, GP_TONEMAP);
         // Everything below draws display-space colors on the destination: icons, overlays, game UI.
         // Depth-tested overlays use the depth the scene was drawn with (TAA has its own; with MSAA there is none yet).
         if (taa) { g_pipeline->dsvOverride = GhostTAA_GetDSV(g_taa, vp); g_pipeline->dsvOverrideActive = true; }
@@ -3304,7 +3621,10 @@ DrawSceneColor(view, proj, eye, true, overlays, preview, preview ? g_vp[vp].solo
     g_pipeline->dsvOverrideActive = false;                      // never leak an override into the next viewport
     g_pipeline->rtvOverrideActive = false;
 
+    GhostProf_Mark(g_rhi, g_prof, GP_END);
+    GhostProf_Resolve(g_rhi, g_prof);
     g_rhi->EndFrame();
+    GhostProf_Collect(g_prof);
 }
 
 // ---- Orbit cameras ----
@@ -3503,9 +3823,53 @@ static void TileScales(const GhostObject& o, float& sU, float& sV, float& sN)
     if (sN < 1e-3f) sN = 1e-3f;
 }
 
-// One shared-vertex quad grid. UVs run in tile units, so every tile shows the whole texture (Mesh UV mapping) and the repeat wraps.
-static void BuildTileMesh(const GhostTileMap& t, std::vector<GhostVertex>& v, std::vector<unsigned int>& idx)
+// Height of a vertex that lies just outside this cell's grid, taken from the neighbouring cell. false = no neighbour there.
+static bool TileNeighborHeight(const GhostObject& self, int p, int q, float& hLocal)
 {
+    const GhostTileMap& t = self.tileMap;
+    if (t.direction != 1) return false;
+    if (self.scale.x <= 0.0f || self.scale.y <= 0.0f || self.scale.z <= 0.0f) return false;
+    if (fabsf(self.rotationDeg.x) > 0.01f || fabsf(self.rotationDeg.y) > 0.01f || fabsf(self.rotationDeg.z) > 0.01f) return false;
+
+    const int   sub = GhostTileMap_EffSub(t.gridX, t.gridY, t.subdiv);
+    const float cell = t.tileSize / (float)sub;
+    const float u0 = -0.5f * (float)t.gridX * t.tileSize, v0 = -0.5f * (float)t.gridY * t.tileSize;
+    const float wx = self.position.x + (u0 + (float)p * cell) * self.scale.x;
+    const float wz = self.position.z + (v0 + (float)q * cell) * self.scale.z;
+    const float cwx = cell * self.scale.x, cwz = cell * self.scale.z;
+
+    for (const GhostObject& n : g_scene.objects)
+    {
+        if (&n == &self || !n.tileMap.enabled) continue;
+        const GhostTileMap& nt = n.tileMap;
+        if (nt.direction != 1 || n.scale.x <= 0.0f || n.scale.y <= 0.0f || n.scale.z <= 0.0f) continue;
+        if (fabsf(n.rotationDeg.x) > 0.01f || fabsf(n.rotationDeg.y) > 0.01f || fabsf(n.rotationDeg.z) > 0.01f) continue;
+
+        const int   nsub = GhostTileMap_EffSub(nt.gridX, nt.gridY, nt.subdiv);
+        const float ncell = nt.tileSize / (float)nsub;
+        if (fabsf(ncell * n.scale.x - cwx) > 1e-3f * cwx || fabsf(ncell * n.scale.z - cwz) > 1e-3f * cwz) continue;   // different resolution
+        const int nvx = nt.gridX * nsub + 1, nvy = nt.gridY * nsub + 1;
+        if (nt.height.size() != (size_t)nvx * (size_t)nvy) continue;
+
+        const float nu0 = -0.5f * (float)nt.gridX * nt.tileSize, nv0 = -0.5f * (float)nt.gridY * nt.tileSize;
+        const float fu = ((wx - n.position.x) / n.scale.x - nu0) / ncell;
+        const float fv = ((wz - n.position.z) / n.scale.z - nv0) / ncell;
+        const int iu = (int)floorf(fu + 0.5f), iv = (int)floorf(fv + 0.5f);
+        if (fabsf(fu - (float)iu) > 0.02f || fabsf(fv - (float)iv) > 0.02f) continue;                                   // not on the same lattice
+        if (iu < 0 || iv < 0 || iu >= nvx || iv >= nvy) continue;
+
+        const float hw = n.position.y + nt.height[(size_t)iv * nvx + iu] * n.scale.y;
+        hLocal = (hw - self.position.y) / self.scale.y;
+        return true;
+    }
+    return false;
+}
+
+// Builds the cell mesh: shared vertices + skirt vertices; indices = LOD blocks (each: row bands, then the skirt).
+// Also fills the layout fields of ti.
+static void BuildTileMeshLod(const GhostObject& o, std::vector<GhostVertex>& v, std::vector<unsigned int>& idx, TileInst& ti)
+{
+    const GhostTileMap& t = o.tileMap;
     GhostVec3 U, V, N;
     TileAxes(t.direction, U, V, N);
     const int   sub = GhostTileMap_EffSub(t.gridX, t.gridY, t.subdiv);
@@ -3513,30 +3877,36 @@ static void BuildTileMesh(const GhostTileMap& t, std::vector<GhostVertex>& v, st
     const float cell = t.tileSize / (float)sub;
     const float u0 = -0.5f * (float)t.gridX * t.tileSize, v0 = -0.5f * (float)t.gridY * t.tileSize;
     const bool  haveH = t.height.size() == (size_t)vx * (size_t)vy;
-    auto H = [&](int p, int q) -> float
+
+    auto Hin = [&](int p, int q) -> float { return haveH ? t.height[(size_t)q * vx + p] : 0.0f; };
+    auto Hq = [&](int p, int q, float& h) -> bool          // inside = this cell, outside = the neighbouring cell (if any)
         {
-            p = p < 0 ? 0 : (p > vx - 1 ? vx - 1 : p);
-            q = q < 0 ? 0 : (q > vy - 1 ? vy - 1 : q);
-            return haveH ? t.height[(size_t)q * vx + p] : 0.0f;
+            if (p >= 0 && q >= 0 && p < vx && q < vy) { h = Hin(p, q); return true; }
+            return TileNeighborHeight(o, p, q, h);
         };
 
-    v.resize((size_t)vx * (size_t)vy);
+    const size_t mainCount = (size_t)vx * (size_t)vy;
+    const size_t skirtVerts = (size_t)(2 * (nx + 1) + 2 * (ny + 1));
+    v.resize(mainCount + skirtVerts);
+
+    float hMin = 1e30f, hMax = -1e30f;
     for (int q = 0; q < vy; q++)
         for (int p = 0; p < vx; p++)
         {
-            const int pa = p > 0 ? p - 1 : p, pb = p < vx - 1 ? p + 1 : p;
-            const int qa = q > 0 ? q - 1 : q, qb = q < vy - 1 ? q + 1 : q;
-            const float su = (H(pb, q) - H(pa, q)) / ((float)(pb - pa) * cell);      // slopes along the two axes
-            const float sv = (H(p, qb) - H(p, qa)) / ((float)(qb - qa) * cell);
-            GhostVec3 n = N - U * su - V * sv;                                       // normal of the surface u*U + v*V + h*N
-            n = n.Normalize();
-            const float h = H(p, q);
-            const float pu = u0 + (float)p * cell, pv = v0 + (float)q * cell;
+            const float hc = Hin(p, q);
+            float hl = 0, hr = 0, hd = 0, hu = 0;
+            const bool okL = Hq(p - 1, q, hl), okR = Hq(p + 1, q, hr), okD = Hq(p, q - 1, hd), okU = Hq(p, q + 1, hu);
+            float su = 0.0f, sv = 0.0f;                                                   // slopes along the two axes
+            if (okL && okR) su = (hr - hl) / (2.0f * cell); else if (okR) su = (hr - hc) / cell; else if (okL) su = (hc - hl) / cell;
+            if (okD && okU) sv = (hu - hd) / (2.0f * cell); else if (okU) sv = (hu - hc) / cell; else if (okD) sv = (hc - hd) / cell;
+            const GhostVec3 n = (N - U * su - V * sv).Normalize();                        // normal of the surface u*U + v*V + h*N
+            hMin = fminf(hMin, hc); hMax = fmaxf(hMax, hc);
 
+            const float pu = u0 + (float)p * cell, pv = v0 + (float)q * cell;
             GhostVertex g = {};
-            g.x = U.x * pu + V.x * pv + N.x * h;
-            g.y = U.y * pu + V.y * pv + N.y * h;
-            g.z = U.z * pu + V.z * pv + N.z * h;
+            g.x = U.x * pu + V.x * pv + N.x * hc;
+            g.y = U.y * pu + V.y * pv + N.y * hc;
+            g.z = U.z * pu + V.z * pv + N.z * hc;
             g.r = g.g = g.b = 1.0f; g.a = 1.0f;
             g.nx = n.x; g.ny = n.y; g.nz = n.z;
             g.u = (float)p / (float)sub;
@@ -3544,15 +3914,71 @@ static void BuildTileMesh(const GhostTileMap& t, std::vector<GhostVertex>& v, st
             v[(size_t)q * vx + p] = g;
         }
 
-    idx.clear();
-    idx.reserve((size_t)nx * (size_t)ny * 6);
-    for (int q = 0; q < ny; q++)
-        for (int p = 0; p < nx; p++)
+    // ---- skirt: a copy of every border vertex, pushed down the N axis. Hides cracks between cells of different LOD ----
+    const float depth = fmaxf(1.0f, (hMax - hMin) * 0.1f + cell * 6.0f);
+    auto skirtOf = [&](size_t dst, size_t src)
         {
-            const unsigned int i00 = (unsigned int)(q * vx + p), i10 = i00 + 1, i01 = i00 + (unsigned int)vx, i11 = i01 + 1;
-            idx.push_back(i00); idx.push_back(i01); idx.push_back(i10);
-            idx.push_back(i01); idx.push_back(i11); idx.push_back(i10);
+            GhostVertex g = v[src];
+            g.x -= N.x * depth; g.y -= N.y * depth; g.z -= N.z * depth;
+            v[dst] = g;
+        };
+    const unsigned int sb = (unsigned int)mainCount;
+    for (int p = 0; p <= nx; p++) { skirtOf(sb + (size_t)p, (size_t)p);               skirtOf(sb + (size_t)(nx + 1) + p, (size_t)ny * vx + p); }
+    for (int q = 0; q <= ny; q++) { skirtOf(sb + (size_t)(2 * (nx + 1)) + q, (size_t)q * vx); skirtOf(sb + (size_t)(2 * (nx + 1) + (ny + 1)) + q, (size_t)q * vx + nx); }
+
+    // ---- LOD levels: stride 1 / 2 / 4, only where the grid divides evenly ----
+    int maxLod = 0;
+    if (nx % 2 == 0 && ny % 2 == 0 && nx >= 8 && ny >= 8) maxLod = 1;
+    if (maxLod == 1 && nx % 4 == 0 && ny % 4 == 0 && nx >= 16 && ny >= 16) maxLod = 2;
+
+    idx.clear();
+    idx.reserve((size_t)nx * (size_t)ny * 8 + 4096);
+    auto quad = [&](unsigned int a, unsigned int b, unsigned int c, unsigned int d)     // a b / c d
+        {
+            idx.push_back(a); idx.push_back(c); idx.push_back(b);
+            idx.push_back(c); idx.push_back(d); idx.push_back(b);
+        };
+    for (int l = 0; l < 3; l++) { ti.lodFirst[l] = 0; ti.skirtFirst[l] = 0; ti.skirtCount[l] = 0; }
+    for (int lod = 0; lod <= maxLod; lod++)
+    {
+        const int s = 1 << lod;
+        ti.lodFirst[lod] = (unsigned int)idx.size();
+        for (int q = 0; q < ny; q += s)                                                  // rows in order, so a band is one contiguous range
+            for (int p = 0; p < nx; p += s)
+            {
+                const unsigned int i00 = (unsigned int)(q * vx + p);
+                quad(i00, i00 + s, i00 + (unsigned int)(s * vx), i00 + (unsigned int)(s * vx) + s);
+            }
+        ti.skirtFirst[lod] = (unsigned int)idx.size();
+        for (int p = 0; p < nx; p += s)
+        {
+            quad(p, p + s, sb + p, sb + p + s);                                                                     // q = 0
+            quad(ny * vx + p, ny * vx + p + s, sb + (nx + 1) + p, sb + (nx + 1) + p + s);                          // q = ny
         }
+        for (int q = 0; q < ny; q += s)
+        {
+            quad(q * vx, (q + s) * vx, sb + 2 * (nx + 1) + q, sb + 2 * (nx + 1) + q + s);                          // p = 0
+            quad(q * vx + nx, (q + s) * vx + nx, sb + 2 * (nx + 1) + (ny + 1) + q, sb + 2 * (nx + 1) + (ny + 1) + q + s);  // p = nx
+        }
+        ti.skirtCount[lod] = (unsigned int)idx.size() - ti.skirtFirst[lod];
+    }
+
+    // ---- row bands for culling ----
+    const int B = kTileBandRows;
+    const int bands = (ny + B - 1) / B;
+    ti.bandMin.assign((size_t)bands, 0.0f);
+    ti.bandMax.assign((size_t)bands, 0.0f);
+    for (int b = 0; b < bands; b++)
+    {
+        const int r0 = b * B, r1 = (r0 + B < ny) ? r0 + B : ny;
+        float lo = 1e30f, hi = -1e30f;
+        for (int q = r0; q <= r1; q++)
+            for (int p = 0; p < vx; p++) { const float h = Hin(p, q); lo = fminf(lo, h); hi = fmaxf(hi, h); }
+        ti.bandMin[b] = lo - 0.02f;
+        ti.bandMax[b] = hi + 0.02f;
+    }
+    ti.nx = nx; ti.ny = ny; ti.bandRows = B; ti.bandCount = bands; ti.maxLod = maxLod;
+    ti.cell = cell; ti.u0 = u0; ti.v0 = v0;
 }
 
 // ---- weight map textures (hidden from the texture lists: their names start with "[Splat") ----
@@ -3582,13 +4008,14 @@ static void ReleaseSplat(TileInst& ti)
 }
 static void FreeAllTileInstances()
 {
-    for (auto& kv : g_tileInst)
+    for (auto& kv : g_tileInst) ReleaseSplat(kv.second);
+    for (int k = 0; k < (int)GHOST_MAX_TILEMAPS; k++)
     {
-        TileInst& ti = kv.second;
-        if (ti.slot >= 0) { GhostReleaseTileMesh(g_pipeline, ti.slot); g_tileSlotUsed[ti.slot] = false; }
-        ReleaseSplat(ti);
+        if (g_pipeline) GhostReleaseTileMesh(g_pipeline, k);
+        g_tileSlotUsed[k] = false;
     }
     g_tileInst.clear();
+    g_tileBurst = true;                      // the next update loads everything in range at once (no pop-in after a scene load)
 }
 static void UpdateSplat(const GhostObject& o, TileInst& ti)
 {
@@ -3636,54 +4063,192 @@ static void UpdateSplat(const GhostObject& o, TileInst& ti)
     ti.splatW = w; ti.splatH = h; ti.sStamp = t.sStamp;
 }
 
+// ---------------- world partition: which cells are resident ----------------
+static unsigned int TileNeighborSig(const GhostObject& self)        // changes when a touching cell changes, so border normals rebuild
+{
+    const GhostTileMap& t = self.tileMap;
+    if (t.direction != 1) return 0;
+    const float W = (float)t.gridX * t.tileSize * fabsf(self.scale.x), D = (float)t.gridY * t.tileSize * fabsf(self.scale.z);
+    unsigned int h = 0;
+    for (const GhostObject& n : g_scene.objects)
+    {
+        if (&n == &self || !n.tileMap.enabled || n.tileMap.direction != 1) continue;
+        const float nW = (float)n.tileMap.gridX * n.tileMap.tileSize * fabsf(n.scale.x);
+        const float nD = (float)n.tileMap.gridY * n.tileMap.tileSize * fabsf(n.scale.z);
+        const float dx = n.position.x - self.position.x, dz = n.position.z - self.position.z;
+        if (fabsf(dx) > 0.5f * (W + nW) + 0.05f || fabsf(dz) > 0.5f * (D + nD) + 0.05f) continue;
+        h = (h * 16777619u) ^ (unsigned int)n.id;
+        h = (h * 16777619u) ^ (unsigned int)n.tileMap.hStamp;
+        h = (h * 16777619u) ^ (unsigned int)(int)(dx * 100.0f);
+        h = (h * 16777619u) ^ (unsigned int)(int)(dz * 100.0f);
+        h = (h * 16777619u) ^ (unsigned int)(int)((n.position.y - self.position.y) * 100.0f);
+    }
+    return h;
+}
 
-// Between frames: rebuild the mesh of every Tile Map whose grid / heights changed, refresh the weight maps, free removed ones
+static int FindFreeTileSlot()
+{
+    for (int k = 0; k < (int)GHOST_MAX_TILEMAPS; k++) if (!g_tileSlotUsed[k]) return k;
+    return -1;
+}
+
+// The slot's GPU buffers stay allocated: the next cell that takes the slot reuses them (no allocation, no hitch)
+static void UnloadTileCell(TileInst& ti)
+{
+    if (ti.slot >= 0) { g_tileSlotUsed[ti.slot] = false; ti.slot = -1; }
+    ReleaseSplat(ti);
+    ti.state = 0;
+    ti.maskStamp = 0xFFFFFFFFu;
+}
+
+static bool LoadTileCell(GhostObject& o, TileInst& ti, int slot)
+{
+    static std::vector<GhostVertex> verts;
+    static std::vector<unsigned int> idx;
+    const GhostTileMap& t = o.tileMap;
+    BuildTileMeshLod(o, verts, idx, ti);
+    if (GhostUploadTileMesh(g_rhi, g_pipeline, slot, verts.data(), (unsigned int)verts.size(),
+        idx.data(), (unsigned int)idx.size()) != GHOST_OK) return false;
+    g_tileSlotUsed[slot] = true;
+    ti.slot = slot;
+    ti.tileSize = t.tileSize; ti.gx = t.gridX; ti.gy = t.gridY; ti.dir = t.direction;
+    ti.sub = GhostTileMap_EffSub(t.gridX, t.gridY, t.subdiv);
+    ti.hStamp = t.hStamp;
+    ti.neighSig = TileNeighborSig(o);
+    return true;
+}
+
+static void GatherStreamFocus(std::vector<GhostVec3>& out)          // every camera that is looking at the world
+{
+    out.clear();
+    for (int vp = 0; vp < GHOST_MAX_SURFACES; vp++)
+    {
+        if (!g_vp[vp].alive || !g_vp[vp].visible || g_vp[vp].preview) continue;
+        if (GhostCamera* c = ViewportCamera(vp)) out.push_back(c->position);
+    }
+    if (out.empty()) { if (GhostCamera* c = ActiveCamera()) out.push_back(c->position); else out.push_back(GhostVec3(0, 0, 0)); }
+}
+
+// Between frames: stream cells in / out, rebuild the ones whose data changed, refresh weight maps, free removed ones
 static void UpdateTileMaps()
 {
     if (!g_rhi || !g_pipeline) return;
     for (auto& kv : g_tileInst) kv.second.seen = false;
 
-    static std::vector<GhostVertex> verts;
-    static std::vector<unsigned int> idx;
+    GhostWorldStats& st = g_wstats;
+    st.cells = st.resident = st.starved = st.loadsLast = st.cellsDrawn = 0;
+    st.bandsDrawn = st.bandsCulled = st.trisDrawn = st.objectsCulled = 0;     // the draw code accumulates these during the frame
 
+    struct Cell { GhostObject* o; TileInst* ti; bool forced; bool want; };
+    static std::vector<Cell> cells;
+    static std::vector<GhostVec3> focus;
+    cells.clear();
+    GatherStreamFocus(focus);
+    const bool editing = g_playState == GhostPlayState::Editing;
+
+    // ---- 1. every Tile Map is a cell: measure it ----
     for (GhostObject& o : g_scene.objects)
     {
         if (!o.tileMap.enabled) continue;
         GhostTileMap_Clamp(o.tileMap);
         GhostTileMap_EnsureTiles(o.tileMap);
         if (o.tileMap.autoCollider && o.collider) GhostObject_FitTileCollider(o);
-        const GhostTileMap& t = o.tileMap;
         TileInst& ti = g_tileInst[o.id];
         ti.seen = true;
+        GhostVec3 wmin, wmax;
+        TileWorldBox(o, wmin, wmax);
+        float d = 1e30f;
+        for (const GhostVec3& f : focus) d = fminf(d, TileBoxDistance(o, wmin, wmax, f));
+        ti.dist = d;
+        cells.push_back({ &o, &ti, editing && IsSelected(o.id), true });     // what you are editing is never streamed out
+    }
 
-        const int sub = GhostTileMap_EffSub(t.gridX, t.gridY, t.subdiv);
-        if (ti.slot < 0 || ti.hStamp != t.hStamp || ti.tileSize != t.tileSize || ti.gx != t.gridX || ti.gy != t.gridY ||
-            ti.dir != t.direction || ti.sub != sub)
+    // ---- 2. who should be resident (load radius in, unload radius out: no flicker at the boundary) ----
+    const float loadD = g_world.loadDist > 0.0f ? g_world.loadDist : g_world.farPlane + 10.0f;
+    const float unloadD = loadD + g_world.unloadPad;
+    for (Cell& c : cells)
+    {
+        TileInst& ti = *c.ti;
+        if (!g_world.streaming || c.forced) c.want = true;
+        else c.want = (ti.slot >= 0) ? (ti.dist <= unloadD) : (ti.dist <= loadD);
+        if (!c.want && ti.slot >= 0) UnloadTileCell(ti);
+    }
+
+    // ---- 3. load the nearest missing cells, within the frame budget ----
+    static std::vector<Cell*> need;
+    need.clear();
+    for (Cell& c : cells) if (c.want && c.ti->slot < 0) need.push_back(&c);
+    std::sort(need.begin(), need.end(), [](const Cell* a, const Cell* b)
+        { return a->forced != b->forced ? a->forced : a->ti->dist < b->ti->dist; });
+
+    const bool burst = g_tileBurst && !cells.empty();
+    if (burst) g_tileBurst = false;
+    LARGE_INTEGER t0;
+    QueryPerformanceCounter(&t0);
+    auto elapsedMs = [&]() { LARGE_INTEGER t1; QueryPerformanceCounter(&t1); return (float)((double)(t1.QuadPart - t0.QuadPart) * 1000.0 / (double)g_freq.QuadPart); };
+
+    int loads = 0;
+    for (Cell* c : need)
+    {
+        const bool must = c->forced || burst;
+        if (!must && loads > 0 && (loads >= g_world.maxLoads || elapsedMs() >= g_world.msBudget)) break;
+
+        int slot = FindFreeTileSlot();
+        if (slot < 0)                                                        // pool full: evict the farthest cell that is farther than this one
         {
-            int slot = ti.slot;
-            if (slot < 0)
-                for (int k = 0; k < (int)GHOST_MAX_TILEMAPS; k++) if (!g_tileSlotUsed[k]) { slot = k; break; }
-            if (slot < 0) continue;                                          // all slots in use: this one isn't drawn
+            Cell* victim = nullptr;
+            for (Cell& r : cells)
+                if (r.ti->slot >= 0 && !r.forced && r.ti->dist > c->ti->dist && (!victim || r.ti->dist > victim->ti->dist)) victim = &r;
+            if (!victim) { st.starved++; continue; }
+            slot = victim->ti->slot;
+            UnloadTileCell(*victim->ti);
+        }
+        if (LoadTileCell(*c->o, *c->ti, slot)) loads++;
+    }
+    st.loadsLast = loads;
+    if (loads > 0) st.lastLoadMs = elapsedMs();
 
-            BuildTileMesh(t, verts, idx);
-            if (GhostUploadTileMesh(g_rhi, g_pipeline, slot, verts.data(), (unsigned int)verts.size(),
-                idx.data(), (unsigned int)idx.size()) != GHOST_OK) continue;
-            g_tileSlotUsed[slot] = true;
-            ti.slot = slot; ti.tileSize = t.tileSize; ti.gx = t.gridX; ti.gy = t.gridY; ti.dir = t.direction;
-            ti.sub = sub; ti.hStamp = t.hStamp;
+    // ---- 4. resident cells: rebuild changed meshes, refresh weight maps, note which layers have paint ----
+    for (Cell& c : cells)
+    {
+        TileInst& ti = *c.ti;
+        st.cells++;
+        if (ti.slot < 0) { ti.state = c.want ? 2 : 0; continue; }
+        st.resident++;
+        ti.state = 1;
+
+        GhostObject& o = *c.o;
+        const GhostTileMap& t = o.tileMap;
+        const int sub = GhostTileMap_EffSub(t.gridX, t.gridY, t.subdiv);
+        const unsigned int nsig = g_painting ? ti.neighSig : TileNeighborSig(o);         // neighbours wait until the stroke ends
+        if (ti.hStamp != t.hStamp || ti.tileSize != t.tileSize || ti.gx != t.gridX || ti.gy != t.gridY ||
+            ti.dir != t.direction || ti.sub != sub || ti.neighSig != nsig)
+        {
+            if (!LoadTileCell(o, ti, ti.slot)) continue;
         }
         UpdateSplat(o, ti);
+
+        if (ti.maskStamp != t.sStamp || ti.maskLayers != t.layerCount)
+        {
+            ti.maskStamp = t.sStamp; ti.maskLayers = t.layerCount;
+            const size_t texels = (size_t)t.splatW * (size_t)t.splatH;
+            if (t.layerCount < 2 || t.layerCount > 8 || texels == 0 || t.splat.size() != texels * 8) ti.usedMask = 0xFFFFFFFFu;
+            else
+            {
+                const unsigned int all = (1u << t.layerCount) - 1u;
+                unsigned int m = 1u;
+                for (size_t i = 0; i < texels && m != all; i++)
+                    for (int l = 1; l < t.layerCount; l++)
+                        if (t.splat[i * 8 + (size_t)l] > 1) m |= (1u << l);
+                ti.usedMask = m;
+            }
+        }
     }
 
+    // ---- 5. deleted objects give their slot back ----
     std::vector<int> dead;
     for (auto& kv : g_tileInst) if (!kv.second.seen) dead.push_back(kv.first);
-    for (int id : dead)
-    {
-        TileInst& ti = g_tileInst[id];
-        if (ti.slot >= 0) { GhostReleaseTileMesh(g_pipeline, ti.slot); g_tileSlotUsed[ti.slot] = false; }
-        ReleaseSplat(ti);
-        g_tileInst.erase(id);
-    }
+    for (int id : dead) { UnloadTileCell(g_tileInst[id]); g_tileInst.erase(id); }
 }
 
 // ---------------- paint mode ----------------
@@ -3989,6 +4554,31 @@ static void OverlayPaintBrush(int rw, int rh)
     const float inner = g_brush.radius * (1.0f - g_brush.fade);               // where the full-strength core ends
     if (g_brush.fade > 0.05f && inner > 0.02f) ring(inner, 1.2f);
     g_ov.Point(at(lu, lv), 8.0f, col);
+}
+
+// Directional Lights set to follow the Sky Sphere copy its sun or moon direction and fade with the time of day
+static void UpdateCelestialLights()
+{
+    const GhostModEntity* sky = nullptr;
+    for (const GhostModEntity& m : g_scene.mods) if (m.typeId == GHOST_MOD_SKY) { sky = &m; break; }
+
+    const float r2d = 180.0f / GHOST_PI;
+    for (GhostLight& l : g_scene.lights)
+    {
+        l.celestialFade = 1.0f;
+        if (l.celestial == 0 || l.type != GhostLightType::Directional || !sky) continue;   // no Sky Sphere: the light keeps its manual aim
+
+        GhostVec3 travel;
+        float w = 1.0f;
+        if (!GhostSky_CelestialLight(*sky, l.celestial == 2, travel, w)) continue;
+
+        const float yaw = atan2f(travel.x, travel.z) * r2d;
+        const float py = travel.y < -1.0f ? -1.0f : (travel.y > 1.0f ? 1.0f : travel.y);
+        const float pitch = asinf(py) * r2d;
+        if (fabsf(l.yawDeg - yaw) > 0.0005f) l.yawDeg = yaw;
+        if (fabsf(l.pitchDeg - pitch) > 0.0005f) l.pitchDeg = pitch;
+        l.celestialFade = w;
+    }
 }
 
 

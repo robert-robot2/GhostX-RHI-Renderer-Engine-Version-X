@@ -6,6 +6,13 @@
 constexpr unsigned int GHOST_BLOOM_MAX_MIPS = 6;
 constexpr unsigned int GHOST_POST_SRV_STRIDE = 1 + GHOST_BLOOM_MAX_MIPS;   // per surface: [hdr, bloom mip 0..5]. Same layout in the RTV heap
 
+// The camera this frame, all UNJITTERED, for the SSGI temporal reprojection
+struct GhostSsgiFrame
+{
+    float eye[3], right[3], up[3], fwd[3];
+    float vp[16];                       // proj * view (clean): becomes next frame's "previous"
+};
+
 struct GhostPost
 {
     bool ready = false;
@@ -44,6 +51,18 @@ struct GhostPost
     bool                         ssrHave[GHOST_MAX_SURFACES] = {};   // the history holds a finished frame
     float                        ssrPrevView[GHOST_MAX_SURFACES][12] = {};   // view matrix rows 0..2 of that frame
     float                        ssrPrevProj[GHOST_MAX_SURFACES][8] = {};    // p00 p11 p02 p12 p22 p23 width height
+    // ---- SSGI (optional: ssgiReady stays false if its shaders fail) ----
+    bool                         ssgiReady = false;
+    ComPtr<ID3D12RootSignature>  ssgiRootSig;
+    ComPtr<ID3D12PipelineState>  ssgiGatherPso, ssgiBlurPso, ssgiCompPso;
+    ComPtr<ID3D12DescriptorHeap> ssgiRtvHeap, ssgiSrvHeap;      // per surface: SRV [depth, scene, T0, T1, blurA, blurB], RTV [T0, T1, blurA, blurB]
+    unsigned int                 ssgiRtvInc = 0, ssgiSrvInc = 0;
+    ComPtr<ID3D12Resource>       ssgiT[2][GHOST_MAX_SURFACES];  // half-res gather + temporal history (rgb = bounce, a = view depth)
+    ComPtr<ID3D12Resource>       ssgiBlur[2][GHOST_MAX_SURFACES];
+    unsigned int                 ssgiW[GHOST_MAX_SURFACES] = {}, ssgiH[GHOST_MAX_SURFACES] = {};
+    int                          ssgiRead[GHOST_MAX_SURFACES] = {};        // which of ssgiT holds the latest result
+    bool                         ssgiHave[GHOST_MAX_SURFACES] = {};        // the history holds a finished frame
+    float                        ssgiPrevVP[GHOST_MAX_SURFACES][16] = {};
 };
 
 GhostResult GhostPost_Init(IGhostRHI* rhi, GhostPost& t);
@@ -93,3 +112,12 @@ inline bool GhostPost_SSRHistoryValid(const GhostPost& t, int id)
     return id >= 0 && id < GHOST_MAX_SURFACES && t.ssrHave[id] && t.ssrColor[id] && t.ssrDepth[id];
 }
 inline void GhostPost_SSRReset(GhostPost& t) { for (int i = 0; i < GHOST_MAX_SURFACES; i++) t.ssrHave[i] = false; }   // scene changed: drop the history
+
+// SSGI on the scene colour. Same contract as GhostPost_SSAO: color is in RENDER_TARGET state (copied, then drawn over),
+// depth is typeless D24S8 in DEPTH_WRITE. Everything is returned to the same states.
+// proj6 = { p00, p11, p02, p12, p22, p23 } of the matrix the scene was drawn with (jittered under TAA).
+void GhostPost_SSGI(IGhostRHI* rhi, GhostPost& t, int id, ID3D12Resource* color, D3D12_CPU_DESCRIPTOR_HANDLE colorRTV,
+    ID3D12Resource* depth, unsigned int w, unsigned int h, const GhostPostSettings& s, const float* proj6,
+    const GhostSsgiFrame& f, float noiseOffset);
+
+inline void GhostPost_SSGIReset(GhostPost& t) { for (int i = 0; i < GHOST_MAX_SURFACES; i++) t.ssgiHave[i] = false; }

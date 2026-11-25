@@ -169,7 +169,9 @@ xcopy /Y /E /I "$(ProjectDir)shaders" "$(SolutionDir)GhostShell\bin\x64\Release\
     <ClInclude Include="include\GhostEngineDataCore.h" />
     <ClInclude Include="include\GhostGameAPI.h" />
     <ClInclude Include="include\GhostGameModule.h" />
+    <ClInclude Include="include\GhostGpuProf.h" />
     <ClInclude Include="include\GhostImage.h" />
+    <ClInclude Include="include\GhostLightShafts.h" />
     <ClInclude Include="include\GhostMath.h" />
     <ClInclude Include="include\GhostModelImport.h" />
     <ClInclude Include="include\GhostMods.h" />
@@ -191,6 +193,7 @@ xcopy /Y /E /I "$(ProjectDir)shaders" "$(SolutionDir)GhostShell\bin\x64\Release\
     <ClInclude Include="include\GhostUI.h" />
     <ClInclude Include="include\GhostUIScale.h" />
     <ClInclude Include="include\GhostVideoSettings.h" />
+    <ClInclude Include="include\GhostWorldPart.h" />
     <ClInclude Include="include\IGhostRHI.h" />
     <ClInclude Include="include\json.hpp" />
     <ClInclude Include="include\stb_image.h" />
@@ -206,6 +209,7 @@ xcopy /Y /E /I "$(ProjectDir)shaders" "$(SolutionDir)GhostShell\bin\x64\Release\
     <ClCompile Include="src\GhostEngine.cpp" />
     <ClCompile Include="src\GhostGameModule.cpp" />
     <ClCompile Include="src\GhostImage.cpp" />
+    <ClCompile Include="src\GhostLightShafts.cpp" />
     <ClCompile Include="src\GhostModelImport.cpp" />
     <ClCompile Include="src\GhostMods.cpp" />
     <ClCompile Include="src\GhostMSAA.cpp" />
@@ -233,6 +237,11 @@ xcopy /Y /E /I "$(ProjectDir)shaders" "$(SolutionDir)GhostShell\bin\x64\Release\
   </ItemGroup>
   <ItemGroup>
     <None Include="shaders\GhostFog.hlsl">
+      <FileType>Document</FileType>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="shaders\GhostShafts.hlsl">
       <FileType>Document</FileType>
     </None>
   </ItemGroup>

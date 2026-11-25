@@ -32,6 +32,7 @@ struct GhostLightInfo
     int   shadowObjects, shadowLandscape;     // spot shadow toggles
     float spinYaw, spinPitch;                 // deg/sec while playing
     float volumetric;                         // god rays strength
+    int   celestial;                          // 0 manual, 1 follows the Sky Sphere sun, 2 follows its moon (Directional only)
 };
 struct GhostFogInfo
 {
@@ -161,8 +162,8 @@ struct GhostSoundInfo
 typedef int(__cdecl* GhostFontProviderFn)(const char* utf8AbsPath);   // returns a font slot, 0 = failed
 typedef void(__cdecl* GhostLoadProgressFn)(const char* utf8Kind, const char* utf8Name);
 struct GhostShadowTuning { int filter; float softness, bias, normalBias, distance; };
-
 struct GhostMapInfo { int textureId; float amount; int channel; int invert; };
+
 struct GhostPostInfo
 {
     int   toneMode;                                   // 0 none, 1 Reinhard, 2 ACES, 3 Neutral
@@ -181,6 +182,14 @@ struct GhostPostInfo
     float ssrIntensity, ssrMaxDistance, ssrThickness;
     int   ssrSteps;
     float ssrMaxRoughness, ssrEdgeFade;
+    int   ssgiEnabled;
+    float ssgiIntensity, ssgiRadius;
+    int   ssgiSamples;
+    float ssgiTemporal, ssgiFadeDist;
+    int   ssgiShowOnly;
+    int   shaftEnabled;
+    float shaftIntensity, shaftThreshold, shaftMaxBright, shaftLength, shaftDecay, shaftDarkness, shaftDepthRange;
+    int   shaftSteps, shaftOcclusion;
 };
 
 struct GhostSurfaceInfo
@@ -223,6 +232,17 @@ struct GhostVolumeInfo
     float radius, blend;
     float p[16];                                // per-type parameters (later phases)
     int   tex[4];                               // per-type texture ids (later phases)
+};
+
+struct GhostWorldInfo
+{
+    int   streaming, lod, cull, showCells, maxLoads;
+    float loadDist, unloadPad, msBudget, lodDist1, lodDist2, farPlane, nearPlane;
+};
+struct GhostWorldStatsInfo
+{
+    int   cells, resident, slotsTotal, starved, loadsLast, cellsDrawn, bandsDrawn, bandsCulled, trisDrawn, objectsCulled;
+    float lastLoadMs;
 };
 
 extern "C"
@@ -543,5 +563,11 @@ extern "C"
 
     GHOST_API void GhostEngine_SetLoadProgress(GhostLoadProgressFn fn);
 
+    GHOST_API int  GhostEngine_ExpandLandscape(int objectId, int radius);   // adds a (2r+1)^2 block of Tile Maps around a floor map. Returns how many were created
+    GHOST_API int  GhostEngine_StitchLandscape();
+
+    GHOST_API void GhostEngine_GetWorldSettings(GhostWorldInfo* out);
+    GHOST_API void GhostEngine_SetWorldSettings(const GhostWorldInfo* in);
+    GHOST_API void GhostEngine_GetWorldStats(GhostWorldStatsInfo* out);
 
 }

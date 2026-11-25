@@ -83,3 +83,6 @@ void  GhostSky_SetTime(GhostModEntity& e, float hours);
 void  GhostSky_AdvanceTime(GhostModEntity& e, float dtSeconds);
 void  GhostSky_Speeds(const GhostModEntity& e, float& dayDegPerSec, float& nightDegPerSec);
 float GhostSky_AmbientIntensity(const GhostModEntity& e, float baseIntensity);
+// Lights that follow the sky: travelDir = the direction the light travels (what a Directional Light's yaw / pitch describe),
+// weight = 0..1 (fades with the time of day, honours the Hide Sun / Moon windows). Returns false when there is no usable sky.
+bool GhostSky_CelestialLight(const GhostModEntity& e, bool moon, GhostVec3& travelDir, float& weight);

@@ -26,6 +26,7 @@ namespace GhostShell
         public int shadowObjects, shadowLandscape;
         public float spinYaw, spinPitch;
         public float volumetric;
+        public int celestial;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -278,6 +279,14 @@ namespace GhostShell
         public float ssrIntensity, ssrMaxDistance, ssrThickness;
         public int ssrSteps;
         public float ssrMaxRoughness, ssrEdgeFade;
+        public int ssgiEnabled;
+        public float ssgiIntensity, ssgiRadius;
+        public int ssgiSamples;
+        public float ssgiTemporal, ssgiFadeDist;
+        public int ssgiShowOnly;
+        public int shaftEnabled;
+        public float shaftIntensity, shaftThreshold, shaftMaxBright, shaftLength, shaftDecay, shaftDarkness, shaftDepthRange;
+        public int shaftSteps, shaftOcclusion;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -307,9 +316,21 @@ namespace GhostShell
         public float drawDistance;
         public float rotX, rotY, rotZ;
         public float scaleX, scaleY, scaleZ;
+    
     }
 
-
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GhostWorldInfo
+    {
+        public int streaming, lod, cull, showCells, maxLoads;
+        public float loadDist, unloadPad, msBudget, lodDist1, lodDist2, farPlane, nearPlane;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GhostWorldStatsInfo
+    {
+        public int cells, resident, slotsTotal, starved, loadsLast, cellsDrawn, bandsDrawn, bandsCulled, trisDrawn, objectsCulled;
+        public float lastLoadMs;
+    }
     internal static class GhostEngine
     {
         private const string DllName = "GhostX.dll";
@@ -791,6 +812,16 @@ namespace GhostShell
         public static extern void GhostEngine_GetFogSettings(out GhostFogInfo f);
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern void GhostEngine_SetFogSettings(ref GhostFogInfo f);
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_ExpandLandscape(int objectId, int radius);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GhostEngine_StitchLandscape();
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern void GhostEngine_GetWorldSettings(out GhostWorldInfo w);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern void GhostEngine_SetWorldSettings(ref GhostWorldInfo w);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern void GhostEngine_GetWorldStats(out GhostWorldStatsInfo s);
+
 
     }
 }

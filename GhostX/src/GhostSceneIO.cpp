@@ -342,7 +342,12 @@ bool GhostScene_Save(const GhostScene& s, const std::string& root, const std::st
         j["post"]["ssr"] = json{ { "enabled", s.post.ssrEnabled },{ "intensity", s.post.ssrIntensity },{ "maxDistance", s.post.ssrMaxDistance },
     { "thickness", s.post.ssrThickness },{ "steps", s.post.ssrSteps },{ "maxRoughness", s.post.ssrMaxRoughness },
     { "edgeFade", s.post.ssrEdgeFade } };
-
+        j["post"]["ssgi"] = json{ { "enabled", s.post.ssgiEnabled },{ "intensity", s.post.ssgiIntensity },{ "radius", s.post.ssgiRadius },
+    { "samples", s.post.ssgiSamples },{ "temporal", s.post.ssgiTemporal },{ "fadeDist", s.post.ssgiFadeDist } };
+        j["post"]["shafts"] = json{ { "enabled", s.post.shaftEnabled },{ "intensity", s.post.shaftIntensity },{ "threshold", s.post.shaftThreshold },
+{ "maxBright", s.post.shaftMaxBright },{ "length", s.post.shaftLength },{ "decay", s.post.shaftDecay },
+{ "darkness", s.post.shaftDarkness },{ "depthRange", s.post.shaftDepthRange },{ "steps", s.post.shaftSteps },
+{ "occlusion", s.post.shaftOcclusion } };
 
         std::set<int> saved, used;
         CollectUsedTextures(s, used);
@@ -519,6 +524,7 @@ bool GhostScene_Save(const GhostScene& s, const std::string& root, const std::st
             jl["spinYaw"] = l.spinYaw;
             jl["spinPitch"] = l.spinPitch;
             jl["volumetric"] = l.volumetric;
+            jl["celestial"] = l.celestial;
             json fl = json::array();
             for (int k = 0; k < GHOST_FLICKER_LAYERS; k++) fl.push_back(FlickerToJson(l.flicker[k], saved));
             jl["flicker"] = fl;
@@ -802,6 +808,31 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
                 s.post.ssrMaxRoughness = jr.value("maxRoughness", 0.6f);
                 s.post.ssrEdgeFade = jr.value("edgeFade", 0.1f);
             }
+            if (jp.contains("ssgi") && jp["ssgi"].is_object())
+            {
+                const json& jg = jp["ssgi"];
+                s.post.ssgiEnabled = jg.value("enabled", 0);
+                s.post.ssgiIntensity = jg.value("intensity", 1.0f);
+                s.post.ssgiRadius = jg.value("radius", 2.5f);
+                s.post.ssgiSamples = jg.value("samples", 12);
+                s.post.ssgiTemporal = jg.value("temporal", 0.85f);
+                s.post.ssgiFadeDist = jg.value("fadeDist", 60.0f);
+            }
+            if (jp.contains("shafts") && jp["shafts"].is_object())
+            {
+                const json& jh = jp["shafts"];
+                s.post.shaftEnabled = jh.value("enabled", 0);
+                s.post.shaftIntensity = jh.value("intensity", 0.8f);
+                s.post.shaftThreshold = jh.value("threshold", 0.55f);
+                s.post.shaftMaxBright = jh.value("maxBright", 4.0f);
+                s.post.shaftLength = jh.value("length", 0.8f);
+                s.post.shaftDecay = jh.value("decay", 0.97f);
+                s.post.shaftDarkness = jh.value("darkness", 0.0f);
+                s.post.shaftDepthRange = jh.value("depthRange", 80.0f);
+                s.post.shaftSteps = jh.value("steps", 48);
+                s.post.shaftOcclusion = jh.value("occlusion", 1);
+            }
+
             GhostPostSettings_Clamp(s.post);
         }
 
@@ -1049,6 +1080,7 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
                 l.spinPitch = jl.value("spinPitch", 0.0f);
                 l.volumetric = jl.value("volumetric", 1.0f);
                 l.volumetric = l.volumetric != l.volumetric ? 1.0f : (l.volumetric < 0.0f ? 0.0f : (l.volumetric > 5.0f ? 5.0f : l.volumetric));
+                l.celestial = (l.type == GhostLightType::Directional) ? Clampi(jl.value("celestial", 0), 0, 2) : 0;
                 if (jl.contains("flicker") && jl["flicker"].is_array())
                     for (int k = 0; k < GHOST_FLICKER_LAYERS && k < (int)jl["flicker"].size(); k++)
                         if (jl["flicker"][k].is_object()) FlickerFromJson(jl["flicker"][k], l.flicker[k], mapTex);
@@ -1249,6 +1281,12 @@ unsigned int GhostScene_Hash(const GhostScene& s)
     I(s.post.ssaoSamples); F(s.post.ssaoDirectFade); I(s.post.ssaoHalfRes); F(s.post.ssaoFadeDist);
     I(s.post.ssrEnabled); F(s.post.ssrIntensity); F(s.post.ssrMaxDistance); F(s.post.ssrThickness);
     I(s.post.ssrSteps); F(s.post.ssrMaxRoughness); F(s.post.ssrEdgeFade);
+    I(s.post.ssgiEnabled); F(s.post.ssgiIntensity); F(s.post.ssgiRadius); I(s.post.ssgiSamples);
+    F(s.post.ssgiTemporal); F(s.post.ssgiFadeDist);
+    I(s.post.shaftEnabled); F(s.post.shaftIntensity); F(s.post.shaftThreshold); F(s.post.shaftMaxBright);
+    F(s.post.shaftLength); F(s.post.shaftDecay); F(s.post.shaftDarkness); F(s.post.shaftDepthRange);
+    I(s.post.shaftSteps); I(s.post.shaftOcclusion);
+
     {
         const GhostFogSettings& f = s.fog;
         I(f.enabled); F(f.density); F(f.color[0]); F(f.color[1]); F(f.color[2]); F(f.brightness); F(f.followAmbient);
@@ -1289,7 +1327,9 @@ unsigned int GhostScene_Hash(const GhostScene& s)
     for (const GhostLight& l : s.lights)
     {
         I(l.id); I((int)l.type); S(l.name);
-        V(l.position); F(l.yawDeg); F(l.pitchDeg);
+        V(l.position);
+        if (!l.celestial) { F(l.yawDeg); F(l.pitchDeg); }        // a light that follows the sky has no hand-set aim
+        I(l.celestial);
         F(l.color[0]); F(l.color[1]); F(l.color[2]);
         F(l.intensity); F(l.range); F(l.width); F(l.height);
         I(l.castShadows ? 1 : 0);

@@ -640,6 +640,8 @@ struct GhostLight
     float          volumetric = 1.0f;                    // god rays strength (needs Scene Settings > Volumetric Lighting)
     GhostFlickerLayer flicker[GHOST_FLICKER_LAYERS];     // Point lights
     GhostLight() { flicker[0].baseInfluence = 1.0f; flicker[0].brightness = 0.0f; }   // layer 1 = flicker the main light
+    int            celestial = 0;                        // Directional only: 0 manual, 1 follows the Sky Sphere sun, 2 follows its moon
+    float          celestialFade = 1.0f;                 // runtime only (not saved): brightness weight from the sky's time of day
 };
 struct GhostCamera
 {
@@ -828,6 +830,26 @@ struct GhostPostSettings
     int   ssrSteps = 32;                   // 8 .. 96
     float ssrMaxRoughness = 0.6f;          // rougher surfaces get no SSR (they use probes / ambient)
     float ssrEdgeFade = 0.1f;              // fraction of the screen over which reflections fade at the edges
+    // ---- SSGI (Phase 8) ----
+    int   ssgiEnabled = 0;
+    float ssgiIntensity = 1.0f;            // 0 .. 5
+    float ssgiRadius = 2.5f;               // world units the bounce light reaches
+    int   ssgiSamples = 12;                // 4 .. 32
+    float ssgiTemporal = 0.85f;            // history weight: higher = smoother, but slower to react
+    float ssgiFadeDist = 60.0f;            // no GI beyond this camera distance (0 = no limit)
+    int   ssgiShowOnly = 0;                // debug: show the bounce light only
+
+    // ---- Light Shafts ----
+    int   shaftEnabled = 0;
+    float shaftIntensity = 0.8f;      // 0 .. 10
+    float shaftThreshold = 0.55f;     // brightness needed to emit. The scene is gamma encoded and the sky tops out at 1.0
+    float shaftMaxBright = 4.0f;      // clamp on the emitted brightness
+    float shaftLength = 0.8f;         // 0.1 .. 1 : how far toward the light each ray marches
+    float shaftDecay = 0.97f;         // 0.85 .. 1
+    float shaftDarkness = 0.0f;       // 0 .. 1 : what geometry multiplies the light by (0 = fully blocks)
+    float shaftDepthRange = 80.0f;    // geometry farther than this never blocks (the camera far plane is 100)
+    int   shaftSteps = 48;            // 8 .. 128
+    int   shaftOcclusion = 1;         // 1 = use depth so trees block the rays
 };
 
 inline void GhostPostSettings_Clamp(GhostPostSettings& p)
@@ -860,6 +882,23 @@ inline void GhostPostSettings_Clamp(GhostPostSettings& p)
     p.ssrSteps = p.ssrSteps < 8 ? 8 : (p.ssrSteps > 96 ? 96 : p.ssrSteps);
     p.ssrMaxRoughness = cf(p.ssrMaxRoughness, 0.05f, 1.0f);
     p.ssrEdgeFade = cf(p.ssrEdgeFade, 0.0f, 0.5f);
+    p.ssgiEnabled = p.ssgiEnabled ? 1 : 0;
+    p.ssgiIntensity = cf(p.ssgiIntensity, 0.0f, 5.0f);
+    p.ssgiRadius = cf(p.ssgiRadius, 0.2f, 10.0f);
+    p.ssgiSamples = p.ssgiSamples < 4 ? 4 : (p.ssgiSamples > 32 ? 32 : p.ssgiSamples);
+    p.ssgiTemporal = cf(p.ssgiTemporal, 0.0f, 0.97f);
+    p.ssgiFadeDist = cf(p.ssgiFadeDist, 0.0f, 1000.0f);
+    p.ssgiShowOnly = p.ssgiShowOnly ? 1 : 0;
+    p.shaftEnabled = p.shaftEnabled ? 1 : 0;
+    p.shaftIntensity = cf(p.shaftIntensity, 0.0f, 10.0f);
+    p.shaftThreshold = cf(p.shaftThreshold, 0.0f, 20.0f);
+    p.shaftMaxBright = cf(p.shaftMaxBright, 0.1f, 50.0f);
+    p.shaftLength = cf(p.shaftLength, 0.1f, 1.0f);
+    p.shaftDecay = cf(p.shaftDecay, 0.85f, 1.0f);
+    p.shaftDarkness = cf(p.shaftDarkness, 0.0f, 1.0f);
+    p.shaftDepthRange = cf(p.shaftDepthRange, 1.0f, 1000.0f);
+    p.shaftSteps = p.shaftSteps < 8 ? 8 : (p.shaftSteps > 128 ? 128 : p.shaftSteps);
+    p.shaftOcclusion = p.shaftOcclusion ? 1 : 0;
 }
 
 // ---- Global fog + volumetric lighting (scene settings) ----

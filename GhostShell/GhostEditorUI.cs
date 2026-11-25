@@ -1594,7 +1594,25 @@ namespace GhostShell
             set { var i = Get(); i.shadowLandscape = value ? 1 : 0; Set(i); }
         }
     }
+    internal class CelestialConverter : FixedListConverter
+    {
+        public static readonly string[] Names = { "Off (manual aim)", "Follow Sun", "Follow Moon" };
+        protected override string[] Items => Names;
+    }
 
+    // Directional Light only: can follow the Sky Sphere
+    internal class SunLightProxy : DirectionalLightProxy
+    {
+        public SunLightProxy(int id) : base(id) { }
+
+        [Category("Sky"), DisplayName("Follow Sky Sphere (aim + fade with time of day)")]
+        [TypeConverter(typeof(CelestialConverter))]
+        public string FollowSky
+        {
+            get => CelestialConverter.Names[Math.Clamp(Get().celestial, 0, 2)];
+            set { int i = Array.IndexOf(CelestialConverter.Names, value); if (i >= 0) { var l = Get(); l.celestial = i; Set(l); } }
+        }
+    }
     internal static class GhostSceneAudio
     {
         public static string Text(byte[]? b)
@@ -1816,7 +1834,56 @@ namespace GhostShell
         [Category("Reflections (SSR)"), DisplayName("Edge Fade (0-0.5)")]
         public float SsrEdgeFade { get => GetPost().ssrEdgeFade; set { var p = GetPost(); p.ssrEdgeFade = value; SetPost(p); } }
 
+        [Category("Global Illumination (SSGI)"), DisplayName("SSGI Enabled")]
+        public bool SsgiEnabled { get => GetPost().ssgiEnabled != 0; set { var p = GetPost(); p.ssgiEnabled = value ? 1 : 0; SetPost(p); } }
 
+        [Category("Global Illumination (SSGI)"), DisplayName("Intensity (0-5)")]
+        public float SsgiIntensity { get => GetPost().ssgiIntensity; set { var p = GetPost(); p.ssgiIntensity = value; SetPost(p); } }
+
+        [Category("Global Illumination (SSGI)"), DisplayName("Radius (world units)")]
+        public float SsgiRadius { get => GetPost().ssgiRadius; set { var p = GetPost(); p.ssgiRadius = value; SetPost(p); } }
+
+        [Category("Global Illumination (SSGI)"), DisplayName("Quality (samples, 4-32)")]
+        public int SsgiSamples { get => GetPost().ssgiSamples; set { var p = GetPost(); p.ssgiSamples = value; SetPost(p); } }
+
+        [Category("Global Illumination (SSGI)"), DisplayName("Temporal Smoothing (0-0.97)")]
+        public float SsgiTemporal { get => GetPost().ssgiTemporal; set { var p = GetPost(); p.ssgiTemporal = value; SetPost(p); } }
+
+        [Category("Global Illumination (SSGI)"), DisplayName("Fade Distance (0 = no limit)")]
+        public float SsgiFadeDist { get => GetPost().ssgiFadeDist; set { var p = GetPost(); p.ssgiFadeDist = value; SetPost(p); } }
+
+        [Category("Global Illumination (SSGI)"), DisplayName("Show GI Only (debug)")]
+        public bool SsgiShowOnly { get => GetPost().ssgiShowOnly != 0; set { var p = GetPost(); p.ssgiShowOnly = value ? 1 : 0; SetPost(p); } }
+
+        [Category("Light Shafts"), DisplayName("Light Shafts Enabled (uses Directional lights with God Rays Strength > 0)")]
+        public bool ShaftEnabled { get => GetPost().shaftEnabled != 0; set { var p = GetPost(); p.shaftEnabled = value ? 1 : 0; SetPost(p); } }
+
+        [Category("Light Shafts"), DisplayName("Intensity (0-10)")]
+        public float ShaftIntensity { get => GetPost().shaftIntensity; set { var p = GetPost(); p.shaftIntensity = value; SetPost(p); } }
+
+        [Category("Light Shafts"), DisplayName("Threshold (brightness that emits, 0-20)")]
+        public float ShaftThreshold { get => GetPost().shaftThreshold; set { var p = GetPost(); p.shaftThreshold = value; SetPost(p); } }
+
+        [Category("Light Shafts"), DisplayName("Max Brightness")]
+        public float ShaftMaxBright { get => GetPost().shaftMaxBright; set { var p = GetPost(); p.shaftMaxBright = value; SetPost(p); } }
+
+        [Category("Light Shafts"), DisplayName("Ray Length (0.1-1)")]
+        public float ShaftLength { get => GetPost().shaftLength; set { var p = GetPost(); p.shaftLength = value; SetPost(p); } }
+
+        [Category("Light Shafts"), DisplayName("Decay (0.85-1)")]
+        public float ShaftDecay { get => GetPost().shaftDecay; set { var p = GetPost(); p.shaftDecay = value; SetPost(p); } }
+
+        [Category("Light Shafts"), DisplayName("Use Depth Occlusion (trees block rays)")]
+        public bool ShaftOcclusion { get => GetPost().shaftOcclusion != 0; set { var p = GetPost(); p.shaftOcclusion = value ? 1 : 0; SetPost(p); } }
+
+        [Category("Light Shafts"), DisplayName("Occluder Darkness (0 = blocks fully, 1 = none)")]
+        public float ShaftDarkness { get => GetPost().shaftDarkness; set { var p = GetPost(); p.shaftDarkness = value; SetPost(p); } }
+
+        [Category("Light Shafts"), DisplayName("Occlusion Depth Range (world units)")]
+        public float ShaftDepthRange { get => GetPost().shaftDepthRange; set { var p = GetPost(); p.shaftDepthRange = value; SetPost(p); } }
+
+        [Category("Light Shafts"), DisplayName("Quality (steps, 8-128)")]
+        public int ShaftSteps { get => GetPost().shaftSteps; set { var p = GetPost(); p.shaftSteps = value; SetPost(p); } }
 
         private static GhostFogInfo GetFog() { GhostEngine.GhostEngine_GetFogSettings(out var f); return f; }
         private static void SetFog(GhostFogInfo f) => GhostEngine.GhostEngine_SetFogSettings(ref f);
@@ -1918,6 +1985,49 @@ namespace GhostShell
 
         [Category("Volumetric Lighting"), DisplayName("Quality (steps, 8-64)")]
         public int VolSteps { get => GetFog().steps; set { var f = GetFog(); f.steps = value; SetFog(f); } }
+
+        // ---- World / Landscape ----
+        private static GhostWorldInfo GetWorld() { GhostEngine.GhostEngine_GetWorldSettings(out var w); return w; }
+        private static void SetWorld(GhostWorldInfo w) => GhostEngine.GhostEngine_SetWorldSettings(ref w);
+
+        [Category("World / Landscape"), DisplayName("View Distance (far plane, m)")]
+        public float ViewDistance { get => GetWorld().farPlane; set { var w = GetWorld(); w.farPlane = value; SetWorld(w); } }
+        [Category("World / Landscape"), DisplayName("Near Plane (m, raise it for very long views)")]
+        public float NearPlane { get => GetWorld().nearPlane; set { var w = GetWorld(); w.nearPlane = value; SetWorld(w); } }
+        [Category("World / Landscape"), DisplayName("Streaming Enabled")]
+        public bool WorldStreaming { get => GetWorld().streaming != 0; set { var w = GetWorld(); w.streaming = value ? 1 : 0; SetWorld(w); } }
+        [Category("World / Landscape"), DisplayName("Load Distance (0 = auto: view distance + 10)")]
+        public float LoadDist { get => GetWorld().loadDist; set { var w = GetWorld(); w.loadDist = value; SetWorld(w); } }
+        [Category("World / Landscape"), DisplayName("Unload Padding (m beyond load distance)")]
+        public float UnloadPad { get => GetWorld().unloadPad; set { var w = GetWorld(); w.unloadPad = value; SetWorld(w); } }
+        [Category("World / Landscape"), DisplayName("Load Budget (ms per frame)")]
+        public float LoadBudget { get => GetWorld().msBudget; set { var w = GetWorld(); w.msBudget = value; SetWorld(w); } }
+        [Category("World / Landscape"), DisplayName("Max Cell Loads Per Frame")]
+        public int MaxLoads { get => GetWorld().maxLoads; set { var w = GetWorld(); w.maxLoads = value; SetWorld(w); } }
+        [Category("World / Landscape"), DisplayName("Terrain LOD")]
+        public bool TerrainLod { get => GetWorld().lod != 0; set { var w = GetWorld(); w.lod = value ? 1 : 0; SetWorld(w); } }
+        [Category("World / Landscape"), DisplayName("LOD 1 Distance (half resolution)")]
+        public float LodDist1 { get => GetWorld().lodDist1; set { var w = GetWorld(); w.lodDist1 = value; SetWorld(w); } }
+        [Category("World / Landscape"), DisplayName("LOD 2 Distance (quarter resolution)")]
+        public float LodDist2 { get => GetWorld().lodDist2; set { var w = GetWorld(); w.lodDist2 = value; SetWorld(w); } }
+        [Category("World / Landscape"), DisplayName("Frustum Culling (objects + terrain)")]
+        public bool FrustumCulling { get => GetWorld().cull != 0; set { var w = GetWorld(); w.cull = value ? 1 : 0; SetWorld(w); } }
+        [Category("World / Landscape"), DisplayName("Show Cell Boxes (debug)")]
+        public bool ShowCells { get => GetWorld().showCells != 0; set { var w = GetWorld(); w.showCells = value ? 1 : 0; SetWorld(w); } }
+
+        [Category("World / Landscape"), DisplayName("Status"), ReadOnly(true)]
+        public string LandscapeStatus
+        {
+            get
+            {
+                GhostEngine.GhostEngine_GetWorldStats(out var s);
+                if (s.cells == 0) return "No Tile Maps in this scene";
+                string r = $"{s.cells} cells, {s.resident}/{s.slotsTotal} resident, {s.cellsDrawn} drawn, {s.trisDrawn / 1000}k tris, {s.objectsCulled} objects culled";
+                if (s.starved > 0) r += "   |   SLOTS FULL: lower View Distance or Load Distance";
+                return r;
+            }
+        }
+
 
 
         [Category("Audio"), DisplayName("Scene Music (plays during Play)")]
@@ -2484,6 +2594,48 @@ namespace GhostShell
                 if (strip.Items[i].Text == "File") { at = i + 1; break; }
             strip.Items.Insert(at, menu);
         }
+
+        private void BuildLandscapeMenu()
+        {
+            ToolStrip? strip = _form.MainMenuStrip;
+            if (strip == null) return;
+            var menu = new ToolStripMenuItem("Landscape");
+            void Add(string text, Action a) { var it = new ToolStripMenuItem(text); it.Click += (s, e) => a(); menu.DropDownItems.Add(it); }
+
+            Add("Expand: add 8 tiles around the selected Tile Map (3x3)", () => ExpandLandscape(1));
+            Add("Expand: 5x5", () => ExpandLandscape(2));
+            menu.DropDownItems.Add(new ToolStripSeparator());
+            Add("Stitch Edges (make borders between tiles match)", () =>
+            {
+                int n = GhostEngine.GhostEngine_StitchLandscape();
+                MessageBox.Show(_form, n == 0 ? "Every shared border already matches." : $"Matched {n} border points.",
+                    "Stitch Edges", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                Sync();
+            });
+
+            int at = strip.Items.Count;                       // before Help
+            for (int i = 0; i < strip.Items.Count; i++)
+                if (strip.Items[i].Text == "Help") { at = i; break; }
+            strip.Items.Insert(at, menu);
+        }
+
+        private void ExpandLandscape(int radius)
+        {
+            int sel = GhostEngine.GhostEngine_GetSelected();
+            var tm = new GhostTileMapInfo();
+            if (sel == 0 || GhostEngine.GhostEngine_GetTileMap(sel, ref tm) == 0 || tm.direction != 1)
+            {
+                MessageBox.Show(_form, "Select a floor Tile Map first.", "Expand Landscape", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            int made = GhostEngine.GhostEngine_ExpandLandscape(sel, radius);
+            MessageBox.Show(_form, made == 0 ? "Nothing was added (the area is already filled, or the object limit was reached)."
+                                             : $"Added {made} Tile Maps. Sculpt them, then use Landscape > Stitch Edges.",
+                "Expand Landscape", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            Sync();
+        }
+
+
         private void ArrayDuplicate(int sel)
         {
             var o = new GhostObjectInfo();
@@ -2547,6 +2699,7 @@ namespace GhostShell
 
             BuildWindowMenu();
             BuildEditMenu();
+            BuildLandscapeMenu();
         }
 
         private IDockContent GetContentFromPersistString(string key) => key switch
@@ -2809,6 +2962,8 @@ namespace GhostShell
                     Add("Point Light", "light", 1);
                     Add("Rect Area Light", "light", 2);
                     Add("Spot Light", "light", 3);
+                    Add("Sun Light (follows Sky Sphere)", "celestial", 0);
+                    Add("Moon Light (follows Sky Sphere)", "celestial", 1);
                     break;
                 case 1:
                     Add("Cube", "obj", 0);
@@ -2897,6 +3052,7 @@ namespace GhostShell
         private void Spawn(string kind, int type, int x, int y)
         {
             int id = kind == "light" ? GhostEngine.GhostEngine_AddLight(type, x, y)
+                : kind == "celestial" ? AddCelestialLight(type, x, y)
 : kind == "cam" ? GhostEngine.GhostEngine_AddCamera(type, x, y)
 : kind == "mod" ? GhostEngine.GhostEngine_AddMod(type, x, y)
 : kind == "volume" ? GhostEngine.GhostEngine_AddVolume(type, x, y)
@@ -2913,7 +3069,20 @@ namespace GhostShell
             Sync();
         }
 
-
+        private static int AddCelestialLight(int moon, int x, int y)
+        {
+            int id = GhostEngine.GhostEngine_AddLight(0, x, y);          // a Directional Light
+            if (id == 0) return 0;
+            var l = new GhostLightInfo();
+            if (GhostEngine.GhostEngine_GetLight(id, ref l) != 0)
+            {
+                l.celestial = moon != 0 ? 2 : 1;
+                if (moon != 0) { l.r = 0.60f; l.g = 0.68f; l.b = 0.92f; l.intensity = 0.35f; l.volumetric = 2.0f; }
+                GhostEngine.GhostEngine_SetLight(ref l);
+                GhostEngine.GhostEngine_SetEntityName(id, moon != 0 ? "Moon Light" : "Sun Light");
+            }
+            return id;
+        }
         private void OnViewportDrag(object? sender, DragEventArgs e)
         {
             string? payload = DropPayload(e);
@@ -3111,7 +3280,7 @@ namespace GhostShell
                 }
                 else if (GhostEngine.GhostEngine_GetLight(id, ref l) != 0)
                 {
-                    if (l.type == 0) proxy = new DirectionalLightProxy(id);
+                    if (l.type == 0) proxy = new SunLightProxy(id);
                     else if (l.type == 1) proxy = new PointLightProxy(id);
                     else if (l.type == 3) proxy = new SpotLightProxy(id);
                     else proxy = new RectLightProxy(id);
@@ -3147,7 +3316,10 @@ namespace GhostShell
                 GhostEngine.GhostEngine_GetShadowTuning(out GhostShadowTuning st);
                 GhostEngine.GhostEngine_GetPostSettings(out GhostPostInfo pi);
                 GhostEngine.GhostEngine_GetFogSettings(out GhostFogInfo fogi);
-                return (r, g, b, k, GhostEngine.GhostEngine_GetGameStartCamera(), se, ss, GhostEngine.GhostEngine_GetShadowResolution(), st, pi);
+                GhostEngine.GhostEngine_GetWorldStats(out GhostWorldStatsInfo wsi);
+                return (r, g, b, k, GhostEngine.GhostEngine_GetGameStartCamera(), se, ss, GhostEngine.GhostEngine_GetShadowResolution(), st, pi,
+                        wsi.cells, wsi.resident, wsi.starved);
+
             }
             var o = new GhostObjectInfo();
             if (GhostEngine.GhostEngine_GetObject(id, ref o) != 0)

@@ -613,6 +613,24 @@ static GhostResult CreateUploadBuffer(ID3D12Device* device,
     return FAILED(hr) ? GHOST_FAIL : GHOST_OK;
 }
 
+static GhostResult CreateDefaultBuffer(ID3D12Device* device, unsigned long long size, ID3D12Resource** out)
+{
+    D3D12_HEAP_PROPERTIES hp = {};
+    hp.Type = D3D12_HEAP_TYPE_DEFAULT;
+    D3D12_RESOURCE_DESC rd = {};
+    rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    rd.Width = size;
+    rd.Height = 1;
+    rd.DepthOrArraySize = 1;
+    rd.MipLevels = 1;
+    rd.Format = DXGI_FORMAT_UNKNOWN;
+    rd.SampleDesc.Count = 1;
+    rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    return FAILED(device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd,
+        D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(out))) ? GHOST_FAIL : GHOST_OK;
+}
+
+
 GhostResult GhostUploadMeshData(IGhostRHI* rhi, GhostPipeline* p, int meshId,
     const void* verts, unsigned int vertexCount, const unsigned int* indices, unsigned int indexCount)
 {
@@ -695,36 +713,82 @@ GhostResult GhostUploadTileMesh(IGhostRHI* rhi, GhostPipeline* p, int slot,
 
     const unsigned long long vbSize = (unsigned long long)vertexCount * sizeof(GhostVertex);
     const unsigned long long ibSize = (unsigned long long)indexCount * sizeof(unsigned int);
-    if (vbSize > 0xFFFFFFFFull || ibSize > 0xFFFFFFFFull) return GHOST_FAIL;
+    if (vbSize > 0x7FFFFFFFull || ibSize > 0x7FFFFFFFull) return GHOST_FAIL;
 
     ID3D12Device* d = rhi->GetDevice();
     GhostMesh& m = p->meshes[GHOST_TILE_MESH_BASE + slot];
-    D3D12_RANGE rr = { 0, 0 };
 
-    if (!m.vb || !p->tileVBMapped[slot] || p->tileVBCap[slot] < vbSize)        // (re)allocate only when it has to grow
+    // 1. fill the shared staging buffer (vertices, then indices on a 256 byte boundary)
+    const unsigned long long ibOff = (vbSize + 255ull) & ~255ull;
+    const unsigned long long need = ibOff + ibSize;
+    if (!p->tileStage || p->tileStageCap < need)
     {
         ComPtr<ID3D12Resource> nb;
-        if (CreateUploadBuffer(d, vbSize, &nb) != GHOST_OK) return GHOST_FAIL;
+        const unsigned long long cap = need + need / 4;                       // headroom: a slightly bigger cell doesn't reallocate
+        if (CreateUploadBuffer(d, cap, &nb) != GHOST_OK) return GHOST_FAIL;
         void* ptr = nullptr;
-        nb->Map(0, &rr, &ptr);
-        m.vb = nb;                                                           // the GPU is idle between frames, so the old one can go
-        p->tileVBMapped[slot] = ptr;
-        p->tileVBCap[slot] = (unsigned int)vbSize;
+        D3D12_RANGE rr = { 0, 0 };
+        if (FAILED(nb->Map(0, &rr, &ptr)) || !ptr) return GHOST_FAIL;
+        p->tileStage = nb;                                                     // the GPU is idle between frames, so the old one can go
+        p->tileStageMapped = ptr;
+        p->tileStageCap = cap;
     }
-    memcpy(p->tileVBMapped[slot], verts, (size_t)vbSize);
+    memcpy(p->tileStageMapped, verts, (size_t)vbSize);
+    memcpy((char*)p->tileStageMapped + ibOff, indices, (size_t)ibSize);
+
+    // 2. the VRAM buffers, only (re)created when the cell needs more room than the slot has
+    if (!m.vb || p->tileVBGpuCap[slot] < vbSize)
+    {
+        ComPtr<ID3D12Resource> g;
+        const unsigned long long cap = vbSize + vbSize / 8;
+        if (CreateDefaultBuffer(d, cap, &g) != GHOST_OK) return GHOST_FAIL;
+        m.vb = g;
+        p->tileVBGpuCap[slot] = (unsigned int)cap;
+        p->tileVBState[slot] = D3D12_RESOURCE_STATE_COPY_DEST;
+    }
+    if (!m.ib || p->tileIBGpuCap[slot] < ibSize)
+    {
+        ComPtr<ID3D12Resource> g;
+        const unsigned long long cap = ibSize + ibSize / 8;
+        if (CreateDefaultBuffer(d, cap, &g) != GHOST_OK) return GHOST_FAIL;
+        m.ib = g;
+        p->tileIBGpuCap[slot] = (unsigned int)cap;
+        p->tileIBState[slot] = D3D12_RESOURCE_STATE_COPY_DEST;
+    }
+
+    // 3. copy staging -> VRAM and put the buffers in their read states
+    ID3D12Resource* vbGpu = m.vb.Get();
+    ID3D12Resource* ibGpu = m.ib.Get();
+    ID3D12Resource* stage = p->tileStage.Get();
+    const D3D12_RESOURCE_STATES vbBefore = p->tileVBState[slot], ibBefore = p->tileIBState[slot];
+    auto trans = [](ID3D12Resource* r, D3D12_RESOURCE_STATES a, D3D12_RESOURCE_STATES b)
+        {
+            D3D12_RESOURCE_BARRIER x = {};
+            x.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+            x.Transition.pResource = r;
+            x.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+            x.Transition.StateBefore = a;
+            x.Transition.StateAfter = b;
+            return x;
+        };
+    GhostResult r = rhi->ExecuteOneShot([&](ID3D12GraphicsCommandList* cmd)
+        {
+            D3D12_RESOURCE_BARRIER b[2];
+            UINT n = 0;
+            if (vbBefore != D3D12_RESOURCE_STATE_COPY_DEST) b[n++] = trans(vbGpu, vbBefore, D3D12_RESOURCE_STATE_COPY_DEST);
+            if (ibBefore != D3D12_RESOURCE_STATE_COPY_DEST) b[n++] = trans(ibGpu, ibBefore, D3D12_RESOURCE_STATE_COPY_DEST);
+            if (n) cmd->ResourceBarrier(n, b);
+            cmd->CopyBufferRegion(vbGpu, 0, stage, 0, vbSize);
+            cmd->CopyBufferRegion(ibGpu, 0, stage, ibOff, ibSize);
+            b[0] = trans(vbGpu, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+            b[1] = trans(ibGpu, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_INDEX_BUFFER);
+            cmd->ResourceBarrier(2, b);
+        });
+    if (r != GHOST_OK) return GHOST_FAIL;
+    p->tileVBState[slot] = D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER;
+    p->tileIBState[slot] = D3D12_RESOURCE_STATE_INDEX_BUFFER;
+
     m.vbView = { m.vb->GetGPUVirtualAddress(), (UINT)vbSize, sizeof(GhostVertex) };
-
-    if (!m.ib || !p->tileIBMapped[slot] || p->tileIBCap[slot] < ibSize)
-    {
-        ComPtr<ID3D12Resource> nb;
-        if (CreateUploadBuffer(d, ibSize, &nb) != GHOST_OK) return GHOST_FAIL;
-        void* ptr = nullptr;
-        nb->Map(0, &rr, &ptr);
-        m.ib = nb;
-        p->tileIBMapped[slot] = ptr;
-        p->tileIBCap[slot] = (unsigned int)ibSize;
-    }
-    memcpy(p->tileIBMapped[slot], indices, (size_t)ibSize);
     m.ibView = { m.ib->GetGPUVirtualAddress(), (UINT)ibSize, DXGI_FORMAT_R32_UINT };
     m.indexCount = indexCount;
     return GHOST_OK;
@@ -736,7 +800,11 @@ void GhostReleaseTileMesh(GhostPipeline* p, int slot)
     p->meshes[GHOST_TILE_MESH_BASE + slot] = GhostMesh();
     p->tileVBMapped[slot] = p->tileIBMapped[slot] = nullptr;
     p->tileVBCap[slot] = p->tileIBCap[slot] = 0;
+    p->tileVBGpuCap[slot] = p->tileIBGpuCap[slot] = 0;
+    p->tileVBState[slot] = p->tileIBState[slot] = D3D12_RESOURCE_STATE_COMMON;
 }
+
+
 
 bool GhostUpdateTextureLevel0(IGhostRHI* rhi, GhostPipeline* p, int index,
     const unsigned char* rgba, unsigned int w, unsigned int h)
@@ -841,6 +909,17 @@ static GhostResult CreateDepthBuffer(ID3D12Device* device,
     return GHOST_OK;
 }
 
+// Release builds must not skip optimization: GhostPS.hlsl is a very large pixel shader
+static UINT GhostShaderFlags()
+{
+#if defined(_DEBUG)
+    return D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
+#else
+    return D3DCOMPILE_OPTIMIZATION_LEVEL3;
+#endif
+}
+
+
 static GhostResult CompileShaderFromFile(const wchar_t* path,
     const char* entry,
     const char* target,
@@ -849,7 +928,7 @@ static GhostResult CompileShaderFromFile(const wchar_t* path,
     ComPtr<ID3DBlob> err;
     HRESULT hr = D3DCompileFromFile(
         path, nullptr, nullptr, entry, target,
-        D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION, 0, out, &err);
+        GhostShaderFlags(), 0, out, &err);
     if (FAILED(hr))
     {
         if (err) OutputDebugStringA((char*)err->GetBufferPointer());
@@ -862,7 +941,7 @@ static GhostResult CompileShaderFromFileInc(const wchar_t* path, const char* ent
 {
     ComPtr<ID3DBlob> err;
     HRESULT hr = D3DCompileFromFile(path, nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, entry, target,
-        D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION, 0, out, &err);
+        GhostShaderFlags(), 0, out, &err);
     if (FAILED(hr))
     {
         if (err) OutputDebugStringA((char*)err->GetBufferPointer());
@@ -1119,7 +1198,7 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
     rp[4].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;        // the vertex shader samples the WPO map too
 
     // s0 linear/wrap, s1 linear/clamp, s2 point/wrap, s3 point/clamp
-    D3D12_STATIC_SAMPLER_DESC samplers[4] = {};
+    D3D12_STATIC_SAMPLER_DESC samplers[5] = {};
     const D3D12_FILTER filters[4] = {
         D3D12_FILTER_MIN_MAG_MIP_LINEAR, D3D12_FILTER_MIN_MAG_MIP_LINEAR,
         D3D12_FILTER_MIN_MAG_MIP_POINT,  D3D12_FILTER_MIN_MAG_MIP_POINT };
@@ -1142,11 +1221,15 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
         samplers[i].RegisterSpace = 0;
         samplers[i].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     }
-
+    // s4: comparison sampler for hardware PCF shadow lookups
+    samplers[4] = samplers[1];                       // linear + clamp, same visibility
+    samplers[4].Filter = D3D12_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT;
+    samplers[4].ComparisonFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+    samplers[4].ShaderRegister = 4;
     D3D12_ROOT_SIGNATURE_DESC rsd = {};
     rsd.NumParameters = 5;
     rsd.pParameters = rp;
-    rsd.NumStaticSamplers = 4;
+    rsd.NumStaticSamplers = 5;
     rsd.pStaticSamplers = samplers;
     rsd.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 
@@ -1576,8 +1659,8 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
         {
             delete p; return GHOST_FAIL;
         }
-
-        if (CreateUploadBuffer(device, GHOST_OBJECT_CB_STRIDE * GHOST_MAX_SHADOW_CASTERS, &p->shadowCB) != GHOST_OK)
+        //GHOST_MAX_SHADOW_CASTERS,
+        if (CreateUploadBuffer(device, GHOST_OBJECT_CB_STRIDE * GHOST_SHADOW_CB_SLOTS, &p->shadowCB) != GHOST_OK)
         {
             delete p; return GHOST_FAIL;
         }
@@ -2161,7 +2244,7 @@ void GhostDrawFog(IGhostRHI* rhi, GhostPipeline* p, ID3D12Resource* sceneCopy, I
 // ============================================================
 void GhostUpdateShadowCB(GhostPipeline* p, unsigned int slot, const GhostObjectCB* cb)
 {
-    if (slot >= GHOST_MAX_SHADOW_CASTERS || !p->shadowCBMapped) return;
+    if (slot >= GHOST_SHADOW_CB_SLOTS || !p->shadowCBMapped) return;
     memcpy((char*)p->shadowCBMapped + slot * GHOST_OBJECT_CB_STRIDE, cb, sizeof(GhostObjectCB));
 }
 
@@ -2205,9 +2288,10 @@ void GhostShadowSlice(IGhostRHI* rhi, GhostPipeline* p, int slice, const float* 
     cmd->SetGraphicsRoot32BitConstants(1, 24, k, 0);
 }
 
-void GhostShadowDraw(IGhostRHI* rhi, GhostPipeline* p, int meshId, unsigned int slot, unsigned int texIndex)
+void GhostShadowDraw(IGhostRHI* rhi, GhostPipeline* p, int meshId, unsigned int slot, unsigned int texIndex,
+    unsigned int firstIndex, unsigned int indexCount)
 {
-    if (meshId < 0 || meshId >= (int)(GHOST_MAX_MESHES + GHOST_MAX_SKINS + GHOST_MAX_TILEMAPS) || slot >= GHOST_MAX_SHADOW_CASTERS) return;
+    if (meshId < 0 || meshId >= (int)(GHOST_MAX_MESHES + GHOST_MAX_SKINS + GHOST_MAX_TILEMAPS) || slot >= GHOST_SHADOW_CB_SLOTS) return;
     const GhostMesh& m = p->meshes[meshId];
     if (!m.vb) return;
 
@@ -2222,9 +2306,8 @@ void GhostShadowDraw(IGhostRHI* rhi, GhostPipeline* p, int meshId, unsigned int 
 
     cmd->IASetVertexBuffers(0, 1, &m.vbView);
     cmd->IASetIndexBuffer(&m.ibView);
-    cmd->DrawIndexedInstanced(m.indexCount, 1, 0, 0, 0);
+    cmd->DrawIndexedInstanced(indexCount ? indexCount : m.indexCount, 1, firstIndex, 0, 0);
 }
-
 // Back to a readable texture, and restore the viewport the main pass expects
 void GhostShadowEnd(IGhostRHI* rhi, GhostPipeline* p, unsigned int w, unsigned int h)
 {

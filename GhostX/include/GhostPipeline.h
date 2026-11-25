@@ -110,10 +110,11 @@ static_assert(sizeof(GhostObjectCB) <= GHOST_OBJECT_CB_STRIDE, "GhostObjectCB to
 constexpr unsigned int       GHOST_MAX_TEXTURES = 1024;
 constexpr unsigned int       GHOST_MAX_SKINS = 16;              // animated models drawn at once
 
-constexpr unsigned int GHOST_MAX_TILEMAPS = 16;                                   // Tile Maps with their own generated mesh
+constexpr unsigned int GHOST_MAX_TILEMAPS = 32;                                   // resident landscape cells (cells in the world are unlimited)
 constexpr unsigned int GHOST_TILE_MESH_BASE = GHOST_MAX_MESHES + GHOST_MAX_SKINS;   // first Tile Map slot in meshes[]
 
-constexpr unsigned int GHOST_MAX_SHADOW_CASTERS = 512;          // was 256: this is also the object limit
+constexpr unsigned int GHOST_MAX_SHADOW_CASTERS = 2048;          // was 256: this is also the object limit
+constexpr unsigned int GHOST_SHADOW_CB_SLOTS = 2048;            // shadow constant buffer slots: one per caster, or per material run of a masked model
 constexpr unsigned int GHOST_SHADOW_SRV_INDEX = GHOST_MAX_TEXTURES + GHOST_MAX_SURFACES;   // last slot of the SRV heap
 
 /*
@@ -171,6 +172,14 @@ struct GhostPipeline
     void* tileVBMapped[GHOST_MAX_TILEMAPS] = {};     // Tile Map meshes keep their upload buffers mapped, so sculpting only copies bytes
     void* tileIBMapped[GHOST_MAX_TILEMAPS] = {};
     unsigned int tileVBCap[GHOST_MAX_TILEMAPS] = {}, tileIBCap[GHOST_MAX_TILEMAPS] = {};
+
+    // Tile Map meshes live in VRAM; one shared upload buffer stages every update
+    ComPtr<ID3D12Resource> tileStage;
+    void* tileStageMapped = nullptr;
+    unsigned long long     tileStageCap = 0;
+    unsigned int           tileVBGpuCap[GHOST_MAX_TILEMAPS] = {}, tileIBGpuCap[GHOST_MAX_TILEMAPS] = {};
+    D3D12_RESOURCE_STATES  tileVBState[GHOST_MAX_TILEMAPS] = {}, tileIBState[GHOST_MAX_TILEMAPS] = {};
+
     ComPtr<ID3D12Resource> splatUpload;                      // shared upload buffer for weight map updates
     unsigned long long     splatUploadSize = 0;
     void* skinMapped[GHOST_MAX_SKINS] = {};
@@ -318,7 +327,8 @@ void GhostUpdateShadowCB(GhostPipeline* pipeline, unsigned int slot, const Ghost
 void GhostShadowBegin(IGhostRHI* rhi, GhostPipeline* pipeline);
 void GhostShadowSlice(IGhostRHI* rhi, GhostPipeline* pipeline, int slice,
     const float* vp16, const float* posFar4, float mode);       // mode 0 = directional, 1 = point
-void GhostShadowDraw(IGhostRHI* rhi, GhostPipeline* pipeline, int meshId, unsigned int slot, unsigned int textureIndex);
+void GhostShadowDraw(IGhostRHI* rhi, GhostPipeline* pipeline, int meshId, unsigned int slot, unsigned int textureIndex,
+    unsigned int firstIndex = 0, unsigned int indexCount = 0);   // indexCount 0 = the whole mesh
 void GhostShadowEnd(IGhostRHI* rhi, GhostPipeline* pipeline, unsigned int w, unsigned int h);
 GhostResult GhostSetShadowSize(IGhostRHI* rhi, GhostPipeline* pipeline, unsigned int size);   // between frames only
 

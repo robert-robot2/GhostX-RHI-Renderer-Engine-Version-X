@@ -399,6 +399,38 @@ float GhostSky_AmbientIntensity(const GhostModEntity& e, float base)
     return Mix(base, fminf(base, V(SKY_AMB_LEVEL)), k);
 }
 
+bool GhostSky_CelestialLight(const GhostModEntity& e, bool moon, GhostVec3& travel, float& weight)
+{
+    weight = 0.0f;
+    travel = GhostVec3(0.0f, -1.0f, 0.0f);
+    if (e.values.size() < (size_t)GhostMods_ValueCount(GHOST_MOD_SKY)) return false;
+    auto V = [&](int p) { return e.values[(size_t)GhostMods_ParamOffset(GHOST_MOD_SKY, p)]; };
+    if (V(SKY_ENABLED) < 0.5f) return false;
+
+    float t = fmodf(GhostSky_GetTime(e), 24.0f);               // the same maths as GhostSky_Build
+    if (t < 0.0f) t += 24.0f;
+    const float ang = (t - 6.0f) / 24.0f * 2.0f * GHOST_PI;
+    const float yaw = V(SKY_SUN_YAW) * (GHOST_PI / 180.0f);
+    const GhostVec3 H = { sinf(yaw), 0.0f, cosf(yaw) };
+    const GhostVec3 sunDir = (H * cosf(ang) + GhostVec3(0, 1, 0) * sinf(ang)).Normalize();
+    const float elev = sinf(ang);
+
+    travel = moon ? sunDir : sunDir * -1.0f;                   // light travels from the body toward the ground
+
+    if (moon)
+    {
+        const float vis = V(SKY_HIDE_MOON) > 0.5f ? HideWindowVis(t, V(SKY_HIDE_MOON_START), V(SKY_HIDE_MOON_END), V(SKY_HIDE_FADE)) : 1.0f;
+        weight = Smooth(0.2f, -0.05f, elev) * vis;
+    }
+    else
+    {
+        const float vis = V(SKY_HIDE_SUN) > 0.5f ? HideWindowVis(t, V(SKY_HIDE_SUN_START), V(SKY_HIDE_SUN_END), V(SKY_HIDE_FADE)) : 1.0f;
+        weight = Smooth(-0.2f, 0.05f, elev) * vis;
+    }
+    weight = weight < 0.0f ? 0.0f : (weight > 1.0f ? 1.0f : weight);
+    return true;
+}
+
 int GhostSky_Build(const GhostModEntity& e, const std::vector<GhostTextureInfo>& textures,
     float dayScroll, float nightScroll, float cloudU, float cloudV, float timeSec, GhostSkyDraw out[9])
 {

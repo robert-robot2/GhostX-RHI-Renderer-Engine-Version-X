@@ -67,6 +67,7 @@ SamplerState sLinWrap : register(s0);
 SamplerState sLinClamp : register(s1);
 SamplerState sPtWrap : register(s2);
 SamplerState sPtClamp : register(s3);
+SamplerComparisonState sShadowCmp : register(s4);   // hardware PCF
 Texture2DArray<float> gShadowMap : register(t1);
 TextureCube<float4> gProbe[MAX_PROBES] : register(t2);      // Reflection Captures (descriptor table is contiguous with the shadow map)
 Texture2D<float4> gSsrColor : register(t12);                // last frame's HDR image (gamma-encoded floats)
@@ -315,22 +316,14 @@ static const float2 kPoisson[16] =
 };
 
 // One tap with a bilinear blend of the four nearest texels: a clean edge instead of stair-steps
+// Hardware PCF: one SampleCmp = bilinear blend of 4 depth comparisons (same result as the old 4 manual taps)
 float ShadowTapBilinear(float2 uv, float slice, float refDepth)
 {
-    const float size = shadowGlobal.y;
-    const float inv = 1.0f / size;
-    float2 t = uv * size - 0.5f;
-    float2 f = frac(t);
-    float2 base = (floor(t) + 0.5f) * inv;
-    float a = ShadowTap(base, slice, refDepth);
-    float b = ShadowTap(base + float2(inv, 0.0f), slice, refDepth);
-    float c = ShadowTap(base + float2(0.0f, inv), slice, refDepth);
-    float d = ShadowTap(base + float2(inv, inv), slice, refDepth);
-    return lerp(lerp(a, b, f.x), lerp(c, d, f.x), f.y);
+    return gShadowMap.SampleCmpLevelZero(sShadowCmp, float3(uv, slice), refDepth);
 }
 
 // 0 = fully shadowed, 1 = lit
-float ShadowFactor(Light L, float3 worldPos, float3 N, int type, float2 pixelPos)
+float ShadowFactor(Light L, float3 worldPos, float3 N, int type, float2 pixelPos, float viewDist)
 {
     const int    mode = (int)(shadowTune.x + 0.5f);
     const float  soft = (mode == 0) ? 1.0f : max(shadowTune.y, 0.05f);
@@ -370,10 +363,12 @@ float ShadowFactor(Light L, float3 worldPos, float3 N, int type, float2 pixelPos
     float2 uv = float2(clip.x / clip.w * 0.5f + 0.5f, 0.5f - clip.y / clip.w * 0.5f);
     if (uv.x < 0.0f || uv.x > 1.0f || uv.y < 0.0f || uv.y > 1.0f) return 1.0f;      // outside the map: lit
 
-    const float step = soft / shadowGlobal.y;                // filter radius unit: texels -> uv
-
-    if (mode == 0)                                           // sharp: one bilinear tap
+    // far pixels get one hardware-PCF tap (distance comes from the engine in shadowGlobal.z, 0 = off)
+    const bool farLod = shadowGlobal.z > 0.0f && viewDist > shadowGlobal.z;
+    if (mode == 0 || farLod)
         return ShadowTapBilinear(uv, slice, refDepth);
+
+    const float step = soft / shadowGlobal.y;                // filter radius unit: texels -> uv
 
     float lit = 0.0f;
     if (mode == 1)                                           // classic 3x3, point taps
@@ -574,13 +569,6 @@ float4 PSMain(PSInput input, bool isFront : SV_IsFrontFace) : SV_TARGET
     float3 N = normalize(input.worldNormal);
     if (!isFront) N = -N;
 
-    float4 texel = MappedTexel(input);
-    const int spriteFlags = (int)(objPad.y + 0.5f);
-    if ((spriteFlags & 1) != 0 && texel.a < 0.5f) discard;
-    if (usePbr && surfA.x < 0.5f && !isFront) discard;            // Two Sided off
-    const bool receive = objPad.z < 0.5f;
-    const int shadowSel = (int)(opacityP.y + 0.5f);     // 0 = every light shadows this surface, n = only light n-1 does (Tile Map: Directional Light)
-
     // ---- Tile Map weight map: how much of this layer the pixel shows (layers are drawn as additive passes) ----
     float splatW = 1.0f;
     if (tileP[0].x > 0.5f)
@@ -593,6 +581,15 @@ float4 PSMain(PSInput input, bool isFront : SV_IsFrontFace) : SV_TARGET
         splatW = (ch == 0) ? sw.r : ((ch == 1) ? sw.g : ((ch == 2) ? sw.b : sw.a));
         if (layerK > 0 && splatW < 0.004f) discard;
     }
+
+    float4 texel = MappedTexel(input);
+    const int spriteFlags = (int)(objPad.y + 0.5f);
+    if ((spriteFlags & 1) != 0 && texel.a < 0.5f) discard;
+    if (usePbr && surfA.x < 0.5f && !isFront) discard;            // Two Sided off
+    const bool receive = objPad.z < 0.5f;
+    const int shadowSel = (int)(opacityP.y + 0.5f);     // 0 = every light shadows this surface, n = only light n-1 does (Tile Map: Directional Light)
+
+ 
 
     // ---- alpha: masked = alpha test, translucent = blended ----
     float srcA = texel.a;
@@ -704,7 +701,7 @@ float4 PSMain(PSInput input, bool isFront : SV_IsFrontFace) : SV_TARGET
         float rawNoL = dot(N, toLight);
         float NoL = saturate(rawNoL);
         if (receive && NoL > 0.0f && atten > 0.0f && L.shadow.x >= 0.0f && (shadowSel == 0 || shadowSel == (int)i + 1))
-            atten *= lerp(1.0f, ShadowFactor(L, input.worldPos, Ng, type, input.pos.xy), shadowGlobal.x);
+            atten *= lerp(1.0f, ShadowFactor(L, input.worldPos, Ng, type, input.pos.xy, length(eye - input.worldPos)), shadowGlobal.x);
 
         // diffuse, with tinted wrap lighting for skin (Custom Data / Subsurface)
         float wrapped = NoL;
@@ -1269,11 +1266,23 @@ struct ShadowPSInput
 
 float ShadowPS(ShadowPSInput input) : SV_Depth
 {
-    // sprites cast the shadow of their opaque pixels (same frame mapping as the main pass)
-    if (((int)(objPad.y + 0.5f) & 1) != 0)
+    const int sf = (int)(objPad.y + 0.5f);
+    if ((sf & 1) != 0)                                        // sprites cast the shadow of their opaque pixels (same frame mapping as the main pass)
     {
         float2 uv = (input.uv - 0.5f) * uvParams.xy + 0.5f + uvParams.zw;
         if (gTexture.SampleLevel(sPtClamp, uv, 0).a < 0.5f) discard;
+    }
+    else if ((sf & 8) != 0)                                   // masked material (leaf cards, fences): the holes let light through
+    {
+        float2 uv = input.uv * uvParams.xy + uvParams.zw;
+        float4 t = gTexture.SampleLevel(sLinWrap, uv, 0);
+        float a = t.a;
+        if (alphaP.y > 0.5f)                                  // alpha from brightness, like the main pass
+        {
+            float lum = pow(saturate(dot(t.rgb, float3(0.2126f, 0.7152f, 0.0722f))), 1.0f / 2.2f);
+            a = (alphaP.y < 1.5f) ? lum : (1.0f - lum);
+        }
+        if (a < alphaP.z) discard;
     }
     if (shadowMode.x > 0.5f)                                  // point light: distance / far
         return saturate(length(input.worldPos - lightPosFar.xyz) / max(lightPosFar.w, 1e-3f));
