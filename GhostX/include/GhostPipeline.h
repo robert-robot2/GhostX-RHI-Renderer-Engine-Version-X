@@ -10,6 +10,7 @@
 #include <d3d12.h>
 #include <d3dcompiler.h>
 #include <wrl/client.h>
+#include <string>
 
 constexpr DXGI_FORMAT GHOST_HDR_FORMAT = DXGI_FORMAT_R16G16B16A16_FLOAT;   // scene color: gamma-encoded floats, values above 1.0 are kept
 constexpr unsigned int GHOST_MAX_PROBES = 8;                                // Reflection Captures sampled by the scene shader at once
@@ -43,8 +44,10 @@ struct GhostObjectCB            // matches cbuffer MVPBuffer (VS) and ObjectBuff
     float     wpoP[4];                    // x sway, y speed, z mid level, w time (s)
     float     opacityP[4];                // x opacity, y Tile Map shadow light selector
     float     tileP[8];                   // Tile Map: [0] weight texture A, [1] weight texture B, [2] layer of this pass, [4] gridX, [5] gridY, [6] 1 = checker look
+    float     sssP[4];                    // x transmission, y density, z min thickness, w reserved
+    float     foliP[12];                  // foliage (see FoliFillCB in GhostEngine.cpp)
 };
-static_assert(sizeof(GhostObjectCB) == 880, "GhostObjectCB layout must match the HLSL cbuffer");
+static_assert(sizeof(GhostObjectCB) == 944, "GhostObjectCB layout must match the HLSL cbuffer");
 
 constexpr unsigned int GHOST_SHADOW_SIZE = 1024;     // each shadow map is 1024 x 1024
 constexpr unsigned int GHOST_SHADOW_SLICES = 16;       // a directional light uses 1, a point or rect light 6
@@ -167,6 +170,8 @@ struct GhostPipeline
     ComPtr<ID3D12PipelineState>  pso;
     ComPtr<ID3D12PipelineState>  blendPso;      // translucent materials
     ComPtr<ID3D12PipelineState> addPso;         // Tile Map layers 1..n: added on top of layer 0 (same depth)
+    ComPtr<ID3D12PipelineState> foliagePso;         // instanced scene draw (null if the foliage shader failed: foliage stays off)
+    ComPtr<ID3D12PipelineState> foliageShadowPso;   // instanced shadow draw
     ComPtr<ID3D12PipelineState> iconPso;
     GhostMesh meshes[GHOST_MAX_MESHES + GHOST_MAX_SKINS + GHOST_MAX_TILEMAPS];   // then skin slots, then Tile Map slots
     void* tileVBMapped[GHOST_MAX_TILEMAPS] = {};     // Tile Map meshes keep their upload buffers mapped, so sculpting only copies bytes
@@ -251,6 +256,8 @@ struct GhostPipelineDesc { unsigned int width = 1280; unsigned int height = 720;
 // ---- Lifecycle ----
 GhostResult GhostPipelineCreate(IGhostRHI* rhi, const GhostPipelineDesc* desc, GhostPipeline** outPipeline);
 void        GhostPipelineDestroy(GhostPipeline* pipeline);
+std::wstring GhostShaderPath(const wchar_t* file);      // shaders\<file> next to the DLL (used by GhostSMAA)
+
 
 // CPU-side mesh data (picking only). Returns false for an unknown mesh id.
 bool GhostGetMeshCPU(GhostPipeline* pipeline, int meshId, GhostMeshCPU* out);
@@ -321,6 +328,22 @@ void GhostDrawSky(IGhostRHI* rhi, GhostPipeline* pipeline, unsigned int slot, un
 // depth = typeless D24S8 resting in DEPTH_WRITE (moved to PIXEL_SHADER_RESOURCE and back). Not for use inside a render pass override.
 void GhostDrawFog(IGhostRHI* rhi, GhostPipeline* p, ID3D12Resource* sceneCopy, ID3D12Resource* depth,
     D3D12_CPU_DESCRIPTOR_HANDLE dstRTV, unsigned int w, unsigned int h);
+
+// ---- Foliage: instance buffers (one per chunk; the CPU writes, the GPU reads) ----
+struct GhostInstanceBuffer
+{
+    ComPtr<ID3D12Resource>   res;
+    void* mapped = nullptr;
+    unsigned int             capacity = 0;      // in instances
+    D3D12_VERTEX_BUFFER_VIEW view = {};
+};
+GhostResult GhostInstanceBuffer_Update(IGhostRHI* rhi, GhostInstanceBuffer& b, const void* data, unsigned int count, unsigned int stride);
+void        GhostInstanceBuffer_Release(GhostInstanceBuffer& b);
+// Same as GhostDrawMesh, but with a second vertex stream and instanceCount instances
+void GhostDrawMeshInstanced(IGhostRHI* rhi, GhostPipeline* pipeline, int meshId, unsigned int slot, unsigned int textureIndex,
+    const GhostInstanceBuffer& inst, unsigned int instanceCount, unsigned int firstIndex = 0, unsigned int indexCount = 0);
+void GhostShadowDrawInstanced(IGhostRHI* rhi, GhostPipeline* pipeline, int meshId, unsigned int slot, unsigned int textureIndex,
+    const GhostInstanceBuffer& inst, unsigned int instanceCount, unsigned int firstIndex = 0, unsigned int indexCount = 0);
 
 // ---- Shadow pass ----
 void GhostUpdateShadowCB(GhostPipeline* pipeline, unsigned int slot, const GhostObjectCB* cb);

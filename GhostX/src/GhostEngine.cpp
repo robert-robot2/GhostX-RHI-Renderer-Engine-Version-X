@@ -27,6 +27,9 @@
 #include "../include/GhostGpuProf.h"
 #include "../include/GhostLightShafts.h"
 #include "../include/GhostWorldPart.h"
+#include "../include/GhostFoliage.h"
+#include "../include/GhostSMAA.h"
+#include "../include/GhostFXAA.h"
 #include <memory>
 #include <string.h>
 #include <filesystem>
@@ -47,6 +50,12 @@ static int        g_msaaWanted = 1;
 static GhostTAA   g_taa;
 static int        g_taaOn = 0;
 static float      g_taaSpeed = 1.0f;
+static GhostSMAA  g_smaa;
+static int        g_smaaOn = 0;
+static int        g_smaaQuality = 2;
+static GhostFXAA  g_fxaa;
+static int        g_fxaaOn = 0;
+static int        g_fxaaQuality = 1;
 static GhostPost  g_post;
 static GhostProbeSys g_probe;
 static GhostGpuProf g_prof;
@@ -57,6 +66,26 @@ static GhostWorldStats g_wstats;
 struct ProbeRt { int slot = -1; unsigned int sig = 0; float stable = 0.0f, timer = 0.0f; bool dirty = true, request = false, seen = false; };
 static std::map<int, ProbeRt> g_probeRt;                   // key = volume id
 
+// ---- Foliage (see the glue block at the end of this file) ----
+struct FoliageGpuChunk { GhostInstanceBuffer buf; unsigned int stamp = 0xFFFFFFFFu, count = 0; bool seen = false; };
+struct FoliShadowCaster { const GhostFoliageLayer* layer; const FoliageGpuChunk* gpu; int meshId; unsigned int slot, tex, first, count; };
+static std::map<std::pair<int, long long>, FoliageGpuChunk> g_foliGpu;            // (layer id, chunk key) -> instance buffer
+static bool  g_foliPainting = false, g_foliHavePrev = false, g_foliHaveBackup = false;
+static float g_foliTimer = 0.0f;
+static GhostVec3 g_foliPrev;
+static std::vector<GhostFoliageLayer> g_foliBackup;                               // the editor's foliage while a game runs
+static int   g_foliBackupNextId = 1, g_foliBackupActive = 0;
+static unsigned int g_foliBackupVersion = 0;
+static int   g_foliDrawnChunks = 0, g_foliDrawnInst = 0, g_foliShadowChunks = 0;
+static void FoliageTick(float dt);
+static void FoliageSync();
+static void FoliageReleaseAll();
+static void FoliageInstallHost();
+static bool FoliPaintBegin(int x, int y);
+static void OverlayFoliageBrush(int rw, int rh);
+static void FoliageDraw(const GhostMat4& view, const GhostMat4& proj, const GhostVec3& eye, const GhostFrustum& fr, bool cull, bool preview, unsigned int& slot);
+static void FoliageBuildShadowCasters(const GhostVec3& eye, const GhostVec3& forward, unsigned int& slot, std::vector<FoliShadowCaster>& out, GhostVec3& bmin, GhostVec3& bmax);
+static bool FoliShadowEligible(const GhostFoliageLayer& L, const GhostLight& l);
 
 // ---- Camera state ----
 static GhostVec3 g_eye = { 0.0f, 0.75f, -2.0f };
@@ -84,7 +113,7 @@ static bool       g_faceMode = false;     // F: a click picks a face, no Shift n
 static std::vector<int> g_multi;                 // extra selected ids. The primary is g_scene.selectedId
 static bool g_colMode = false;                   // H: the gizmo edits the collider
 static bool g_marquee = false, g_marqueeAdd = false;
-static int  g_mqX0 = 0, g_mqY0 = 0, g_mqX1 = 0, g_mqY1 = 0, g_collapseId = 0;
+static int  g_mqX0 = 0, g_mqY0 = 0, g_mqX1 = 0, g_mqY1 = 0, g_collapseId = 0, g_mqClickId = 0;
 static bool g_dragMoved = false;
 static bool IsSelected(int id) { return id != 0 && (id == g_scene.selectedId || std::find(g_multi.begin(), g_multi.end(), id) != g_multi.end()); }
 static std::vector<int> SelectedIds() { std::vector<int> v; if (g_scene.selectedId) v.push_back(g_scene.selectedId); for (int i : g_multi) v.push_back(i); return v; }
@@ -342,6 +371,7 @@ struct DimClick { bool valid = false; int kind = 0, index = 0, objectId = 0; flo
 static DimClick g_dimClick;
 static int g_selEdgeObj = 0, g_selEdgeLetter = -1;
 static bool LabelClick(int x, int y);
+static bool SelectToolActive();
 
 // Window pixel -> render pixel. clampOut = keep dragging when the cursor is over the bars.
 static bool PanelToRender(int px, int py, int& rx, int& ry, bool clampOut)
@@ -370,10 +400,13 @@ static const float ICON_HALF_PX = 18.0f;
 static const float ICON_PICK_PX = ICON_HALF_PX + 4.0f;
 // the last 2 * GHOST_MAX_LIGHTS constant-buffer slots are reserved for light icons + arrows
 
-static const unsigned int MAX_SCENE_OBJECTS = GHOST_MAX_OBJECTS - 2 * GHOST_MAX_LIGHTS - 2 * GHOST_MAX_CAMERAS - GHOST_MAX_MODS - GHOST_MAX_VOLUMES - 16 - GHOST_PFX_MAX_DRAWS - (unsigned int)GHOST_PFX_MAX_EMITTERS;
+static const unsigned int MAX_SCENE_OBJECTS = GHOST_MAX_OBJECTS - 2 * GHOST_MAX_LIGHTS - 2 * GHOST_MAX_CAMERAS - GHOST_MAX_MODS - GHOST_MAX_VOLUMES - 16 - GHOST_PFX_MAX_DRAWS - (unsigned int)GHOST_PFX_MAX_EMITTERS - (unsigned int)GHOST_FOLIAGE_MAX_LAYERS * 8;
 
 // Hard cap on objects (shadow casters are limited to the same number)
 static const unsigned int MAX_SCENE_OBJECT_COUNT = GHOST_MAX_SHADOW_CASTERS;
+
+
+
 
 // Draw slots the main pass needs: one per run of faces that share a material, plus 2 for the face highlight
 static unsigned int SceneDrawSlots()
@@ -466,6 +499,8 @@ int GhostEngine_Init(HWND hwnd, unsigned int width, unsigned int height)
     //add failure is not fatal, MSAA just stays unavailable??
     GhostMSAA_Init(g_rhi, g_msaa);
     GhostTAA_Init(g_rhi, g_taa);                  // failure is not fatal: TAA just stays unavailable
+    GhostSMAA_Init(g_rhi, g_smaa);                // failure is not fatal: SMAA just stays unavailable
+    GhostFXAA_Init(g_rhi, g_fxaa);                // failure is not fatal: FXAA just stays unavailable
     if (GhostPost_Init(g_rhi, g_post) != GHOST_OK) return -1;     // the HDR path is not optional
     GhostProbe_Init(g_rhi, g_probe);                          // not fatal: without it reflection captures stay unavailable
     GhostWorld_Load(g_world);                                 // view distance + streaming settings from the last session
@@ -530,6 +565,7 @@ int GhostEngine_Init(HWND hwnd, unsigned int width, unsigned int height)
     }
     // ---- The default camera: always present, gets id 1 ----
     GhostScene_AddCamera(g_scene);
+    FoliageInstallHost();
     g_vp[0].alive = true;
     g_vp[0].visible = true;
     /*
@@ -833,17 +869,12 @@ static void PruneMulti()
     if (!g_scene.selectedId && !g_multi.empty()) { g_scene.selectedId = g_multi.back(); g_multi.pop_back(); }
 }
 
-static void FinishMarquee()
+// Objects whose center is inside the box being dragged (used by the preview and by the final selection)
+static void MarqueeHits(std::vector<int>& hits)
 {
-    const bool tiny = abs(g_mqX1 - g_mqX0) < 5 && abs(g_mqY1 - g_mqY0) < 5;
-    if (tiny)                                         // a plain click on empty space
-    {
-        if (!g_marqueeAdd) { g_scene.selectedId = 0; g_multi.clear(); }
-        return;
-    }
+    hits.clear();
     const float x0 = (float)(g_mqX0 < g_mqX1 ? g_mqX0 : g_mqX1), x1 = (float)(g_mqX0 < g_mqX1 ? g_mqX1 : g_mqX0);
     const float y0 = (float)(g_mqY0 < g_mqY1 ? g_mqY0 : g_mqY1), y1 = (float)(g_mqY0 < g_mqY1 ? g_mqY1 : g_mqY0);
-    std::vector<int> hits;
     for (const GhostObject& o : g_scene.objects)
     {
         const GhostVec3 mn = GhostObject_Min(o), mx = GhostObject_Max(o);
@@ -853,6 +884,24 @@ static void FinishMarquee()
         float sx, sy;
         if (WorldToScreen(c, sx, sy) && sx >= x0 && sx <= x1 && sy >= y0 && sy <= y1) hits.push_back(o.id);
     }
+}
+
+static void FinishMarquee()
+{
+    const bool tiny = abs(g_mqX1 - g_mqX0) < 5 && abs(g_mqY1 - g_mqY0) < 5;
+    if (tiny)                                         // a plain click
+    {
+        if (g_mqClickId)                              // Step B: the click landed on an object
+        {
+            g_multi.clear(); g_scene.selectedId = g_mqClickId; g_scene.selectedFace = -1;
+            g_mqClickId = 0;
+            return;
+        }
+        if (!g_marqueeAdd) { g_scene.selectedId = 0; g_multi.clear(); }
+        return;
+    }
+    std::vector<int> hits;
+    MarqueeHits(hits);
     if (!g_marqueeAdd) { g_scene.selectedId = 0; g_multi.clear(); }
     for (int id : hits)
         if (!IsSelected(id)) { if (g_scene.selectedId) g_multi.push_back(g_scene.selectedId); g_scene.selectedId = id; }
@@ -1046,12 +1095,13 @@ void GhostEngine_MouseDown(int px, int py, int button)
     int x, y;
     if (!PanelToRender(px, py, x, y, false)) return;          // clicked the dark bars
     if (g_paintMode && PaintBegin(x, y)) return;              // paint mode: the brush owns the left button
+    if (GhostFoliage_Set().brush.active && FoliPaintBegin(x, y)) return;
     if (LabelClick(x, y)) return;
     if (GizmoBegin(x, y)) return;
     int id = PickAt(x, y);
     const bool mod = ((GetAsyncKeyState(VK_SHIFT) | GetAsyncKeyState(VK_CONTROL)) & 0x8000) != 0;
 
-    g_dragging = false; g_collapseId = 0; g_dragMoved = false; g_marquee = false;
+    g_dragging = false; g_collapseId = 0; g_dragMoved = false; g_marquee = false; g_mqClickId = 0;
 
     if (g_faceMode && id != 0)                                // F: a click picks a face
         if (GhostObject* ob = FindObject(id))
@@ -1064,6 +1114,15 @@ void GhostEngine_MouseDown(int px, int py, int button)
             return;
         }
     if (mod && id != 0) { ToggleSelect(id); return; }
+    // Select tool: a drag that starts on an unselected object draws a box (a plain click still selects it on release)
+    if (!mod && id != 0 && !g_faceMode && SelectToolActive() && FindObject(id) && !IsSelected(id))
+    {
+        g_marquee = true; g_marqueeAdd = false;
+        g_mqX0 = g_mqX1 = x; g_mqY0 = g_mqY1 = y;
+        g_mqClickId = id;
+        return;
+    }
+
     if (mod || id == 0)                                       // empty space: start a selection box
     {
         g_marquee = true; g_marqueeAdd = mod;
@@ -1144,8 +1203,8 @@ void GhostEngine_MouseUp(int x, int y, int button)
     if (button != 0) return;
     if (g_marquee) FinishMarquee();
     else if (g_collapseId && !g_dragMoved) { g_multi.clear(); g_scene.selectedId = g_collapseId; }   // plain click on a group member
-    g_marquee = false; g_collapseId = 0;
-    g_gizmo.active = false; g_painting = false;
+    g_marquee = false; g_collapseId = 0; g_mqClickId = 0;
+    g_gizmo.active = false; g_painting = false; g_foliPainting = false;
     g_dragging = false;
     g_dragId = 0;
 }
@@ -1562,7 +1621,9 @@ static void RenderShadowPass(GhostSceneCB& cb, const GhostVec3& eye, const Ghost
         casters.push_back({ &o, slot, texIdx, 0, 0 });
         slot++;
     }
-    if (casters.empty()) return;
+    static std::vector<FoliShadowCaster> foliCasters;
+    FoliageBuildShadowCasters(eye, forward, slot, foliCasters, bmin, bmax);
+    if (casters.empty() && foliCasters.empty()) return;
 
     GhostVec3 center = (bmin + bmax) * 0.5f;
     float R = (bmax - bmin).Length() * 0.5f;
@@ -1598,6 +1659,8 @@ static void RenderShadowPass(GhostSceneCB& cb, const GhostVec3& eye, const Ghost
 
         bool has = false;
         for (const Caster& c : casters) if (ShadowEligible(*c.o, l)) { has = true; break; }
+
+        if (!has) for (const FoliShadowCaster& fc : foliCasters) if (FoliShadowEligible(*fc.layer, l)) { has = true; break; }
         if (!has) continue;
 
         const bool dirL = (l.type == GhostLightType::Directional);
@@ -1662,6 +1725,9 @@ static void RenderShadowPass(GhostSceneCB& cb, const GhostVec3& eye, const Ghost
         GhostShadowSlice(g_rhi, g_pipeline, j.slice, j.vp, j.posFar, j.mode);
         for (const Caster& c : casters)
             if (ShadowEligible(*c.o, *j.light)) GhostShadowDraw(g_rhi, g_pipeline, DrawMeshOf(*c.o), c.slot, c.tex, c.first, c.count);
+        for (const FoliShadowCaster& fc : foliCasters)
+            if (FoliShadowEligible(*fc.layer, *j.light))
+                GhostShadowDrawInstanced(g_rhi, g_pipeline, fc.meshId, fc.slot, fc.tex, fc.gpu->buf, fc.gpu->count, fc.first, fc.count);
     }
     GhostShadowEnd(g_rhi, g_pipeline, rw, rh);
 }
@@ -1673,6 +1739,7 @@ static void RenderShadowPass(GhostSceneCB& cb, const GhostVec3& eye, const Ghost
 //  Main view only. Everything except the FPS counter is editor-only.
 // ============================================================
 static GhostViewSettings g_viewCfg = { 1, 0, 1, 1,   0, 7, 1,   0, 0,   1.0f,   20,   0, 0, 2, 2 };
+static bool SelectToolActive() { return g_viewCfg.tool == 0; }
 static GhostOverlay      g_ov;
 static float             g_fps = 0.0f;
 static float g_timeSec = 0.0f;       // drives WPO sway
@@ -2410,8 +2477,8 @@ static void OverlaySpotCone(const GhostLight& l)
 }
 
 // ---- Utility volumes: box / sphere wireframes ----
-static const float kVolColor[GHOST_VOL_COUNT][3] = { { 0.35f, 0.85f, 1.00f },{ 0.75f, 0.60f, 1.00f } };
-static const char* kVolLabel[GHOST_VOL_COUNT] = { "Reflection Capture", "Fog Volume" };
+static const float kVolColor[GHOST_VOL_COUNT][3] = { { 0.35f, 0.85f, 1.00f },{ 0.75f, 0.60f, 1.00f },{ 1.00f, 0.55f, 0.75f } };
+static const char* kVolLabel[GHOST_VOL_COUNT] = { "Reflection Capture", "Fog Volume", "Post Process Volume" };
 
 static void OverlayVolumeShape(const GhostVolume& v, const GhostMat4& M, float inset, const float* col, float width, bool depth)
 {
@@ -2510,6 +2577,28 @@ static void OverlayLandscapeCells()
     }
 }
 
+// The selection box (works in every mode) plus a preview of what it will select
+static void OverlayMarquee(const GhostVec3& eye)
+{
+    if (!g_marquee || (abs(g_mqX1 - g_mqX0) <= 4 && abs(g_mqY1 - g_mqY0) <= 4)) return;
+
+    std::vector<int> hits;
+    MarqueeHits(hits);
+    for (int id : hits) if (const GhostObject* o = FindObject(id)) OverlayBounds(*o, eye);
+
+    const int   xs[4] = { g_mqX0, g_mqX1, g_mqX1, g_mqX0 }, ys[4] = { g_mqY0, g_mqY0, g_mqY1, g_mqY1 };
+    const float dist = fmaxf(g_world.nearPlane * 3.0f, 1.0f);      // in front of the near plane, so it never clips
+    GhostVec3 P[4];
+    for (int k = 0; k < 4; k++)
+    {
+        GhostVec3 ro, rd;
+        if (!ScreenRay(xs[k], ys[k], ro, rd)) return;
+        P[k] = ro + rd * dist;
+    }
+    const float bc[4] = { 0.40f, 0.80f, 1.0f, 1.0f };
+    for (int k = 0; k < 4; k++) { g_ov.Line(P[k], P[(k + 1) % 4], bc, 1.5f, false); g_ov.Point(P[k], 5.0f, bc); }
+}
+
 
 static void DrawViewportOverlay(const GhostMat4& view, const GhostMat4& proj, const GhostVec3& eye,
     unsigned int rw, unsigned int rh, bool editing)
@@ -2575,27 +2664,26 @@ static void DrawViewportOverlay(const GhostMat4& view, const GhostMat4& proj, co
     }
     if (g_world.showCells) OverlayLandscapeCells();
 
-    // This May Be incorrect Order
+    if (editing)
+    {
+        if (s.showSelection)
+            for (int mid : g_multi) if (GhostObject* mo = FindObject(mid)) OverlayBounds(*mo, eye);   // rest of a group selection
+        OverlayMarquee(eye);                                                                          // drag box + preview, every mode
+    }
     if (editing && g_faceMode)
     {
-        for (int mid : g_multi) if (GhostObject* mo = FindObject(mid)) OverlayBounds(*mo, eye);
-        if (g_marquee && (abs(g_mqX1 - g_mqX0) > 4 || abs(g_mqY1 - g_mqY0) > 4))
-        {
-            const int xs[4] = { g_mqX0, g_mqX1, g_mqX1, g_mqX0 }, ys[4] = { g_mqY0, g_mqY0, g_mqY1, g_mqY1 };
-            GhostVec3 P[4];
-            bool ok = true;
-            for (int k = 0; k < 4; k++) { GhostVec3 ro, rd; if (ScreenRay(xs[k], ys[k], ro, rd)) P[k] = ro + rd * 1.0f; else ok = false; }
-            const float bc[4] = { 0.40f, 0.80f, 1.0f, 1.0f };
-            if (ok) for (int k = 0; k < 4; k++) g_ov.Line(P[k], P[(k + 1) % 4], bc, 1.5f, false);
-        }
         const float c[4] = { 0.30f, 0.95f, 0.95f, 1.0f };
         g_ov.TextPx(14.0f, (float)rh - 34.0f, 20.0f, "FACE PICK MODE  (press F to leave)", c);
     }
+
+
     if (editing && g_colMode)
     {
         const float rc[4] = { 1.0f, 0.35f, 0.35f, 1.0f };
         g_ov.TextPx(14.0f, (float)rh - 58.0f, 20.0f, "COLLIDER EDIT MODE  (H to leave. Move = offset, Rotate = angle, Scale = size)", rc);
     }
+
+
     if (editing && !g_multi.empty())
     {
         char t[32];
@@ -2603,7 +2691,10 @@ static void DrawViewportOverlay(const GhostMat4& view, const GhostMat4& proj, co
         const float mc[4] = { 0.40f, 0.80f, 1.0f, 1.0f };
         g_ov.TextPx(14.0f, (float)rh - 82.0f, 20.0f, t, mc);
     }
+
     if (editing && g_paintMode) OverlayPaintBrush((int)rw, (int)rh);
+    if (editing && GhostFoliage_Set().brush.active) OverlayFoliageBrush((int)rw, (int)rh);
+
     if (s.showFps)
     {
         char t[48];
@@ -2652,6 +2743,7 @@ static void FillMaterialCB(GhostObjectCB& cb, const GhostMaterial& m)
     }
     cb.surfA[0] = (float)m.twoSided; cb.surfA[1] = m.refractionIOR; cb.surfA[2] = m.reflectionRotDeg * d2r; cb.surfA[3] = m.anisotropy;
     cb.surfB[0] = m.sssColor[0]; cb.surfB[1] = m.sssColor[1]; cb.surfB[2] = m.sssColor[2]; cb.surfB[3] = m.sssAmount;
+    cb.sssP[0] = m.sssTransmission; cb.sssP[1] = m.sssDensity; cb.sssP[2] = m.sssThickness; cb.sssP[3] = 0.0f;
     cb.wpoP[0] = m.wpoSway; cb.wpoP[1] = m.wpoSpeed; cb.wpoP[2] = m.wpoMid; cb.wpoP[3] = g_timeSec;
     cb.opacityP[0] = m.opacity;
 }
@@ -2976,6 +3068,9 @@ static void DrawSceneColor(const GhostMat4& view, const GhostMat4& proj, const G
             f = g;
         }
     }
+
+
+    FoliageDraw(view, proj, eye, fr, cullOn, preview, slot);
     std::stable_sort(g_translucent.begin(), g_translucent.end(),
         [](const TransDraw& a, const TransDraw& b) { return a.dist2 > b.dist2; });
     for (const TransDraw& t : g_translucent)
@@ -3226,10 +3321,9 @@ static void FillFogCB(GhostSceneCB& cb, const GhostVec3& eye, const GhostVec3& f
 // ============================================================
 //  SSR: previous-frame camera for the ray march in PSMain
 // ============================================================
-static void FillSsrCB(GhostSceneCB& cb, int vp)
+static void FillSsrCB(GhostSceneCB& cb, int vp, const GhostPostSettings& s)
 {
     cb.ssrA[0] = 0.0f;                                         // 0 = off (a first frame, or no history yet)
-    const GhostPostSettings& s = g_scene.post;
     if (!g_post.ssrReady || !s.ssrEnabled || !GhostPost_SSRHistoryValid(g_post, vp)) return;
     const float* pv = g_post.ssrPrevView[vp];
     const float* pp = g_post.ssrPrevProj[vp];
@@ -3244,9 +3338,8 @@ static void FillSsrCB(GhostSceneCB& cb, int vp)
 // ============================================================
 //  Light shafts: one job per Directional Light with God Rays Strength > 0
 // ============================================================
-static int BuildShaftJobs(const GhostMat4& view, const GhostMat4& proj, GhostShaftJob* out)
+static int BuildShaftJobs(const GhostMat4& view, const GhostMat4& proj, const GhostPostSettings& s, GhostShaftJob* out)
 {
-    const GhostPostSettings& s = g_scene.post;
     int n = 0;
     for (const GhostLight& l : g_scene.lights)
     {
@@ -3274,7 +3367,96 @@ static int BuildShaftJobs(const GhostMat4& view, const GhostMat4& proj, GhostSha
     }
     return n;
 }
+// ============================================================
+//  Post Process Volumes: the post settings the camera at `eye` sees
+// ============================================================
+// 0..1: how far inside the volume the point is (soft edge = Blend Distance, like Fog Volumes). Unbound = 1 everywhere.
+static float PostVolumeWeight(const GhostVolume& v, const GhostVec3& p)
+{
+    if (v.p[PPV_UNBOUND] > 0.5f) return 1.0f;
+    const float d2r = GHOST_PI / 180.0f;
+    const GhostMat4 inv = GhostMat4::RotationZ(-v.rotationDeg.z * d2r) * GhostMat4::RotationX(-v.rotationDeg.x * d2r)
+        * GhostMat4::RotationY(-v.rotationDeg.y * d2r) * GhostMat4::Translation(-v.position.x, -v.position.y, -v.position.z);
+    const GhostVec3 lp = XformPoint(inv, p, 1.0f);
+    const float blend = fmaxf(v.blend, 0.001f);
+    float d;
+    if (v.shape == GHOST_VOLSHAPE_SPHERE) d = v.radius - lp.Length();
+    else
+    {
+        const float dx = v.size.x * 0.5f - fabsf(lp.x), dy = v.size.y * 0.5f - fabsf(lp.y), dz = v.size.z * 0.5f - fabsf(lp.z);
+        d = fminf(dx, fminf(dy, dz));
+    }
+    const float w = d / blend;
+    return w < 0.0f ? 0.0f : (w > 1.0f ? 1.0f : w);
+}
 
+static GhostPostSettings EffectivePost(const GhostVec3& eye)
+{
+    GhostPostSettings s = g_scene.post;
+
+    struct Item { const GhostVolume* v; float w, size; };
+    static std::vector<Item> items;
+    items.clear();
+    for (const GhostVolume& v : g_scene.volumes)
+    {
+        if (v.type != GHOST_VOL_POST || !v.enabled) continue;
+        if (((int)(v.p[PPV_MASK] + 0.5f)) == 0) continue;
+        const float w = PostVolumeWeight(v, eye) * v.p[PPV_WEIGHT];
+        if (w <= 0.0005f) continue;
+        const float size = v.p[PPV_UNBOUND] > 0.5f ? 1e30f
+            : (v.shape == GHOST_VOLSHAPE_SPHERE ? v.radius * v.radius * v.radius * 4.19f : v.size.x * v.size.y * v.size.z);
+        items.push_back({ &v, w, size });
+    }
+    if (items.empty()) return s;
+
+    // lowest priority first, so the highest wins; equal priority: the bigger volume first, so the smaller one wins
+    std::stable_sort(items.begin(), items.end(), [](const Item& a, const Item& b)
+        { return a.v->priority != b.v->priority ? a.v->priority < b.v->priority : a.size > b.size; });
+
+    auto mix = [](float a, float b, float t) { return a + (b - a) * t; };
+    for (const Item& it : items)
+    {
+        const float* p = it.v->p;
+        const float  w = it.w;
+        const int    mask = (int)(p[PPV_MASK] + 0.5f);
+
+        if (mask & PPVO_EXPOSURE) s.exposureEV = mix(s.exposureEV, p[PPV_EXPOSURE], w);
+        if (mask & PPVO_BLOOM)
+        {
+            s.bloomIntensity = mix(s.bloomEnabled ? s.bloomIntensity : 0.0f, p[PPV_BLOOM_INTENSITY], w);   // "off" counts as 0
+            s.bloomThreshold = mix(s.bloomThreshold, p[PPV_BLOOM_THRESHOLD], w);
+            s.bloomEnabled = s.bloomIntensity > 0.001f ? 1 : 0;
+        }
+        if (mask & PPVO_SSAO)
+        {
+            s.ssaoStrength = mix(s.ssaoEnabled ? s.ssaoStrength : 0.0f, p[PPV_SSAO_STRENGTH], w);
+            s.ssaoRadius = mix(s.ssaoRadius, p[PPV_SSAO_RADIUS], w);
+            s.ssaoEnabled = s.ssaoStrength > 0.001f ? 1 : 0;
+        }
+        if (mask & PPVO_SSGI)
+        {
+            s.ssgiIntensity = mix(s.ssgiEnabled ? s.ssgiIntensity : 0.0f, p[PPV_SSGI_INTENSITY], w);
+            s.ssgiEnabled = s.ssgiIntensity > 0.001f ? 1 : 0;
+        }
+        if (mask & PPVO_SSR)
+        {
+            s.ssrIntensity = mix(s.ssrEnabled ? s.ssrIntensity : 0.0f, p[PPV_SSR_INTENSITY], w);
+            s.ssrEnabled = s.ssrIntensity > 0.001f ? 1 : 0;
+        }
+        if (mask & PPVO_SHAFTS)
+        {
+            s.shaftIntensity = mix(s.shaftEnabled ? s.shaftIntensity : 0.0f, p[PPV_SHAFT_INTENSITY], w);
+            s.shaftEnabled = s.shaftIntensity > 0.001f ? 1 : 0;
+        }
+        if (mask & PPVO_TONE)
+        {
+            if (w >= 0.5f) s.toneMode = (int)(p[PPV_TONE_MODE] + 0.5f);     // a curve can't be blended: it switches at half weight
+            s.whitePoint = mix(s.whitePoint, p[PPV_WHITE_POINT], w);
+        }
+    }
+    GhostPostSettings_Clamp(s);
+    return s;
+}
 
 // ============================================================
 //  One viewport = one surface + one camera. The GPU is idle between viewports
@@ -3327,7 +3509,7 @@ static void RenderViewport(int vp)
     if (msaa) { if (GhostMSAA_Ensure(g_rhi, g_msaa, vp, rw, rh) != GHOST_OK) return; }
     else      GhostMSAA_Release(g_msaa, vp);
     // TAA targets follow the render size (freed again when TAA is off)
-    bool taa = g_taaOn && !msaa && g_taa.ready && !preview;
+    bool taa = g_taaOn && !g_smaaOn && !g_fxaaOn && !msaa && g_taa.ready && !preview;
     if (taa && GhostTAA_Ensure(g_rhi, g_taa, vp, rw, rh) != GHOST_OK) taa = false;
     if (g_lastRW[vp] != rw || g_lastRH[vp] != rh)      // resolution changed: the old TAA history is the wrong size/content
     {
@@ -3335,8 +3517,18 @@ static void RenderViewport(int vp)
         g_lastRW[vp] = rw; g_lastRH[vp] = rh;
     }
     if (!taa) GhostTAA_Release(g_taa, vp);
+    bool smaa = g_smaaOn && !msaa && !taa && g_smaa.ready && !preview;
+    if (smaa && GhostSMAA_Ensure(g_rhi, g_smaa, vp, rw, rh) != GHOST_OK) smaa = false;
+    if (!smaa) GhostSMAA_Release(g_smaa, vp);
+    bool fxaa = g_fxaaOn && !msaa && !taa && !smaa && g_fxaa.ready && !preview;
+    if (fxaa && GhostFXAA_Ensure(g_rhi, g_fxaa, vp, rw, rh) != GHOST_OK) fxaa = false;
+    if (!fxaa) GhostFXAA_Release(g_fxaa, vp);
+    g_fxaa.quality = g_fxaaQuality;
+
+
     if (GhostPost_Ensure(g_rhi, g_post, vp, rw, rh) != GHOST_OK) return;    // 1x HDR scene color for this viewport
-    const bool ssrWant = !preview && g_post.ssrReady && g_scene.post.ssrEnabled;
+    const GhostPostSettings postFx = preview ? GhostPostSettings() : EffectivePost(cam->position);   // Post Process Volumes
+    const bool ssrWant = !preview && g_post.ssrReady && postFx.ssrEnabled;
     GhostPost_SSRUpdateTargets(g_rhi, g_post, vp, ssrWant, rw, rh);        // history exists only while SSR is on
 
     float jx = 0.0f, jy = 0.0f;
@@ -3395,7 +3587,7 @@ static void RenderViewport(int vp)
         BuildSceneCB(g_scene, sceneCB,g_timeSec);
         FillProbeCB(sceneCB);
         FillFogCB(sceneCB, eye, forward, right, proj, rw, rh, taa);
-        FillSsrCB(sceneCB, vp);
+        FillSsrCB(sceneCB, vp, postFx);
         GhostProf_Mark(g_rhi, g_prof, GP_PRESHADOW);
         RenderShadowPass(sceneCB, eye, forward, rw, rh);
         GhostProf_Mark(g_rhi, g_prof, GP_SHADOW);
@@ -3443,8 +3635,8 @@ DrawSceneColor(view, proj, eye, true, overlays, preview, preview ? g_vp[vp].solo
     {
         ID3D12Resource* hdrRes = GhostPost_Resource(g_post, vp);
         const bool fogOn = !preview && g_pipeline->fogPso && FogActive();
-        const bool aoOn = !preview && g_post.ssaoReady && g_scene.post.ssaoEnabled;
-        const bool giOn = !preview && g_post.ssgiReady && g_scene.post.ssgiEnabled;
+        const bool aoOn = !preview && g_post.ssaoReady && postFx.ssaoEnabled;
+        const bool giOn = !preview && g_post.ssgiReady && postFx.ssgiEnabled;
         const float proj6[6] = { proj.m[0][0], proj.m[1][1], proj.m[0][2], proj.m[1][2], proj.m[2][2], proj.m[2][3] };   // the matrix the scene was drawn with (jittered under TAA)
         const float aoNoise = taa ? (float)(g_frameNo % 64u) * 5.588238f : 0.0f;
         const float giNoise = (float)(g_frameNo % 64u) * 5.588238f;                // GI noise changes every frame in every AA mode: the temporal pass averages it
@@ -3460,7 +3652,7 @@ DrawSceneColor(view, proj, eye, true, overlays, preview, preview ? g_vp[vp].solo
             memcpy(gf.vp, giVP.m, 16 * sizeof(float));
         }
         GhostShaftJob shaftJobs[GHOST_MAX_SHAFT_LIGHTS];
-        const int  shaftN = (!preview && g_shafts.ready && g_scene.post.shaftEnabled) ? BuildShaftJobs(view, projClean, shaftJobs) : 0;
+        const int  shaftN = (!preview && g_shafts.ready && postFx.shaftEnabled) ? BuildShaftJobs(view, projClean, postFx, shaftJobs) : 0;
         const bool shaftOn = shaftN > 0;
 
         if (msaa)
@@ -3472,8 +3664,8 @@ DrawSceneColor(view, proj, eye, true, overlays, preview, preview ? g_vp[vp].solo
             {
                 ID3D12Resource* dep = g_pipeline->depthBuffers[vp].Get();
                 GhostPost_ToRT(g_rhi, g_post, vp);
-                if (aoOn)  GhostPost_SSAO(g_rhi, g_post, vp, hdrRes, GhostPost_RTV(g_post, vp), dep, rw, rh, g_scene.post, proj6, aoNoise);
-                if (giOn)  GhostPost_SSGI(g_rhi, g_post, vp, hdrRes, GhostPost_RTV(g_post, vp), dep, rw, rh, g_scene.post, proj6, gf, giNoise);
+                if (aoOn)  GhostPost_SSAO(g_rhi, g_post, vp, hdrRes, GhostPost_RTV(g_post, vp), dep, rw, rh, postFx, proj6, aoNoise);
+                if (giOn)  GhostPost_SSGI(g_rhi, g_post, vp, hdrRes, GhostPost_RTV(g_post, vp), dep, rw, rh, postFx, proj6, gf, giNoise);
                 if (fogOn) GhostPost_Fog(g_rhi, g_pipeline, g_post, vp, hdrRes, GhostPost_RTV(g_post, vp), dep, rw, rh);
                 if (shaftOn) GhostShafts_Draw(g_rhi, g_shafts, vp, hdrRes, GhostPost_RTV(g_post, vp), dep,
                     rw, rh, proj.m[2][2], proj.m[2][3], aoNoise, shaftJobs, shaftN);
@@ -3484,10 +3676,10 @@ DrawSceneColor(view, proj, eye, true, overlays, preview, preview ? g_vp[vp].solo
         {
             if (aoOn)                                                              // on the jittered image: the TAA resolve averages the sampling noise
                 GhostPost_SSAO(g_rhi, g_post, vp, g_taa.scene[vp].Get(), GhostTAA_SceneRTV(g_taa, vp),
-                    g_taa.depth[vp].Get(), rw, rh, g_scene.post, proj6, aoNoise);
+                    g_taa.depth[vp].Get(), rw, rh, postFx, proj6, aoNoise);
             if (giOn)
                 GhostPost_SSGI(g_rhi, g_post, vp, g_taa.scene[vp].Get(), GhostTAA_SceneRTV(g_taa, vp),
-                    g_taa.depth[vp].Get(), rw, rh, g_scene.post, proj6, gf, giNoise);
+                    g_taa.depth[vp].Get(), rw, rh, postFx, proj6, gf, giNoise);
             if (fogOn)
                 GhostPost_Fog(g_rhi, g_pipeline, g_post, vp, g_taa.scene[vp].Get(), GhostTAA_SceneRTV(g_taa, vp),
                     g_taa.depth[vp].Get(), rw, rh);
@@ -3512,8 +3704,8 @@ DrawSceneColor(view, proj, eye, true, overlays, preview, preview ? g_vp[vp].solo
         else
         {
             ID3D12Resource* dep = g_pipeline->depthBuffers[vp].Get();              // the HDR target is still in RENDER_TARGET state here
-            if (aoOn)  GhostPost_SSAO(g_rhi, g_post, vp, hdrRes, GhostPost_RTV(g_post, vp), dep, rw, rh, g_scene.post, proj6, aoNoise);
-            if (giOn)  GhostPost_SSGI(g_rhi, g_post, vp, hdrRes, GhostPost_RTV(g_post, vp), dep, rw, rh, g_scene.post, proj6, gf, giNoise);
+            if (aoOn)  GhostPost_SSAO(g_rhi, g_post, vp, hdrRes, GhostPost_RTV(g_post, vp), dep, rw, rh, postFx, proj6, aoNoise);
+            if (giOn)  GhostPost_SSGI(g_rhi, g_post, vp, hdrRes, GhostPost_RTV(g_post, vp), dep, rw, rh, postFx, proj6, gf, giNoise);
             if (fogOn) GhostPost_Fog(g_rhi, g_pipeline, g_post, vp, hdrRes, GhostPost_RTV(g_post, vp), dep, rw, rh);
             if (shaftOn) GhostShafts_Draw(g_rhi, g_shafts, vp, hdrRes, GhostPost_RTV(g_post, vp), dep,
                 rw, rh, proj.m[2][2], proj.m[2][3], aoNoise, shaftJobs, shaftN);
@@ -3533,7 +3725,7 @@ DrawSceneColor(view, proj, eye, true, overlays, preview, preview ? g_vp[vp].solo
             GhostPost_SSRCapture(g_rhi, g_post, vp, hdrRes, ssrDep, rw, rh, v12, p8);
         }
 
-        const GhostPostSettings postCfg = preview ? GhostPostSettings() : g_scene.post;     // the preview window never blooms
+        const GhostPostSettings postCfg = preview ? GhostPostSettings() : postFx;     // the preview window never blooms
         GhostPost_Bloom(g_rhi, g_post, vp, rw, rh, postCfg);                                // HDR -> bloom chain (only if enabled)
         // ---- Tone map into the destination (offscreen image, or the window back buffer) ----
         D3D12_CPU_DESCRIPTOR_HANDLE destRTV;
@@ -3543,7 +3735,19 @@ DrawSceneColor(view, proj, eye, true, overlays, preview, preview ? g_vp[vp].solo
             destRTV = GhostGetOffscreenRTV(g_pipeline, vp);
         }
         else destRTV = g_rhi->GetRTV();
-        GhostPost_Tonemap(g_rhi, g_post, vp, destRTV, rw, rh, postCfg);
+        if (smaa)                                                            // tone map into the LDR target, then SMAA writes the destination
+        {
+            GhostSMAA_BeginLdr(g_rhi, g_smaa, vp);
+            GhostPost_Tonemap(g_rhi, g_post, vp, GhostSMAA_LdrRTV(g_smaa, vp), rw, rh, postCfg);
+            GhostSMAA_Run(g_rhi, g_smaa, vp, destRTV, rw, rh);
+        }
+        else if (fxaa)                                                       // tone map into the LDR target, then FXAA writes the destination
+        {
+            GhostFXAA_BeginLdr(g_rhi, g_fxaa, vp);
+            GhostPost_Tonemap(g_rhi, g_post, vp, GhostFXAA_LdrRTV(g_fxaa, vp), rw, rh, postCfg);
+            GhostFXAA_Run(g_rhi, g_fxaa, vp, destRTV, rw, rh);
+        }
+        else GhostPost_Tonemap(g_rhi, g_post, vp, destRTV, rw, rh, postCfg);
         GhostProf_Mark(g_rhi, g_prof, GP_TONEMAP);
         // Everything below draws display-space colors on the destination: icons, overlays, game UI.
         // Depth-tested overlays use the depth the scene was drawn with (TAA has its own; with MSAA there is none yet).

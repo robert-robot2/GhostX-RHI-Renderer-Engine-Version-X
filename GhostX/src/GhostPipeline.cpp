@@ -970,6 +970,47 @@ static std::wstring ShaderPath(const wchar_t* file)
     if (GetFileAttributesW(a.c_str()) != INVALID_FILE_ATTRIBUTES) return a;
     return std::wstring(L"shaders/") + file;
 }
+std::wstring GhostShaderPath(const wchar_t* file) { return ShaderPath(file); }
+
+static const D3D12_INPUT_ELEMENT_DESC kFoliLayout[6] =
+{
+    { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT,    0,  0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+    { "COLOR",    0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+    { "NORMAL",   0, DXGI_FORMAT_R32G32B32_FLOAT,    0, 28, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+    { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,       0, 40, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+    { "INSTPOS",  0, DXGI_FORMAT_R32G32B32A32_FLOAT, 1,  0, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
+    { "INSTROT",  0, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 16, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
+};
+
+// The instanced scene PSO: GhostVS.hlsl FoliageVS + the normal PSMain. Rebuilt with the MSAA sample count. Keeps the old one if it fails.
+static GhostResult BuildFoliageScenePSO(ID3D12Device* device, GhostPipeline* p, ID3DBlob* ps, unsigned int samples)
+{
+    ComPtr<ID3DBlob> vs;
+    if (CompileShaderFromFile(ShaderPath(L"GhostVS.hlsl").c_str(), "FoliageVS", "vs_5_1", &vs) != GHOST_OK) return GHOST_FAIL;
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC d = {};
+    d.pRootSignature = p->rootSignature.Get();
+    d.VS = { vs->GetBufferPointer(), vs->GetBufferSize() };
+    d.PS = { ps->GetBufferPointer(), ps->GetBufferSize() };
+    d.InputLayout = { kFoliLayout, 6 };
+    d.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    d.RTVFormats[0] = GHOST_HDR_FORMAT;
+    d.NumRenderTargets = 1;
+    d.SampleDesc.Count = samples < 1 ? 1 : samples;
+    d.SampleMask = UINT_MAX;
+    d.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+    d.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+    d.RasterizerState.DepthClipEnable = TRUE;
+    d.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+    d.DepthStencilState.DepthEnable = TRUE;
+    d.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+    d.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
+    d.DSVFormat = DXGI_FORMAT_D24_UNORM_S8_UINT;
+    ComPtr<ID3D12PipelineState> pso;
+    if (FAILED(device->CreateGraphicsPipelineState(&d, IID_PPV_ARGS(&pso)))) return GHOST_FAIL;
+    p->foliagePso = pso;
+    return GHOST_OK;
+}
+
 // Every draw that uses the main root signature binds the shadow maps (parameter 3)
 // Every draw that uses the main root signature binds the shadow maps (parameter 3) and the material map table (parameter 4)
 static void BindShadowTable(ID3D12GraphicsCommandList* cmd, GhostPipeline* p)
@@ -1549,6 +1590,19 @@ GhostResult GhostPipelineCreate(IGhostRHI* rhi,
             if (FAILED(device->CreateGraphicsPipelineState(&fd, IID_PPV_ARGS(&p->fogPso)))) p->fogPso.Reset();
         }
         else OutputDebugStringA("[GhostX] Fog shader failed to compile: volumetric fog is disabled.\n");
+    }
+
+    if (BuildFoliageScenePSO(device, p, ps.Get(), 1) != GHOST_OK)
+        OutputDebugStringA("[GhostX] Foliage shader failed to compile: foliage is disabled.\n");
+    {   // instanced shadow PSO (shd / shp are the shadow desc + pixel shader from above)
+        ComPtr<ID3DBlob> fsv;
+        if (CompileShaderFromFile(ShaderPath(L"GhostVS.hlsl").c_str(), "FoliageShadowVS", "vs_5_1", &fsv) == GHOST_OK)
+        {
+            D3D12_GRAPHICS_PIPELINE_STATE_DESC fd = shd;
+            fd.VS = { fsv->GetBufferPointer(), fsv->GetBufferSize() };
+            fd.InputLayout = { kFoliLayout, 6 };
+            if (FAILED(device->CreateGraphicsPipelineState(&fd, IID_PPV_ARGS(&p->foliageShadowPso)))) p->foliageShadowPso.Reset();
+        }
     }
 
      // ---- Constant Buffer ----
@@ -2286,6 +2340,7 @@ void GhostShadowSlice(IGhostRHI* rhi, GhostPipeline* p, int slice, const float* 
     memcpy(k + 16, posFar4, 4 * sizeof(float));
     k[20] = mode;
     cmd->SetGraphicsRoot32BitConstants(1, 24, k, 0);
+    cmd->SetPipelineState(p->shadowPso.Get());      // an instanced draw of the previous slice may have changed it
 }
 
 void GhostShadowDraw(IGhostRHI* rhi, GhostPipeline* p, int meshId, unsigned int slot, unsigned int texIndex,
@@ -2459,10 +2514,91 @@ GhostResult GhostRebuildScenePSOs(IGhostRHI* rhi, GhostPipeline* p, unsigned int
         FAILED(device->CreateGraphicsPipelineState(&addD, IID_PPV_ARGS(&nAdd))))
         return GHOST_FAIL;
 
+    BuildFoliageScenePSO(device, p, ps.Get(), sampleCount);      // MSAA: the foliage PSO needs the same sample count
     p->pso = nMain;                                            // the GPU is idle between frames, so the old ones can go
     p->skyPso = nSky;
     p->blendPso = nBlend;
     p->addPso = nAdd;
     p->sampleCount = sampleCount;
     return GHOST_OK;
+}
+
+
+// ============================================================
+//  Foliage: instance buffers + instanced draws
+// ============================================================
+void GhostInstanceBuffer_Release(GhostInstanceBuffer& b)
+{
+    if (b.res && b.mapped) b.res->Unmap(0, nullptr);
+    b.mapped = nullptr;
+    b.res.Reset();
+    b.capacity = 0;
+    b.view = {};
+}
+
+// Upload heap, persistently mapped: edits just memcpy. The GPU is idle between frames, so replacing the buffer is safe.
+GhostResult GhostInstanceBuffer_Update(IGhostRHI* rhi, GhostInstanceBuffer& b, const void* data, unsigned int count, unsigned int stride)
+{
+    if (!rhi || !data || count == 0 || stride == 0) return GHOST_FAIL;
+    if (!b.res || b.capacity < count)
+    {
+        GhostInstanceBuffer_Release(b);
+        const unsigned int cap = count + count / 2 + 16;               // headroom: painting grows a chunk a few instances at a time
+        if (CreateUploadBuffer(rhi->GetDevice(), (unsigned long long)cap * stride, &b.res) != GHOST_OK) return GHOST_FAIL;
+        D3D12_RANGE rr = { 0, 0 };
+        if (FAILED(b.res->Map(0, &rr, &b.mapped)) || !b.mapped) { b.res.Reset(); return GHOST_FAIL; }
+        b.capacity = cap;
+    }
+    memcpy(b.mapped, data, (size_t)count * stride);
+    b.view = { b.res->GetGPUVirtualAddress(), count * stride, stride };
+    return GHOST_OK;
+}
+
+void GhostDrawMeshInstanced(IGhostRHI* rhi, GhostPipeline* p, int meshId, unsigned int slot, unsigned int textureIndex,
+    const GhostInstanceBuffer& inst, unsigned int instanceCount, unsigned int firstIndex, unsigned int indexCount)
+{
+    if (!p->foliagePso || !inst.res || instanceCount == 0 || meshId < 0 || meshId >= (int)GHOST_MAX_MESHES || slot >= GHOST_MAX_OBJECTS) return;
+    const GhostMesh& m = p->meshes[meshId];
+    if (!m.vb) return;
+
+    auto* cmd = rhi->GetCmdList();
+    ID3D12DescriptorHeap* heaps[] = { p->cbvHeap.Get() };
+    cmd->SetDescriptorHeaps(1, heaps);
+    cmd->SetPipelineState(p->foliagePso.Get());
+    cmd->SetGraphicsRootSignature(p->rootSignature.Get());
+    BindShadowTable(cmd, p);
+    cmd->SetGraphicsRootConstantBufferView(0, p->constantBuffer->GetGPUVirtualAddress() + slot * GHOST_OBJECT_CB_STRIDE);
+    cmd->SetGraphicsRootConstantBufferView(1, p->sceneBuffer->GetGPUVirtualAddress());
+    if (textureIndex >= p->textureCount) textureIndex = 0;
+    D3D12_GPU_DESCRIPTOR_HANDLE srv = p->cbvHeap->GetGPUDescriptorHandleForHeapStart();
+    srv.ptr += (UINT64)textureIndex * p->srvIncrement;
+    cmd->SetGraphicsRootDescriptorTable(2, srv);
+    D3D12_CPU_DESCRIPTOR_HANDLE rtv = p->rtvOverrideActive ? p->rtvOverride : rhi->GetRTV();
+    D3D12_CPU_DESCRIPTOR_HANDLE dsv = GhostGetDSV(p, rhi->GetCurrentSurface());
+    cmd->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
+
+    D3D12_VERTEX_BUFFER_VIEW vbs[2] = { m.vbView, inst.view };
+    cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    cmd->IASetVertexBuffers(0, 2, vbs);
+    cmd->IASetIndexBuffer(&m.ibView);
+    cmd->DrawIndexedInstanced(indexCount ? indexCount : m.indexCount, instanceCount, firstIndex, 0, 0);
+}
+
+void GhostShadowDrawInstanced(IGhostRHI* rhi, GhostPipeline* p, int meshId, unsigned int slot, unsigned int texIndex,
+    const GhostInstanceBuffer& inst, unsigned int instanceCount, unsigned int firstIndex, unsigned int indexCount)
+{
+    if (!p->foliageShadowPso || !inst.res || instanceCount == 0 || meshId < 0 || meshId >= (int)GHOST_MAX_MESHES || slot >= GHOST_SHADOW_CB_SLOTS) return;
+    const GhostMesh& m = p->meshes[meshId];
+    if (!m.vb) return;
+    auto* cmd = rhi->GetCmdList();
+    cmd->SetPipelineState(p->foliageShadowPso.Get());       // GhostShadowSlice puts the normal one back for the next slice
+    cmd->SetGraphicsRootConstantBufferView(0, p->shadowCB->GetGPUVirtualAddress() + slot * GHOST_OBJECT_CB_STRIDE);
+    if (texIndex >= p->textureCount) texIndex = 0;
+    D3D12_GPU_DESCRIPTOR_HANDLE srv = p->cbvHeap->GetGPUDescriptorHandleForHeapStart();
+    srv.ptr += (UINT64)texIndex * p->srvIncrement;
+    cmd->SetGraphicsRootDescriptorTable(2, srv);
+    D3D12_VERTEX_BUFFER_VIEW vbs[2] = { m.vbView, inst.view };
+    cmd->IASetVertexBuffers(0, 2, vbs);
+    cmd->IASetIndexBuffer(&m.ibView);
+    cmd->DrawIndexedInstanced(indexCount ? indexCount : m.indexCount, instanceCount, firstIndex, 0, 0);
 }

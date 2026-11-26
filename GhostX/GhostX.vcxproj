@@ -160,6 +160,7 @@ xcopy /Y /E /I "$(ProjectDir)shaders" "$(SolutionDir)GhostShell\bin\x64\Release\
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="include\AreaTex.h" />
     <ClInclude Include="include\Ghost3D1.h" />
     <ClInclude Include="include\GhostAnim.h" />
     <ClInclude Include="include\GhostAudio.h" />
@@ -167,6 +168,8 @@ xcopy /Y /E /I "$(ProjectDir)shaders" "$(SolutionDir)GhostShell\bin\x64\Release\
     <ClInclude Include="include\GhostCustomGamepad.h" />
     <ClInclude Include="include\GhostEngine.h" />
     <ClInclude Include="include\GhostEngineDataCore.h" />
+    <ClInclude Include="include\GhostFoliage.h" />
+    <ClInclude Include="include\GhostFXAA.h" />
     <ClInclude Include="include\GhostGameAPI.h" />
     <ClInclude Include="include\GhostGameModule.h" />
     <ClInclude Include="include\GhostGpuProf.h" />
@@ -188,6 +191,7 @@ xcopy /Y /E /I "$(ProjectDir)shaders" "$(SolutionDir)GhostShell\bin\x64\Release\
     <ClInclude Include="include\GhostScene.h" />
     <ClInclude Include="include\GhostSceneIO.h" />
     <ClInclude Include="include\GhostSkin.h" />
+    <ClInclude Include="include\GhostSMAA.h" />
     <ClInclude Include="include\GhostTAA.h" />
     <ClInclude Include="include\GhostText.h" />
     <ClInclude Include="include\GhostUI.h" />
@@ -196,6 +200,7 @@ xcopy /Y /E /I "$(ProjectDir)shaders" "$(SolutionDir)GhostShell\bin\x64\Release\
     <ClInclude Include="include\GhostWorldPart.h" />
     <ClInclude Include="include\IGhostRHI.h" />
     <ClInclude Include="include\json.hpp" />
+    <ClInclude Include="include\SearchTex.h" />
     <ClInclude Include="include\stb_image.h" />
   </ItemGroup>
   <ItemGroup>
@@ -207,6 +212,8 @@ xcopy /Y /E /I "$(ProjectDir)shaders" "$(SolutionDir)GhostShell\bin\x64\Release\
     <ClCompile Include="src\GhostAudioImpl.cpp" />
     <ClCompile Include="src\GhostCustomGamepad.cpp" />
     <ClCompile Include="src\GhostEngine.cpp" />
+    <ClCompile Include="src\GhostFoliage.cpp" />
+    <ClCompile Include="src\GhostFXAA.cpp" />
     <ClCompile Include="src\GhostGameModule.cpp" />
     <ClCompile Include="src\GhostImage.cpp" />
     <ClCompile Include="src\GhostLightShafts.cpp" />
@@ -222,6 +229,7 @@ xcopy /Y /E /I "$(ProjectDir)shaders" "$(SolutionDir)GhostShell\bin\x64\Release\
     <ClCompile Include="src\GhostRuntime.cpp" />
     <ClCompile Include="src\GhostSceneIO.cpp" />
     <ClCompile Include="src\GhostSkin.cpp" />
+    <ClCompile Include="src\GhostSMAA.cpp" />
     <ClCompile Include="src\GhostTAA.cpp" />
     <ClCompile Include="src\GhostText.cpp" />
     <ClCompile Include="src\GhostUI.cpp" />
@@ -242,6 +250,14 @@ xcopy /Y /E /I "$(ProjectDir)shaders" "$(SolutionDir)GhostShell\bin\x64\Release\
   </ItemGroup>
   <ItemGroup>
     <None Include="shaders\GhostShafts.hlsl">
+      <FileType>Document</FileType>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="GhostSMAA.hlsl">
+      <FileType>Document</FileType>
+    </None>
+    <None Include="shaders\SMAA.hlsl">
       <FileType>Document</FileType>
     </None>
   </ItemGroup>

@@ -42,6 +42,10 @@ namespace GhostShell
         private ToolStripMenuItem _taaItem = null!;
         private readonly List<(ToolStripMenuItem item, float speed)> _marksJit = new();
 
+        private ToolStripMenuItem _smaaItem = null!;
+        private readonly List<(ToolStripMenuItem item, int q)> _marksSmaaQ = new();
+        private ToolStripMenuItem _fxaaItem = null!;
+        private readonly List<(ToolStripMenuItem item, int q)> _marksFxaaQ = new();
         private readonly OverlayButton _paintBtn = new();
         private readonly ContextMenuStrip _paintMenu = new();
         private delegate void ChangeP(ref GhostPaintInfo p);
@@ -159,8 +163,12 @@ namespace GhostShell
             var it = new ToolStripMenuItem(text);
             it.Click += (s, e) =>
             {
-                GhostEngine.GhostEngine_SetTAA(0);                    // MSAA and TAA are exclusive
+                GhostEngine.GhostEngine_SetFXAA(0);                   // MSAA, TAA, SMAA and FXAA are exclusive
+                GhostEngine.GhostEngine_SetSMAA(0);
+                GhostEngine.GhostEngine_SetTAA(0);
                 GhostEngine.GhostEngine_SetMSAA(samples);
+                GhostSettings.Data.FxaaEnabled = 0;
+                GhostSettings.Data.SmaaEnabled = 0;
                 GhostSettings.Data.TaaEnabled = 0;
                 GhostSettings.Data.MsaaSamples = samples;
                 GhostSettings.Save();
@@ -171,12 +179,70 @@ namespace GhostShell
 
         private static void SelectTAA()
         {
+            GhostEngine.GhostEngine_SetFXAA(0);
+            GhostSettings.Data.FxaaEnabled = 0;
+            GhostEngine.GhostEngine_SetSMAA(0);
             GhostEngine.GhostEngine_SetMSAA(1);
             GhostEngine.GhostEngine_SetTAA(1);
+            GhostSettings.Data.SmaaEnabled = 0;
             GhostSettings.Data.MsaaSamples = 1;
             GhostSettings.Data.TaaEnabled = 1;
             GhostSettings.Save();
         }
+
+        private static void SelectSMAA()
+        {
+            GhostEngine.GhostEngine_SetFXAA(0);
+            GhostSettings.Data.FxaaEnabled = 0;
+            GhostEngine.GhostEngine_SetTAA(0);
+            GhostEngine.GhostEngine_SetMSAA(1);
+            GhostEngine.GhostEngine_SetSMAA(1);
+            GhostSettings.Data.MsaaSamples = 1;
+            GhostSettings.Data.TaaEnabled = 0;
+            GhostSettings.Data.SmaaEnabled = 1;
+            GhostSettings.Save();
+        }
+
+        private static void SelectFXAA()
+        {
+            GhostEngine.GhostEngine_SetTAA(0);
+            GhostEngine.GhostEngine_SetSMAA(0);
+            GhostEngine.GhostEngine_SetMSAA(1);
+            GhostEngine.GhostEngine_SetFXAA(1);
+            GhostSettings.Data.MsaaSamples = 1;
+            GhostSettings.Data.TaaEnabled = 0;
+            GhostSettings.Data.SmaaEnabled = 0;
+            GhostSettings.Data.FxaaEnabled = 1;
+            GhostSettings.Save();
+        }
+
+        private void AddFxaaQ(ToolStripItemCollection into, string text, int q)
+        {
+            var it = new ToolStripMenuItem(text);
+            it.Click += (s, e) =>
+            {
+                GhostEngine.GhostEngine_SetFXAAQuality(q);
+                GhostSettings.Data.FxaaQuality = q;
+                GhostSettings.Save();
+            };
+            into.Add(it);
+            _marksFxaaQ.Add((it, q));
+        }
+
+        private void AddSmaaQ(ToolStripItemCollection into, string text, int q)
+        {
+            var it = new ToolStripMenuItem(text);
+            it.Click += (s, e) =>
+            {
+                GhostEngine.GhostEngine_SetSMAAQuality(q);
+                GhostSettings.Data.SmaaQuality = q;
+                GhostSettings.Save();
+            };
+            into.Add(it);
+            _marksSmaaQ.Add((it, q));
+        }
+
+
 
         private void AddJit(ToolStripItemCollection into, string text, float speed)
         {
@@ -320,6 +386,23 @@ namespace GhostShell
             AddJit(jit.DropDownItems, "Fast (2x)", 2.0f);
             AddJit(jit.DropDownItems, "Very fast (3x)", 3.0f);
 
+            _smaaItem = new ToolStripMenuItem("SMAA  (sharp edges, post-process)");
+            _smaaItem.Click += (s, e) => SelectSMAA();
+            aa.DropDownItems.Add(_smaaItem);
+            ToolStripMenuItem sq = Sub(aa.DropDownItems, "SMAA quality");
+            AddSmaaQ(sq.DropDownItems, "Low", 0);
+            AddSmaaQ(sq.DropDownItems, "Medium", 1);
+            AddSmaaQ(sq.DropDownItems, "High  default", 2);
+            AddSmaaQ(sq.DropDownItems, "Ultra", 3);
+
+            _fxaaItem = new ToolStripMenuItem("FXAA  (fastest, softest)");
+            _fxaaItem.Click += (s, e) => SelectFXAA();
+            aa.DropDownItems.Add(_fxaaItem);
+            ToolStripMenuItem fq = Sub(aa.DropDownItems, "FXAA quality");
+            AddFxaaQ(fq.DropDownItems, "Low", 0);
+            AddFxaaQ(fq.DropDownItems, "Default", 1);
+            AddFxaaQ(fq.DropDownItems, "High", 2);
+
             it.Add(new ToolStripSeparator());
 
             ToolStripMenuItem resMenu = Sub(it, "Resolution (main view)");
@@ -389,13 +472,26 @@ namespace GhostShell
             foreach (var (item, on) in _marksG) item.Checked = on(gs);
             int aaMax = GhostEngine.GhostEngine_GetMSAAMax();
             int aaNow = GhostEngine.GhostEngine_GetMSAA();
+
             bool taaNow = GhostEngine.GhostEngine_GetTAA() != 0;
+
+            bool smaaNow = GhostEngine.GhostEngine_GetSMAA() != 0;
+            bool fxaaNow = GhostEngine.GhostEngine_GetFXAA() != 0;
             foreach (var (item, n) in _marksAA)
             {
-                item.Checked = !taaNow && n == aaNow;
+                item.Checked = !taaNow && !smaaNow && !fxaaNow && n == aaNow;
                 item.Enabled = (n <= aaMax);
             }
             _taaItem.Checked = taaNow;
+            _smaaItem.Checked = smaaNow;
+            _smaaItem.Enabled = GhostEngine.GhostEngine_GetSMAAAvailable() != 0;
+            int sqNow = GhostEngine.GhostEngine_GetSMAAQuality();
+            foreach (var (item, q) in _marksSmaaQ) item.Checked = q == sqNow;
+            _fxaaItem.Checked = fxaaNow;
+            _fxaaItem.Enabled = GhostEngine.GhostEngine_GetFXAAAvailable() != 0;
+            int fqNow = GhostEngine.GhostEngine_GetFXAAQuality();
+            foreach (var (item, q) in _marksFxaaQ) item.Checked = q == fqNow;
+
             float js = GhostEngine.GhostEngine_GetTAAJitterSpeed();
             foreach (var (item, v) in _marksJit) item.Checked = Math.Abs(v - js) < 1e-3f;
             GhostEngine.GhostEngine_GetVideoSettings(out GhostVideoSettings vs);
@@ -482,6 +578,10 @@ namespace GhostShell
             GhostEngine.GhostEngine_SetMSAA(GhostSettings.Data.MsaaSamples);
             GhostEngine.GhostEngine_SetTAAJitterSpeed(GhostSettings.Data.TaaJitterSpeed);
             GhostEngine.GhostEngine_SetTAA(GhostSettings.Data.TaaEnabled);
+            GhostEngine.GhostEngine_SetSMAAQuality(GhostSettings.Data.SmaaQuality);
+            if (GhostSettings.Data.SmaaEnabled != 0) GhostEngine.GhostEngine_SetSMAA(1);
+            GhostEngine.GhostEngine_SetFXAAQuality(GhostSettings.Data.FxaaQuality);
+            if (GhostSettings.Data.FxaaEnabled != 0) GhostEngine.GhostEngine_SetFXAA(1);
             Sync();
         }
 
@@ -524,6 +624,9 @@ namespace GhostShell
             AddP(paintMenu.DropDownItems, "Erase Layer (weight returns to Layer 0)", p => p.tool == 6, (ref GhostPaintInfo p) => p.tool = 6);
             _layerMenu = Sub(it, "Active Layer (paint)");
             it.Add(new ToolStripSeparator());
+            var fol = new ToolStripMenuItem("Foliage Paint Mode   (O)");
+            fol.Click += (s, e) => GhostFoliageModel.PaintMode = !GhostFoliageModel.PaintMode;
+            it.Add(fol);
 
             ToolStripMenuItem size = Sub(it, "Brush Size (units)    [  and  ]");
             foreach (float s0 in new[] { 0.25f, 0.5f, 1f, 2f, 3f, 5f, 8f, 12f, 20f, 40f })

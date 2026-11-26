@@ -5,6 +5,7 @@
 #include "../include/GhostImage.h"
 #include "../include/json.hpp"
 #include "../include/GhostMods.h"
+#include "../include/GhostFoliage.h"
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -116,6 +117,9 @@ static json MatToJson(const GhostMaterial& m, const std::set<int>& savedTex)
     j["anisotropy"] = m.anisotropy;
     j["sss"] = F3(m.sssColor);
     j["sssAmount"] = m.sssAmount;
+    j["sssTransmission"] = m.sssTransmission;
+    j["sssDensity"] = m.sssDensity;
+    j["sssThickness"] = m.sssThickness;
     j["wpo"] = json{ { "sway", m.wpoSway },{ "speed", m.wpoSpeed },{ "mid", m.wpoMid } };
     return j;
 }
@@ -165,6 +169,10 @@ static GhostMaterial MatFromJson(const json& j, const std::function<int(int)>& m
     m.anisotropy = j.value("anisotropy", 0.0f);
     ReadF(j, "sss", m.sssColor, 3);
     m.sssAmount = c01(j.value("sssAmount", 0.0f));
+    auto cr = [](float v, float lo, float hi) { return v != v ? lo : (v < lo ? lo : (v > hi ? hi : v)); };
+    m.sssTransmission = cr(j.value("sssTransmission", 0.0f), 0.0f, 8.0f);
+    m.sssDensity = cr(j.value("sssDensity", 8.0f), 0.0f, 100.0f);
+    m.sssThickness = cr(j.value("sssThickness", 0.02f), 0.0f, 10.0f);
     if (j.contains("wpo") && j["wpo"].is_object())
     {
         m.wpoSway = j["wpo"].value("sway", 0.0f);
@@ -308,6 +316,11 @@ static void CollectUsedTextures(const GhostScene& s, std::set<int>& used)
             const int off = GhostMods_ParamOffset(m.typeId, p);
             if (off >= 0 && (size_t)off < m.values.size()) add((int)(m.values[(size_t)off] + 0.5f));
         }
+    }
+    for (const GhostFoliageLayer& L : GhostFoliage_Set().layers)
+    {
+        const int n = GhostFoliage_FaceCount(L);
+        for (int f = 0; f < n; f++) { add(L.faces[f].textureId); for (int k = 0; k < GHOST_MAP_COUNT; k++) add(L.faces[f].maps[k].textureId); }
     }
 }
 
@@ -634,6 +647,39 @@ bool GhostScene_Save(const GhostScene& s, const std::string& root, const std::st
         }
         j["particles"] = parts;
 
+        {   // ---- foliage: layers + instance chunks (raw floats, base64) ----
+            const GhostFoliageSet& fs = GhostFoliage_Set();
+            json jf = json::array();
+            for (const GhostFoliageLayer& L : fs.layers)
+            {
+                json jl;
+                jl["id"] = L.id; jl["name"] = L.name;
+#define FL_SAVE(n) jl[#n] = L.n;
+                GHOST_FOLIAGE_FIELDS(FL_SAVE)
+#undef FL_SAVE
+                    jl["mesh"] = -1;
+                if (const GhostMeshInfo* mi = GhostMesh_Info(L.meshId))
+                {
+                    if (mi->builtin) jl["mesh"] = L.meshId;
+                    else { jl["meshName"] = mi->name; if (!mi->file.empty()) jl["meshFile"] = MakeStoredPath(mi->file, root); }
+                }
+                json faces = json::array();
+                const int nf = GhostFoliage_FaceCount(L);
+                for (int f = 0; f < nf; f++) faces.push_back(MatToJson(L.faces[f], saved));
+                jl["faces"] = faces;
+                json chunks = json::array();
+                for (const auto& kv : L.chunks)
+                {
+                    const GhostFoliageChunk& C = kv.second;
+                    if (C.inst.empty()) continue;
+                    chunks.push_back(json{ { "cx", C.cx },{ "cz", C.cz },
+                        { "data", B64Enc((const unsigned char*)C.inst.data(), C.inst.size() * sizeof(GhostFoliageInstance)) } });
+                }
+                jl["chunks"] = chunks;
+                jf.push_back(jl);
+            }
+            j["foliage"] = json{ { "nextId", fs.nextId },{ "active", fs.activeLayerId },{ "layers", jf } };
+        }
 
         // Write to a temp file first, so a failed save never destroys the old one
         fs::path out(GhostUtf8ToWide(file));
@@ -1221,7 +1267,60 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
                 GhostParticles_Clamp(p);
                 s.particles.push_back(d);
             }
+        {   // ---- foliage ----
+            GhostFoliage_Clear();
+            GhostFoliageSet& fs = GhostFoliage_Set();
+            if (j.contains("foliage") && j["foliage"].is_object() && j["foliage"].contains("layers") && j["foliage"]["layers"].is_array())
+            {
+                const json& jf = j["foliage"];
+                int maxFid = 0;
+                std::set<int> usedF;
+                for (const json& jl : jf["layers"])
+                {
+                    if ((int)fs.layers.size() >= GHOST_FOLIAGE_MAX_LAYERS) { warn += "Too many foliage layers: the rest were skipped.\n"; break; }
+                    GhostFoliageLayer L;
+#define FL_LOAD(n) L.n = jl.value(#n, L.n);
+                    GHOST_FOLIAGE_FIELDS(FL_LOAD)
+#undef FL_LOAD
+                        L.id = jl.value("id", 0);
+                    if (L.id <= 0 || usedF.count(L.id)) L.id = 1000 + (int)fs.layers.size() + maxFid;
+                    usedF.insert(L.id); maxFid = (std::max)(maxFid, L.id);
+                    L.name = jl.value("name", std::string("Foliage"));
 
+                    if (L.kind == GHOST_FOLIAGE_MESH)
+                    {
+                        int mesh = jl.value("mesh", -1);
+                        const std::string meshName = jl.value("meshName", std::string());
+                        const std::string meshFile = jl.value("meshFile", std::string());
+                        if (!meshFile.empty() && loadMesh) { std::string why; mesh = loadMesh(ResolveStoredPath(meshFile, root), why); }
+                        else if (!meshName.empty()) mesh = GhostMesh_FindByName(meshName);
+                        if (!GhostMesh_Valid(mesh)) { warn += "Foliage layer \"" + L.name + "\": its mesh is missing, the layer was skipped.\n"; continue; }
+                        L.meshId = mesh;
+                    }
+                    else L.meshId = GHOST_MESH_QUAD;
+                    GhostFoliage_Sanitize(L);
+
+                    const int nf = GhostFoliage_FaceCount(L);
+                    if (jl.contains("faces") && jl["faces"].is_array())
+                        for (int f = 0; f < nf && f < (int)jl["faces"].size(); f++) L.faces[f] = MatFromJson(jl["faces"][f], mapTex);
+
+                    if (jl.contains("chunks") && jl["chunks"].is_array())
+                        for (const json& jc : jl["chunks"])
+                        {
+                            std::vector<unsigned char> raw;
+                            if (!jc.contains("data") || !B64Dec(jc["data"].get<std::string>(), raw) || raw.empty() || raw.size() % sizeof(GhostFoliageInstance) != 0) continue;
+                            GhostFoliageChunk& C = GhostFoliage_ChunkAt(L, jc.value("cx", 0), jc.value("cz", 0));
+                            C.inst.resize(raw.size() / sizeof(GhostFoliageInstance));
+                            memcpy(C.inst.data(), raw.data(), raw.size());
+                            GhostFoliage_Touch(C);
+                        }
+                    fs.layers.push_back(std::move(L));
+                }
+                fs.nextId = (std::max)(jf.value("nextId", 1), maxFid + 1);
+                fs.activeLayerId = jf.value("active", 0);
+                if (!GhostFoliage_Find(fs.activeLayerId)) fs.activeLayerId = fs.layers.empty() ? 0 : fs.layers.front().id;
+            }
+        }
 
         if (s.cameras.empty()) GhostScene_AddCamera(s);          // there is always at least one camera
         int active = j.value("activeCamera", 0);

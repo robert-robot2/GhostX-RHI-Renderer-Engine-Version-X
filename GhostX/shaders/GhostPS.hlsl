@@ -94,6 +94,7 @@ cbuffer ObjectBuffer : register(b0)       // same layout as MVPBuffer in GhostVS
     float4 wpoP;
     float4 opacityP;                      // x opacity
     float4 tileP[2];                      // Tile Map: [0] x weight texture A, y weight texture B, z layer of this pass / [1] x gridX, y gridY, z 1 = checker look
+    float4 sssP;                          // x transmission, y density, z min thickness
 };
 
 Texture2D gTex[256] : register(t0, space1);   // linear views, indexed by texture id
@@ -399,6 +400,40 @@ float ShadowFactor(Light L, float3 worldPos, float3 N, int type, float2 pixelPos
     return lit / 16.0f;
 }
 
+// ---- Subsurface: thickness (world units) from the shadow map ----
+static const float SSS_LOBE_POWER = 3.0f;      // sharpness of the glow toward the viewer
+static const float SSS_DISTORTION = 0.3f;      // bends the light toward the normal (wider glow)
+
+// Distance between the surface that faces the light and this pixel, along the light ray.
+// -1 = no shadow map covers this pixel (the caller falls back to the material's minimum thickness).
+float ShadowThickness(Light L, float3 worldPos, int type)
+{
+    if (L.shadow.x < 0.0f || shadowGlobal.x <= 0.0f) return -1.0f;
+
+    const float  farW = max(L.shadow.y, 1e-3f);
+    const float3 rel = worldPos - L.posRange.xyz;
+    float  slice = L.shadow.x;
+    float  refDepth = length(rel) / farW;                 // spot / point / rect store distance / far
+
+    if (type == 1 || type == 2)                           // point / rect: pick the cube face
+    {
+        float3 a = abs(rel);
+        int face = (a.x >= a.y && a.x >= a.z) ? (rel.x > 0.0f ? 0 : 1)
+            : ((a.y >= a.z) ? (rel.y > 0.0f ? 2 : 3) : (rel.z > 0.0f ? 4 : 5));
+        slice += face;
+    }
+    const float4 clip = mul(shadowVP[(int)slice], float4(worldPos, 1.0f));
+    if (type == 0) refDepth = min(clip.z, 1.0f);          // directional stores orthographic depth
+    if (clip.w <= 1e-4f) return -1.0f;
+
+    const float2 uv = float2(clip.x / clip.w * 0.5f + 0.5f, 0.5f - clip.y / clip.w * 0.5f);
+    if (uv.x < 0.0f || uv.x > 1.0f || uv.y < 0.0f || uv.y > 1.0f) return -1.0f;
+
+    const float stored = gShadowMap.SampleLevel(sPtClamp, float3(uv, slice), 0);
+    return max(refDepth - stored, 0.0f) * farW;
+}
+
+
 float3 ProbeSafeDir(float3 v)
 {
     return float3(abs(v.x) < 1e-5f ? (v.x < 0.0f ? -1e-5f : 1e-5f) : v.x,
@@ -619,7 +654,9 @@ float4 PSMain(PSInput input, bool isFront : SV_IsFrontFace) : SV_TARGET
     const float alpha = rough * rough;
     const float specular = saturate(MapValue(MAP_SPECULAR, mu, saturate(pbrA.z)));
     const float ao = saturate(MapValue(MAP_AO, mu, 1.0f));
-    const float sss = surfB.w * MapValue(MAP_CUSTOM, mu, 1.0f);
+    const float sssMask = MapValue(MAP_CUSTOM, mu, 1.0f);     // the Custom Data map masks both effects
+    const float sss = surfB.w * sssMask;
+    const float sssT = sssP.x * sssMask;                      // transmission strength
     const float aniso = clamp(surfA.w, -0.95f, 0.95f);
 
     // ---- normal + tangent frame ----
@@ -700,6 +737,7 @@ float4 PSMain(PSInput input, bool isFront : SV_IsFrontFace) : SV_TARGET
 
         float rawNoL = dot(N, toLight);
         float NoL = saturate(rawNoL);
+        const float attenUnshadowed = atten;          // transmission measures its own thickness instead of using the shadow factor
         if (receive && NoL > 0.0f && atten > 0.0f && L.shadow.x >= 0.0f && (shadowSel == 0 || shadowSel == (int)i + 1))
             atten *= lerp(1.0f, ShadowFactor(L, input.worldPos, Ng, type, input.pos.xy, length(eye - input.worldPos)), shadowGlobal.x);
 
@@ -707,6 +745,17 @@ float4 PSMain(PSInput input, bool isFront : SV_IsFrontFace) : SV_TARGET
         float wrapped = NoL;
         if (sss > 0.001f) wrapped = saturate((rawNoL + 0.5f * sss) / (1.0f + 0.5f * sss));
         diffuseSum += radiance * atten * (NoL + (wrapped - NoL) * surfB.rgb);
+
+        // ---- subsurface transmission: light arriving from behind, tinted by the material it crossed ----
+        if (sssT > 0.001f && rawNoL < 0.25f && attenUnshadowed > 0.0f)
+        {
+            float thick = receive ? ShadowThickness(L, input.worldPos, type) : -1.0f;
+            thick = (thick < 0.0f) ? sssP.z : max(thick, sssP.z);
+            const float3 trans = pow(max(surfB.rgb, 0.001f), thick * sssP.y);     // sssColor after crossing `thick` units
+            const float  lobe = pow(saturate(dot(V, -normalize(toLight + N * SSS_DISTORTION))), SSS_LOBE_POWER);
+            diffuseSum += radiance * attenUnshadowed * trans * lobe * sssT;
+        }
+
 
         if (usePbr && NoL > 0.0f)
         {

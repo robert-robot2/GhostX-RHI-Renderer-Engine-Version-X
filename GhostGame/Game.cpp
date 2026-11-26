@@ -418,7 +418,9 @@ GHOST_GAME_EXPORT int GhostGame_Init(const GhostGameAPI* api)
     g_camPitch = Cfg::CamPitch; g_camFocus = false;
     g_musicState = -1;
     Carry_Load();
+
     g_started = true;   // TEMP: skip the menus while testing the 3D player
+
     S.level = FindLevelIndex();
     S.tutorial = IsTutorialScene();
     S.lastLevel = !S.tutorial && (S.level < 0 || S.level >= kLevelCount - 1);

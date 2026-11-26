@@ -362,6 +362,14 @@ namespace GhostShell
         }
         [DisplayName("Subsurface Amount (skin, 0-1)")]
         public float SubsurfaceAmount { get => Read().sssAmount; set => Change((ref GhostSurfaceInfo s) => s.sssAmount = value); }
+
+        [DisplayName("Subsurface Transmission (back-light, 0-8)")]
+        public float SubsurfaceTransmission { get => Read().sssTransmission; set => Change((ref GhostSurfaceInfo s) => s.sssTransmission = value); }
+        [DisplayName("Subsurface Density (tint per unit of thickness)")]
+        public float SubsurfaceDensity { get => Read().sssDensity; set => Change((ref GhostSurfaceInfo s) => s.sssDensity = value); }
+        [DisplayName("Subsurface Min Thickness (units)")]
+        public float SubsurfaceMinThickness { get => Read().sssThickness; set => Change((ref GhostSurfaceInfo s) => s.sssThickness = value); }
+
         [DisplayName("Map Tiling (all extra maps)")] public Vec2Edit MapTiling { get; }
         [DisplayName("Map Offset (all extra maps)")] public Vec2Edit MapOffset { get; }
         [DisplayName("WPO Sway (wind, units)")]
@@ -2090,7 +2098,8 @@ namespace GhostShell
         private PanelDock _dockMixer = null!;
         private GhostParticleEditor _particles = null!;
         private PanelDock _dockParticles = null!;
-
+        private GhostFoliageEditor _foliage = null!;
+        private PanelDock _dockFoliage = null!;
         private bool _visible = true;
         private bool _syncing;
         private uint _lastVersion = uint.MaxValue;
@@ -2309,9 +2318,10 @@ namespace GhostShell
             bool brushDown = plain && key == Keys.OemOpenBrackets, brushUp = plain && key == Keys.OemCloseBrackets;
             bool focusKey = plain && key == Keys.Z, renameKey = plain && key == Keys.F2;
             bool fullscreenKey = plain && key == Keys.F11;
+            bool foliKey = plain && key == Keys.O;
 
             if (!(isFour || isDelete || ctrlD || ctrlF || undo || redo || copy || paste || faceKey || gridKey ||
-                  colKey || focusKey || renameKey || paintKey || brushDown || brushUp || fullscreenKey))
+                  colKey || focusKey || renameKey || paintKey || brushDown || brushUp || fullscreenKey || foliKey))
                 return false;
 
             // Never act while a modal dialog (Rename prompt, color picker, Array dialog...) is open
@@ -2328,7 +2338,7 @@ namespace GhostShell
             bool sceneFocus = inViewport || IsInTree(focus);
 
             // Single-letter viewport tools: only when the viewport itself is the active control
-            bool viewportOnly = faceKey || gridKey || colKey || paintKey || brushDown || brushUp || focusKey;
+            bool viewportOnly = faceKey || gridKey || colKey || paintKey || brushDown || brushUp || focusKey || foliKey;
             // Scene edits: viewport or hierarchy only (not the content browser, palette, etc.)
             bool sceneKey = isDelete || ctrlD || ctrlF || copy || paste || renameKey;
 
@@ -2339,6 +2349,7 @@ namespace GhostShell
 
             if (brushDown || brushUp)                         // [ and ]: brush size while paint mode is on (hold to repeat)
             {
+                if (GhostFoliageModel.AdjustRadius(brushUp ? 1.15f : 0.87f)) return true;    // NEW: foliage first
                 if (GhostEngine.GhostEngine_GetPaintMode() == 0) return false;
                 GhostEngine.GhostEngine_GetPaintSettings(out GhostPaintInfo bp);
                 bp.radius *= brushUp ? 1.15f : 0.87f;
@@ -2355,6 +2366,7 @@ namespace GhostShell
             if (faceKey) { GhostEngine.GhostEngine_SetFaceMode(GhostEngine.GhostEngine_GetFaceMode() == 0 ? 1 : 0); return true; }
             if (colKey) { GhostEngine.GhostEngine_SetColliderMode(GhostEngine.GhostEngine_GetColliderMode() == 0 ? 1 : 0); return true; }
             if (paintKey) { GhostEngine.GhostEngine_SetPaintMode(GhostEngine.GhostEngine_GetPaintMode() == 0 ? 1 : 0); return true; }
+            if (foliKey) { GhostFoliageModel.PaintMode = !GhostFoliageModel.PaintMode; return true; }
             if (isFour) { ToggleVisible(); return true; }
             if (sel == 0) return false;
             if (isDelete) { DoDelete(); return true; }
@@ -2693,6 +2705,8 @@ namespace GhostShell
             _dockMixer = new PanelDock("AudioMixer", "Audio Mixer", _mixer, ToolAreas | DockAreas.Document);
             _particles = new GhostParticleEditor();
             _dockParticles = new PanelDock("ParticleEditor", "Particle Editor", _particles, ToolAreas | DockAreas.Document);
+            _foliage = new GhostFoliageEditor();
+            _dockFoliage = new PanelDock("FoliagePanel", "Foliage", _foliage, ToolAreas | DockAreas.Document);
             _form.Controls.Add(_dock);
             _dock.BringToFront();                    // the dock fills whatever the menu strip leaves
             _form.MainMenuStrip?.SendToBack();
@@ -2713,6 +2727,7 @@ namespace GhostShell
             "AnimEditor" => _dockAnim,
             "AudioMixer" => _dockMixer,
             "ParticleEditor" => _dockParticles,
+            "FoliagePanel" => _dockFoliage,
             _ => null!,
         };
 
@@ -2784,11 +2799,20 @@ namespace GhostShell
             if (_dockAnim.DockPanel != null) _dockAnim.DockPanel = null!;
             if (_dockMixer.DockPanel != null) _dockMixer.DockPanel = null!;
             if (_dockParticles.DockPanel != null) _dockParticles.DockPanel = null!;
+            if (_dockFoliage.DockPanel != null) _dockFoliage.DockPanel = null!;
             ApplyDefaultLayout();
         }
+
+        public void OpenFoliagePanel()
+        {
+            if (_dockFoliage.DockState == DockState.Unknown)
+                _dockFoliage.Show(_dock, DockState.DockRight);             // first time: docked on the right, drag it wherever you like
+            else _dockFoliage.Show(_dock);
+        }
+
         private bool IsInsideDesigner(Control? c)
         {
-            for (; c != null; c = c.Parent) if (c == _designer || c == _animEditor || c == _mixer || c == _particles) return true;
+            for (; c != null; c = c.Parent) if (c == _designer || c == _animEditor || c == _mixer || c == _particles || c == _foliage) return true;
             return false;
         }
 
@@ -2911,6 +2935,10 @@ namespace GhostShell
             fsMix.Click += (s, e) => { OpenMixer(); ToggleEditorFullscreen(_mixer, "Audio Mixer", null); };
             var fxItem = new ToolStripMenuItem("Particle Editor");
             fxItem.Click += (s, e) => OpenParticleEditor();
+            var folItem = new ToolStripMenuItem("Foliage Panel");
+            folItem.Click += (s, e) => OpenFoliagePanel();
+            menu.DropDownItems.Add(folItem);
+
             menu.DropDownItems.Add(fxItem);
             fsMenu.DropDownItems.AddRange(new ToolStripItem[] { fsUi, fsAnim, fsMix, fxItem });
             menu.DropDownItems.Add(fsMenu);
@@ -2940,6 +2968,7 @@ namespace GhostShell
                 animItem.Checked = IsShown(_dockAnim);
                 mixItem.Checked = IsShown(_dockMixer);
                 fxItem.Checked = IsShown(_dockParticles);
+                folItem.Checked = IsShown(_dockFoliage);
             };
 
             int at = strip.Items.Count;                                   // before Help
@@ -3006,14 +3035,20 @@ namespace GhostShell
                 case 7:
                     Add("Reflection Capture (Sphere)", "volume", 0);
                     Add("Fog Volume", "volume", 1);
+                    Add("Post Process Volume", "volume", 2);
                     break;
                 case 8:
                     Add("Fire", "particle", 0);
                     Add("Snow", "particle", 1);
                     Add("Custom", "particle", 2);
                     break;
-           
-              
+                case 9:
+                    Add("Foliage Panel (open)", "foliage", 0);
+                    Add("New Mesh Layer from selected object", "foliage", 1);
+                    Add("New Sprite Layer (selected sprite's texture)", "foliage", 2);
+                    break;
+
+
                 default:
                     {
                         int n = GhostEngine.GhostEngine_GetModTypeCount();
@@ -3051,6 +3086,13 @@ namespace GhostShell
     
         private void Spawn(string kind, int type, int x, int y)
         {
+            if (kind == "foliage")
+            {
+                if (type == 0) System.Media.SystemSounds.Beep.Play();//OpenFoliagePanel();                          // added in Phase 3
+                else if (GhostFoliageModel.AddFromSelection(type == 1 ? 0 : 1) == 0) System.Media.SystemSounds.Beep.Play();
+                return;
+            }
+
             int id = kind == "light" ? GhostEngine.GhostEngine_AddLight(type, x, y)
                 : kind == "celestial" ? AddCelestialLight(type, x, y)
 : kind == "cam" ? GhostEngine.GhostEngine_AddCamera(type, x, y)

@@ -177,19 +177,22 @@ void GhostEngine_Tick()
     UpdateAnimators(dt);
     GhostParticles_Update(g_playState == GhostPlayState::Paused ? 0.0f : dt);
     PaintTick(dt);
+    FoliageTick(dt);
     UpdateTileMaps();
+    FoliageSync();
     GhostAudio_Update(dt);
 
     if (g_playState == GhostPlayState::Editing)
     {
         UndoTick(dt);
         PruneMulti();
-        if (g_marquee && !(GetAsyncKeyState(VK_LBUTTON) & 0x8000)) g_marquee = false;
+        if (g_marquee && !(GetAsyncKeyState(VK_LBUTTON) & 0x8000)) { g_marquee = false; g_mqClickId = 0; }
     }
     if (g_pipeline->shadowSize != (unsigned int)g_scene.shadowRes)        // shadow resolution changed
         if (GhostSetShadowSize(g_rhi, g_pipeline, (unsigned int)g_scene.shadowRes) != GHOST_OK)
             g_scene.shadowRes = (int)g_pipeline->shadowSize;              // could not allocate: keep what works
-    GhostMSAA_Apply(g_rhi, g_pipeline, g_msaa, g_taaOn ? 1 : g_msaaWanted);   // TAA and MSAA are exclusive
+    if (g_smaaOn && g_smaa.ready && g_smaa.quality != g_smaaQuality) GhostSMAA_SetQuality(g_rhi, g_smaa, g_smaaQuality);
+    GhostMSAA_Apply(g_rhi, g_pipeline, g_msaa, (g_taaOn || g_smaaOn || g_fxaaOn) ? 1 : g_msaaWanted);   // TAA, SMAA, FXAA and MSAA are exclusive
     g_frameNo++;
     UpdateCelestialLights();
     UpdateProbes(dt);
@@ -221,6 +224,9 @@ void GhostEngine_Shutdown()
     GhostAudio_Shutdown();
     GhostMSAA_Shutdown(g_msaa);
     GhostTAA_Shutdown(g_taa);
+    GhostSMAA_Shutdown(g_smaa);
+    GhostFXAA_Shutdown(g_fxaa);
+    FoliageReleaseAll();
     GhostProbe_Shutdown(g_probe);
     GhostShafts_Shutdown(g_shafts);
     GhostPost_Shutdown(g_post);
@@ -345,9 +351,10 @@ int GhostEngine_GetSurface(int objectId, int face, GhostSurfaceInfo* out)
     if (face >= GhostObject_FaceCount(*o)) return 0;
     const GhostMaterial& m = o->faces[face];
     *out = { m.twoSided, m.opacity, m.refractionIOR, m.reflectionRotDeg, m.anisotropy,
-             m.sssColor[0], m.sssColor[1], m.sssColor[2], m.sssAmount,
-             m.mapTiling[0], m.mapTiling[1], m.mapOffset[0], m.mapOffset[1],
-             m.wpoSway, m.wpoSpeed, m.wpoMid };
+            m.sssColor[0], m.sssColor[1], m.sssColor[2], m.sssAmount,
+            m.mapTiling[0], m.mapTiling[1], m.mapOffset[0], m.mapOffset[1],
+            m.wpoSway, m.wpoSpeed, m.wpoMid,
+            m.sssTransmission, m.sssDensity, m.sssThickness };
     return 1;
 }
 
@@ -371,6 +378,9 @@ void GhostEngine_SetSurface(int objectId, int face, const GhostSurfaceInfo* in)
         m.anisotropy = cf(in->anisotropy, -0.95f, 0.95f);
         m.sssColor[0] = cf(in->sssR, 0.0f, 1.0f); m.sssColor[1] = cf(in->sssG, 0.0f, 1.0f); m.sssColor[2] = cf(in->sssB, 0.0f, 1.0f);
         m.sssAmount = cf(in->sssAmount, 0.0f, 1.0f);
+        m.sssTransmission = cf(in->sssTransmission, 0.0f, 8.0f);
+        m.sssDensity = cf(in->sssDensity, 0.0f, 100.0f);
+        m.sssThickness = cf(in->sssThickness, 0.0f, 10.0f);
         m.mapTiling[0] = nz(cf(in->mapTilingU, -1000.0f, 1000.0f)); m.mapTiling[1] = nz(cf(in->mapTilingV, -1000.0f, 1000.0f));
         m.mapOffset[0] = cf(in->mapOffsetU, -1000.0f, 1000.0f);     m.mapOffset[1] = cf(in->mapOffsetV, -1000.0f, 1000.0f);
         m.wpoSway = cf(in->wpoSway, -5.0f, 5.0f);
@@ -603,6 +613,8 @@ void GhostEngine_DestroyViewport(int vp)
     GhostReleaseOffscreen(g_pipeline, vp);
     GhostMSAA_Release(g_msaa, vp);
     GhostTAA_Release(g_taa, vp);
+    GhostSMAA_Release(g_smaa, vp);
+    GhostFXAA_Release(g_fxaa, vp);
     GhostPost_Release(g_post, vp);
     GhostShafts_Release(g_shafts, vp);
     g_vp[vp] = EngineViewport();
@@ -738,7 +750,7 @@ void GhostEngine_ClearScene()
     GhostEngine_Stop();
     g_animRt.clear();
     g_scene.objects.clear(); g_scenePath.clear();
-    FreeAllTileInstances();
+    FreeAllTileInstances(); GhostFoliage_Clear();
     FreeAllProbes();
     GhostPost_SSRReset(g_post);
     GhostPost_SSGIReset(g_post);
@@ -764,7 +776,7 @@ void GhostEngine_ClearScene()
 
 unsigned int GhostEngine_GetSceneHash()
 {
-    return GhostScene_Hash(g_playState != GhostPlayState::Editing ? g_playBackup : g_scene);
+    return GhostScene_Hash(g_playState != GhostPlayState::Editing ? g_playBackup : g_scene) ^ (GhostFoliage_Set().version * 2654435761u);
 }
 
 void GhostEngine_SetTexturePath(int id, const char* path)
@@ -2018,6 +2030,11 @@ int GhostEngine_Play()
     if (g_playState != GhostPlayState::Editing) return 1;
     g_animRt.clear();
     g_playBackup = g_scene;
+    {
+        GhostFoliageSet& fs = GhostFoliage_Set();
+        g_foliBackup = fs.layers; g_foliBackupNextId = fs.nextId; g_foliBackupActive = fs.activeLayerId; g_foliBackupVersion = fs.version;
+        g_foliHaveBackup = true; fs.brush.active = false; g_foliPainting = false;
+    }
     g_playBackupPath = g_scenePath;
     g_pendingScene.clear();
     g_quitRequested = false;
@@ -2077,6 +2094,12 @@ void GhostEngine_Stop()
     g_scene = std::move(g_playBackup);
     g_scene.textures = tex;
     g_scene.version = version + 1;                   // the hierarchy rebuilds
+    if (g_foliHaveBackup)
+    {
+        GhostFoliageSet& fs = GhostFoliage_Set();
+        fs.layers = std::move(g_foliBackup); fs.nextId = g_foliBackupNextId; fs.activeLayerId = g_foliBackupActive; fs.version = g_foliBackupVersion;
+        g_foliBackup.clear(); g_foliHaveBackup = false;
+    }
     g_playBackup = GhostScene();
     FreeAllTileInstances();
     g_playState = GhostPlayState::Editing;
@@ -2933,6 +2956,7 @@ void GhostEngine_SetPaintMode(int on)
 {
     g_paintMode = (on != 0) && g_playState == GhostPlayState::Editing;
     if (!g_paintMode) g_painting = false;
+    if (g_paintMode) { GhostFoliage_Set().brush.active = false; g_foliPainting = false; }     // one paint mode at a time
 }
 int GhostEngine_GetPaintMode() { return g_paintMode ? 1 : 0; }
 
@@ -3576,14 +3600,26 @@ int  GhostEngine_GetColliderMode() { return g_colMode ? 1 : 0; }
 // ============================================================
 //  Exported: antialiasing
 // ============================================================
-void GhostEngine_SetMSAA(int samples) { g_msaaWanted = samples < 1 ? 1 : (samples > 8 ? 8 : samples); }
+void GhostEngine_SetMSAA(int samples) { g_msaaWanted = samples < 1 ? 1 : (samples > 8 ? 8 : samples); if (g_msaaWanted > 1) { g_smaaOn = 0; g_fxaaOn = 0; } }
 int  GhostEngine_GetMSAA() { return (int)g_msaa.active; }
 int  GhostEngine_GetMSAAMax() { return (int)g_msaa.maxSamples; }
 
-void  GhostEngine_SetTAA(int on) { g_taaOn = on ? 1 : 0; }
+void  GhostEngine_SetTAA(int on) { g_taaOn = on ? 1 : 0; if (g_taaOn) { g_smaaOn = 0; g_fxaaOn = 0; } }
 int   GhostEngine_GetTAA() { return g_taaOn; }
 void  GhostEngine_SetTAAJitterSpeed(float s) { g_taaSpeed = (s != s) ? 1.0f : (s < 0.05f ? 0.05f : (s > 4.0f ? 4.0f : s)); }
 float GhostEngine_GetTAAJitterSpeed() { return g_taaSpeed; }
+
+void GhostEngine_SetSMAA(int on) { g_smaaOn = on ? 1 : 0; if (g_smaaOn) { g_taaOn = 0; g_fxaaOn = 0; g_msaaWanted = 1; } }
+int  GhostEngine_GetSMAA() { return g_smaaOn; }
+void GhostEngine_SetSMAAQuality(int q) { g_smaaQuality = q < 0 ? 0 : (q > 3 ? 3 : q); }
+int  GhostEngine_GetSMAAQuality() { return g_smaaQuality; }
+int  GhostEngine_GetSMAAAvailable() { return g_smaa.ready ? 1 : 0; }
+
+void GhostEngine_SetFXAA(int on) { g_fxaaOn = on ? 1 : 0; if (g_fxaaOn) { g_taaOn = 0; g_smaaOn = 0; g_msaaWanted = 1; } }
+int  GhostEngine_GetFXAA() { return g_fxaaOn; }
+void GhostEngine_SetFXAAQuality(int q) { g_fxaaQuality = q < 0 ? 0 : (q > 2 ? 2 : q); }
+int  GhostEngine_GetFXAAQuality() { return g_fxaaQuality; }
+int  GhostEngine_GetFXAAAvailable() { return g_fxaa.ready ? 1 : 0; }
 
 
 void GhostEngine_SetPadSettings(float deadzone, int rumble, int slot) { GhostPad_SetSettings(deadzone, rumble != 0, slot); }
@@ -4115,4 +4151,421 @@ void GhostEngine_GetWorldStats(GhostWorldStatsInfo* out)
     if (!out) return;
     const GhostWorldStats& s = g_wstats;
     *out = { s.cells, s.resident, (int)GHOST_MAX_TILEMAPS, s.starved, s.loadsLast, s.cellsDrawn, s.bandsDrawn, s.bandsCulled, s.trisDrawn, s.objectsCulled, s.lastLoadMs };
+}
+
+
+
+// ============================================================
+//  Foliage glue: raycasts, GPU chunks, painting, drawing, shadows
+// ============================================================
+static bool Foli_TerrainAt(const GhostObject& o, float x, float z, float& wy)          // same math as Api_GetTerrainHeight
+{
+    const GhostTileMap& t = o.tileMap;
+    if (!t.enabled || t.direction != 1) return false;
+    const GhostVec3 lp = XformPoint(ObjectInverse(o), GhostVec3(x, o.position.y, z), 1.0f);
+    const float hu = t.gridX * t.tileSize * 0.5f, hv = t.gridY * t.tileSize * 0.5f;
+    if (lp.x < -hu || lp.x > hu || lp.z < -hv || lp.z > hv) return false;
+    const float h = GhostTileMap_HeightMesh(t, lp.x, lp.z);
+    wy = XformPoint(GhostObjectModel(o), GhostVec3(lp.x, h, lp.z), 1.0f).y;
+    return true;
+}
+
+static GhostVec3 Foli_TerrainNormal(const GhostObject& o, float x, float z)
+{
+    const float e = 0.3f;
+    float a, b, c, d;
+    if (!Foli_TerrainAt(o, x - e, z, a) || !Foli_TerrainAt(o, x + e, z, b) || !Foli_TerrainAt(o, x, z - e, c) || !Foli_TerrainAt(o, x, z + e, d))
+        return GhostVec3(0, 1, 0);
+    return GhostVec3(a - b, 2.0f * e, c - d).Normalize();
+}
+
+// Exact ray vs a mesh object (box test, then triangles). t is in world units. The normal faces the ray.
+static bool Foli_ObjectRay(const GhostObject& o, const GhostVec3& ro, const GhostVec3& rd, float& tHit, GhostVec3& nW)
+{
+    if (o.tileMap.enabled || !o.visible || o.meshId == GHOST_MESH_QUAD) return false;
+    const GhostMat4 inv = ObjectInverse(o);
+    const GhostVec3 lo = XformPoint(inv, ro, 1.0f), ld = XformPoint(inv, rd, 0.0f);
+    float tb;
+    if (!RayAABB(lo, ld, GhostObject_Min(o), GhostObject_Max(o), tb)) return false;
+    GhostMeshCPU cpu;
+    if (!GhostGetMeshCPU(g_pipeline, o.meshId, &cpu)) return false;
+    float best = 1e30f; unsigned int bi = 0;
+    for (unsigned int i = 0; i + 2 < cpu.indexCount; i += 3)
+    {
+        const GhostVertex& a = cpu.verts[cpu.Index(i)];
+        const GhostVertex& b = cpu.verts[cpu.Index(i + 1)];
+        const GhostVertex& c = cpu.verts[cpu.Index(i + 2)];
+        float t;
+        if (RayTriangle(lo, ld, GhostVec3(a.x, a.y, a.z), GhostVec3(b.x, b.y, b.z), GhostVec3(c.x, c.y, c.z), t) && t < best) { best = t; bi = i; }
+    }
+    if (best >= 1e29f) return false;
+    const GhostMat4 M = GhostObjectModel(o);
+    const GhostVertex& a = cpu.verts[cpu.Index(bi)];
+    const GhostVertex& b = cpu.verts[cpu.Index(bi + 1)];
+    const GhostVertex& c = cpu.verts[cpu.Index(bi + 2)];
+    const GhostVec3 wa = XformPoint(M, GhostVec3(a.x, a.y, a.z), 1.0f), wb = XformPoint(M, GhostVec3(b.x, b.y, b.z), 1.0f), wc = XformPoint(M, GhostVec3(c.x, c.y, c.z), 1.0f);
+    GhostVec3 n = (wb - wa).Cross(wc - wa).Normalize();
+    if (n.Dot(rd) > 0.0f) n = n * -1.0f;
+    tHit = best; nW = n;
+    return true;
+}
+
+// Host callback: the highest surface under (x, z) between yTop and yBottom
+static bool Foli_Probe(float x, float z, float yTop, float yBottom, bool land, bool objs, GhostFoliageHit* out)
+{
+    const GhostVec3 ro(x, yTop, z), rd(0.0f, -1.0f, 0.0f);
+    float bestT = yTop - yBottom;
+    bool found = false;
+    GhostVec3 bn(0, 1, 0);
+    for (const GhostObject& o : g_scene.objects)
+    {
+        if (o.tileMap.enabled)
+        {
+            if (!land) continue;
+            float wy;
+            if (!Foli_TerrainAt(o, x, z, wy)) continue;
+            const float t = yTop - wy;
+            if (t < 0.0f || t > bestT) continue;
+            bestT = t; found = true; bn = Foli_TerrainNormal(o, x, z);
+        }
+        else if (objs)
+        {
+            float t; GhostVec3 n;
+            if (Foli_ObjectRay(o, ro, rd, t, n) && t <= bestT) { bestT = t; found = true; bn = n; }
+        }
+    }
+    if (!found) return false;
+    out->p = GhostVec3(x, yTop - bestT, z);
+    out->n = bn;
+    return true;
+}
+
+// A camera ray (the mouse): the nearest surface
+static bool Foli_Pick(const GhostVec3& ro, const GhostVec3& rd, bool land, bool objs, GhostFoliageHit* out)
+{
+    float bestT = 1e30f;
+    bool found = false;
+    GhostVec3 bn(0, 1, 0);
+    for (const GhostObject& o : g_scene.objects)
+    {
+        if (o.tileMap.enabled)
+        {
+            if (!land || o.tileMap.direction != 1) continue;
+            float lu, lv; GhostVec3 w;
+            if (!TerrainHit(o, ro, rd, lu, lv, w)) continue;
+            const float t = (w - ro).Length();
+            if (t < bestT) { bestT = t; found = true; bn = Foli_TerrainNormal(o, w.x, w.z); }
+        }
+        else if (objs)
+        {
+            float t; GhostVec3 n;
+            if (Foli_ObjectRay(o, ro, rd, t, n) && t < bestT) { bestT = t; found = true; bn = n; }
+        }
+    }
+    if (!found) return false;
+    out->p = ro + rd * bestT;
+    out->n = bn;
+    return true;
+}
+
+static int Foli_TexCount() { return (int)g_scene.textures.size(); }
+static void FoliageInstallHost()
+{
+    GhostFoliageHost h;
+    h.TextureCount = Foli_TexCount;
+    h.Probe = Foli_Probe;
+    GhostFoliage_SetHost(&h);
+}
+
+// ---------------- painting ----------------
+static bool FoliPaintBegin(int x, int y)
+{
+    g_foliPainting = true; g_foliHavePrev = false; g_foliTimer = 1.0f;
+    g_paintMX = x; g_paintMY = y;
+    return true;                                        // the brush owns the left button
+}
+
+static void FoliageTick(float dt)
+{
+    GhostFoliageSet& S = GhostFoliage_Set();
+    if (S.brush.active && g_playState != GhostPlayState::Editing) { S.brush.active = false; g_foliPainting = false; }
+    if (!g_foliPainting) return;
+    if (!(GetAsyncKeyState(VK_LBUTTON) & 0x8000)) { g_foliPainting = false; return; }
+    g_foliTimer += dt;
+    if (g_foliTimer < 0.08f) return;                    // ~12 stamps a second
+    g_foliTimer = 0.0f;
+
+    GhostVec3 ro, rd;
+    GhostFoliageHit hit;
+    if (!ScreenRay(g_paintMX, g_paintMY, ro, rd) || !Foli_Pick(ro, rd, S.brush.onLandscape, S.brush.onObjects, &hit)) { g_foliHavePrev = false; return; }
+
+    const bool erase = S.brush.erase || ((GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0);
+    GhostFoliageLayer* L = GhostFoliage_Find(S.activeLayerId);
+    const float radius = L ? L->scatterRadius : 3.0f;
+    int n = 1;
+    if (g_foliHavePrev)                                 // fast strokes: stamps along the path, so there are no gaps
+    {
+        const float dx = hit.p.x - g_foliPrev.x, dz = hit.p.z - g_foliPrev.z;
+        n = (int)ceilf(sqrtf(dx * dx + dz * dz) / fmaxf(radius * 0.6f, 0.2f));
+        n = n < 1 ? 1 : (n > 8 ? 8 : n);
+    }
+    for (int i = 1; i <= n; i++)
+    {
+        const float f = (float)i / (float)n;
+        const GhostVec3 p = g_foliHavePrev ? g_foliPrev + (hit.p - g_foliPrev) * f : hit.p;
+        if (erase) GhostFoliage_Erase(S.brush.eraseAll ? -1 : S.activeLayerId, p, radius, 0.7f);
+        else if (L) GhostFoliage_Paint(*L, p, S.brush.onLandscape, S.brush.onObjects);
+    }
+    g_foliPrev = hit.p; g_foliHavePrev = true;
+}
+
+static void OverlayFoliageBrush(int rw, int rh)
+{
+    GhostFoliageSet& S = GhostFoliage_Set();
+    const GhostFoliageLayer* L = GhostFoliage_Find(S.activeLayerId);
+    const bool erase = S.brush.erase || ((GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0);
+    const float grn[4] = { 0.40f, 1.0f, 0.50f, 1.0f }, red[4] = { 1.0f, 0.40f, 0.35f, 1.0f }, hot[4] = { 1.0f, 0.82f, 0.30f, 1.0f };
+    if (!L && !erase)
+    {
+        g_ov.TextPx(14.0f, (float)rh - 130.0f, 20.0f, "FOLIAGE PAINT: add or pick a layer in the Foliage panel   (O to leave)", hot);
+        return;
+    }
+    char info[220];
+    snprintf(info, sizeof info, "FOLIAGE %s  %s  radius %.1f  amount %d   (Shift = erase, [ ] radius, O leave)",
+        erase ? "ERASE" : "PAINT", L ? L->name.c_str() : "(all layers)", L ? L->scatterRadius : 3.0f, L ? L->amount : 0);
+    const float* col = erase ? red : grn;
+    g_ov.TextPx(14.0f, (float)rh - 130.0f, 20.0f, info, col);
+
+    if (!g_paintMouseIn || g_looking) return;
+    GhostVec3 ro, rd;
+    GhostFoliageHit hit;
+    if (!ScreenRay(g_paintMX, g_paintMY, ro, rd) || !Foli_Pick(ro, rd, S.brush.onLandscape, S.brush.onObjects, &hit)) return;
+    const float R = L ? L->scatterRadius : 3.0f;
+    GhostVec3 prev;
+    for (int i = 0; i <= 48; i++)                       // a ring that follows the surface
+    {
+        const float a = (float)i / 48.0f * 2.0f * GHOST_PI;
+        const float x = hit.p.x + cosf(a) * R, z = hit.p.z + sinf(a) * R;
+        GhostFoliageHit h;
+        const float y = Foli_Probe(x, z, hit.p.y + R + 2.0f, hit.p.y - R - 2.0f, S.brush.onLandscape, S.brush.onObjects, &h) ? h.p.y : hit.p.y;
+        const GhostVec3 cur(x, y + 0.05f, z);
+        if (i > 0) g_ov.Line(prev, cur, col, 2.2f, false);
+        prev = cur;
+    }
+    g_ov.Point(hit.p, 8.0f, col);
+}
+
+// ---------------- GPU chunks ----------------
+static void FoliageSync()
+{
+    g_foliDrawnChunks = g_foliDrawnInst = g_foliShadowChunks = 0;
+    if (!g_rhi || !g_pipeline) return;
+    for (auto& kv : g_foliGpu) kv.second.seen = false;
+    int uploads = 0;
+    for (GhostFoliageLayer& L : GhostFoliage_Set().layers)
+        for (auto& kv : L.chunks)
+        {
+            FoliageGpuChunk& g = g_foliGpu[{ L.id, (long long)kv.first }];
+            g.seen = true;
+            const GhostFoliageChunk& C = kv.second;
+            if (g.stamp == C.stamp && g.count == (unsigned int)C.inst.size()) continue;
+            if (uploads >= 256) continue;               // a huge scene load spreads over a few ticks
+            if (C.inst.empty()) { GhostInstanceBuffer_Release(g.buf); g.count = 0; g.stamp = C.stamp; continue; }
+            if (GhostInstanceBuffer_Update(g_rhi, g.buf, C.inst.data(), (unsigned int)C.inst.size(), (unsigned int)sizeof(GhostFoliageInstance)) == GHOST_OK)
+            {
+                g.stamp = C.stamp; g.count = (unsigned int)C.inst.size(); uploads++;
+            }
+        }
+    for (auto it = g_foliGpu.begin(); it != g_foliGpu.end(); )      // removed layers / chunks give their buffers back
+        if (!it->second.seen) { GhostInstanceBuffer_Release(it->second.buf); it = g_foliGpu.erase(it); }
+        else ++it;
+}
+
+static void FoliageReleaseAll()
+{
+    for (auto& kv : g_foliGpu) GhostInstanceBuffer_Release(kv.second.buf);
+    g_foliGpu.clear();
+}
+
+// ---------------- drawing ----------------
+static float Foli_BoxDist(const float* lo, const float* hi, float pad, const GhostVec3& p)
+{
+    const float dx = fmaxf(fmaxf(lo[0] - pad - p.x, p.x - hi[0] - pad), 0.0f);
+    const float dy = fmaxf(fmaxf(lo[1] - pad - p.y, p.y - hi[1] - pad), 0.0f);
+    const float dz = fmaxf(fmaxf(lo[2] - pad - p.z, p.z - hi[2] - pad), 0.0f);
+    return sqrtf(dx * dx + dy * dy + dz * dz);
+}
+
+// fadeEnd: the cull distance (main pass) or the shadow distance (shadow pass). The shader thins instances out over fadeLength before it.
+static void FoliFillCB(GhostObjectCB& cb, const GhostFoliageLayer& L, const GhostMaterial& m, float fadeEnd, const GhostMat4& view, const GhostMat4& proj)
+{
+    const float d2r = GHOST_PI / 180.0f;
+    const bool sprite = L.kind == GHOST_FOLIAGE_SPRITE;
+    cb.model = GhostMat4::Identity(); cb.view = view; cb.proj = proj;
+    cb.color[0] = m.tint[0]; cb.color[1] = m.tint[1]; cb.color[2] = m.tint[2]; cb.color[3] = 1.0f;
+    cb.useVertexColor = 0.0f;
+    cb.pad[2] = L.receiveShadows ? 0.0f : 1.0f;
+    cb.uvParams[0] = m.tiling[0]; cb.uvParams[1] = m.tiling[1]; cb.uvParams[2] = m.offset[0]; cb.uvParams[3] = m.offset[1];
+    cb.mapParams[0] = (float)m.mapMode; cb.mapParams[1] = m.rotationDeg * d2r; cb.mapParams[2] = (float)m.wrap; cb.mapParams[3] = (float)m.filter;
+    cb.pbr[0] = m.metallic; cb.pbr[1] = m.roughness; cb.pbr[2] = m.specular; cb.pbr[3] = m.emissiveStrength;
+    cb.pbr[4] = m.emissive[0]; cb.pbr[5] = m.emissive[1]; cb.pbr[6] = m.emissive[2]; cb.pbr[7] = 1.0f;
+    FillMaterialCB(cb, m);
+    cb.alphaP[0] = m.alphaMode > 0 ? 1.0f : 0.0f;            // translucent is not supported on foliage: it behaves as masked
+    cb.opacityP[1] = 0.0f;
+    if (sprite)
+    {
+        cb.pad[1] = (float)((L.alphaClip ? 1 : 0) | (L.unlit ? 2 : 0) | 4);       // same flags as a Sprite Actor
+        cb.uvParams[0] = 1.0f; cb.uvParams[1] = 1.0f; cb.uvParams[2] = 0.0f; cb.uvParams[3] = 0.0f;   // the frame is chosen in the vertex shader
+        cb.mapParams[0] = 0.0f; cb.mapParams[1] = 0.0f; cb.mapParams[2] = 1.0f; cb.mapParams[3] = L.pixelArt ? 1.0f : 0.0f;
+        cb.alphaP[0] = 0.0f;
+    }
+    float minY, h;
+    GhostFoliage_MeshBase(L, minY, h);
+    const bool sheet = sprite && (L.cols * L.rows > 1);
+    cb.foliP[0] = (float)((L.billboard ? 1 : 0) | (sheet ? 2 : 0));
+    cb.foliP[1] = L.colorVariation; cb.foliP[2] = (float)L.cols; cb.foliP[3] = (float)L.rows;
+    cb.foliP[4] = L.animated ? L.animFps : 0.0f;                                   // not animated: a fixed random frame per instance
+    cb.foliP[5] = minY; cb.foliP[6] = h; cb.foliP[7] = L.normalUp;
+    cb.foliP[8] = fadeEnd > 0.0f ? fmaxf(fadeEnd - L.fadeLength, 0.0f) : 0.0f;
+    cb.foliP[9] = fadeEnd;
+}
+
+static void FoliageDraw(const GhostMat4& view, const GhostMat4& proj, const GhostVec3& eye, const GhostFrustum& fr, bool cull, bool preview, unsigned int& slot)
+{
+    if (preview || !g_pipeline || !g_pipeline->foliagePso) return;
+    static std::vector<const FoliageGpuChunk*> vis;
+    for (GhostFoliageLayer& L : GhostFoliage_Set().layers)
+    {
+        if (!L.enabled || L.chunks.empty()) continue;
+        const bool sprite = L.kind == GHOST_FOLIAGE_SPRITE;
+        if (!sprite && !GhostMesh_Valid(L.meshId)) continue;
+        const float rad = GhostFoliage_Radius(L);
+        vis.clear();
+        for (const auto& kv : L.chunks)
+        {
+            const GhostFoliageChunk& C = kv.second;
+            auto g = g_foliGpu.find({ L.id, (long long)kv.first });
+            if (g == g_foliGpu.end() || g->second.count == 0 || !g->second.buf.res) continue;
+            if (L.cullDistance > 0.0f && Foli_BoxDist(C.bmin, C.bmax, rad, eye) > L.cullDistance) continue;      // distance cull
+            if (cull)                                                                                            // frustum cull
+            {
+                GhostVec3 c[8];
+                for (int i = 0; i < 8; i++)
+                    c[i] = GhostVec3((i & 1) ? C.bmax[0] + rad : C.bmin[0] - rad, (i & 2) ? C.bmax[1] + rad : C.bmin[1] - rad, (i & 4) ? C.bmax[2] + rad : C.bmin[2] - rad);
+                if (!GhostFrustum_Box8(fr, c, 0.0f)) continue;
+            }
+            vis.push_back(&g->second);
+        }
+        if (vis.empty()) continue;
+        for (const FoliageGpuChunk* c : vis) { g_foliDrawnChunks++; g_foliDrawnInst += (int)c->count; }
+
+        const int meshId = sprite ? (int)GHOST_MESH_QUAD : L.meshId;
+        const int faceCount = GhostFoliage_FaceCount(L);
+        int f = 0;
+        while (f < faceCount && slot < MAX_SCENE_OBJECTS)         // one draw per run of faces that share a material (one CB slot per run)
+        {
+            int g2 = f + 1;
+            while (g2 < faceCount && GhostMaterial_Equal(L.faces[g2], L.faces[f])) g2++;
+            const GhostMaterial& m = L.faces[f];
+            unsigned int first = 0, count = 0;
+            if (!sprite)
+            {
+                const GhostFaceDef& a = GhostMesh_Face(meshId, f);
+                const GhostFaceDef& b = GhostMesh_Face(meshId, g2 - 1);
+                first = a.firstIndex; count = b.firstIndex + b.indexCount - a.firstIndex;
+            }
+            GhostObjectCB cb = {};
+            FoliFillCB(cb, L, m, L.cullDistance, view, proj);
+            GhostUpdateObjectCB(g_pipeline, slot, &cb);
+            for (const FoliageGpuChunk* c : vis)
+                GhostDrawMeshInstanced(g_rhi, g_pipeline, meshId, slot, (unsigned int)m.textureId, c->buf, c->count, first, count);
+            slot++;
+            f = g2;
+        }
+    }
+}
+
+// ---------------- shadows ----------------
+static bool FoliShadowEligible(const GhostFoliageLayer& L, const GhostLight& l)
+{
+    if (L.castShadows == 0) return false;
+    const bool normal = L.castShadows == 1 || (L.castShadows == 2 && L.shadowLightId == l.id);
+    if (l.type == GhostLightType::Spot) return l.shadowObjects && normal;       // the spot's "Objects Cast Shadows" toggle covers foliage
+    return normal;
+}
+
+static void FoliageBuildShadowCasters(const GhostVec3& eye, const GhostVec3& forward, unsigned int& slot, std::vector<FoliShadowCaster>& out, GhostVec3& bmin, GhostVec3& bmax)
+{
+    out.clear();
+    if (!g_pipeline || !g_pipeline->foliagePso || !g_pipeline->foliageShadowPso) return;
+    const GhostMat4 camView = GhostMat4::LookAtLH(eye, eye + forward, GhostVec3(0, 1, 0));   // billboards face the camera in the shadow map too
+    static std::vector<const FoliageGpuChunk*> vis;
+    for (GhostFoliageLayer& L : GhostFoliage_Set().layers)
+    {
+        if (!L.enabled || L.castShadows == 0 || L.chunks.empty()) continue;
+        const bool sprite = L.kind == GHOST_FOLIAGE_SPRITE;
+        if (!sprite && !GhostMesh_Valid(L.meshId)) continue;
+        const float rad = GhostFoliage_Radius(L);
+        vis.clear();
+        for (const auto& kv : L.chunks)
+        {
+            const GhostFoliageChunk& C = kv.second;
+            auto g = g_foliGpu.find({ L.id, (long long)kv.first });
+            if (g == g_foliGpu.end() || g->second.count == 0 || !g->second.buf.res) continue;
+            if (L.shadowDistance > 0.0f && Foli_BoxDist(C.bmin, C.bmax, rad, eye) > L.shadowDistance) continue;   // no frustum test: casters behind the camera still shade the view
+            vis.push_back(&g->second);
+            bmin.x = fminf(bmin.x, C.bmin[0] - rad); bmin.y = fminf(bmin.y, C.bmin[1] - rad); bmin.z = fminf(bmin.z, C.bmin[2] - rad);
+            bmax.x = fmaxf(bmax.x, C.bmax[0] + rad); bmax.y = fmaxf(bmax.y, C.bmax[1] + rad); bmax.z = fmaxf(bmax.z, C.bmax[2] + rad);
+        }
+        if (vis.empty()) continue;
+        g_foliShadowChunks += (int)vis.size();
+
+        const int meshId = sprite ? (int)GHOST_MESH_QUAD : L.meshId;
+        const int faceCount = GhostFoliage_FaceCount(L);
+        int f = 0;
+        while (f < faceCount && slot < GHOST_SHADOW_CB_SLOTS)
+        {
+            int g2 = f + 1;
+            while (g2 < faceCount && GhostMaterial_Equal(L.faces[g2], L.faces[f])) g2++;
+            const GhostMaterial& m = L.faces[f];
+            unsigned int first = 0, count = 0, tex = 0;
+            if (!sprite)
+            {
+                const GhostFaceDef& a = GhostMesh_Face(meshId, f);
+                const GhostFaceDef& b = GhostMesh_Face(meshId, g2 - 1);
+                first = a.firstIndex; count = b.firstIndex + b.indexCount - a.firstIndex;
+            }
+            GhostObjectCB cb = {};
+            FoliFillCB(cb, L, m, L.shadowDistance, camView, GhostMat4::Identity());
+            cb.pad[1] = 0.0f;
+            if (sprite) { cb.pad[1] = 1.0f; tex = (unsigned int)(m.textureId > 0 ? m.textureId : 0); }                     // alpha tested by the sprite flag
+            else if (m.alphaMode == 1 && m.textureId > 0 && m.textureId < (int)g_scene.textures.size())                    // masked leaf cards punch holes
+            {
+                cb.pad[1] = 8.0f; tex = (unsigned int)m.textureId;
+            }
+            GhostUpdateShadowCB(g_pipeline, slot, &cb);
+            for (const FoliageGpuChunk* c : vis) out.push_back({ &L, c, meshId, slot, tex, first, count });
+            slot++;
+            f = g2;
+        }
+    }
+}
+
+// ---------------- exports that need engine state ----------------
+void GhostEngine_SetFoliagePaintMode(int on)
+{
+    GhostFoliageSet& S = GhostFoliage_Set();
+    S.brush.active = (on != 0) && g_playState == GhostPlayState::Editing;
+    if (S.brush.active) { g_paintMode = false; g_painting = false; }      // one paint mode at a time
+    else g_foliPainting = false;
+}
+int GhostEngine_GetFoliagePaintMode() { return GhostFoliage_Set().brush.active ? 1 : 0; }
+
+void GhostEngine_GetFoliageStats(GhostFoliageStatsInfo* out)
+{
+    if (!out) return;
+    GhostFoliageSet& S = GhostFoliage_Set();
+    int chunks = 0;
+    for (const GhostFoliageLayer& L : S.layers) chunks += (int)L.chunks.size();
+    *out = { (int)S.layers.size(), chunks, (int)GhostFoliage_TotalInstances(), g_foliDrawnChunks, g_foliDrawnInst, g_foliShadowChunks };
 }

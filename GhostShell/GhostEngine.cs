@@ -183,6 +183,7 @@ namespace GhostShell
         public float sssR, sssG, sssB, sssAmount;
         public float mapTilingU, mapTilingV, mapOffsetU, mapOffsetV;
         public float wpoSway, wpoSpeed, wpoMid;
+        public float sssTransmission, sssDensity, sssThickness;   // NEW
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -821,6 +822,18 @@ namespace GhostShell
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern void GhostEngine_GetWorldSettings(out GhostWorldInfo w);
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern void GhostEngine_SetWorldSettings(ref GhostWorldInfo w);
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern void GhostEngine_GetWorldStats(out GhostWorldStatsInfo s);
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern void GhostEngine_SetSMAA(int on);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern int GhostEngine_GetSMAA();
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern void GhostEngine_SetSMAAQuality(int q);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern int GhostEngine_GetSMAAQuality();
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern int GhostEngine_GetSMAAAvailable();
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern void GhostEngine_SetFXAA(int on);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern int GhostEngine_GetFXAA();
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern void GhostEngine_SetFXAAQuality(int q);
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern int GhostEngine_GetFXAAQuality();
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)] public static extern int GhostEngine_GetFXAAAvailable();
 
 
     }

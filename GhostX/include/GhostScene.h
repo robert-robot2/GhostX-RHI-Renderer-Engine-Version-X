@@ -90,6 +90,9 @@ struct GhostMaterial
     float anisotropy = 0.0f;
     float sssColor[3] = { 1.0f, 0.35f, 0.25f };
     float sssAmount = 0.0f;
+    float sssTransmission = 0.0f;   // back-light strength (0 = off)
+    float sssDensity = 8.0f;        // how fast sssColor builds up with thickness (per unit)
+    float sssThickness = 0.02f;     // minimum / fallback thickness in units
     float wpoSway = 0.0f, wpoSpeed = 1.0f, wpoMid = 0.5f;
     GhostMaterial() { maps[GHOST_MAP_WPO].amount = 0.02f; }     // 2 cm unless you change it
 };
@@ -690,7 +693,7 @@ struct GhostModEntity
 constexpr unsigned int GHOST_MAX_VOLUMES = 16;
 constexpr int GHOST_VOL_PARAMS = 16;     // per-type float parameters (meaning defined by each phase)
 constexpr int GHOST_VOL_TEXTURES = 4;    // per-type texture ids (cubemap, noise ...)
-enum GhostVolumeType { GHOST_VOL_REFLECTION = 0, GHOST_VOL_FOG, GHOST_VOL_COUNT };
+enum GhostVolumeType { GHOST_VOL_REFLECTION = 0, GHOST_VOL_FOG, GHOST_VOL_POST, GHOST_VOL_COUNT };
 enum GhostVolumeShape { GHOST_VOLSHAPE_BOX = 0, GHOST_VOLSHAPE_SPHERE };
 
 struct GhostVolume
@@ -778,6 +781,58 @@ inline void GhostFogVolParams_Fix(GhostVolume& v)
     p[FOGV_SCROLL_Z] = cf(p[FOGV_SCROLL_Z], -5.0f, 5.0f);
 }
 
+// Post Process Volume parameter slots (GhostVolume::p). The camera inside the volume blends the ticked groups into the scene's post settings.
+enum GhostPostVolParam
+{
+    PPV_WEIGHT = 0,        // 0..1 overall blend weight
+    PPV_MASK,              // GhostPostVolOverride bits, stored as a float (exact below 2^24)
+    PPV_EXPOSURE,          // EV stops
+    PPV_BLOOM_INTENSITY,   // 0 = off
+    PPV_BLOOM_THRESHOLD,
+    PPV_SSAO_STRENGTH,     // 0 = off
+    PPV_SSAO_RADIUS,
+    PPV_SSGI_INTENSITY,    // 0 = off
+    PPV_SSR_INTENSITY,     // 0 = off
+    PPV_SHAFT_INTENSITY,   // 0 = off
+    PPV_TONE_MODE,
+    PPV_WHITE_POINT,
+    PPV_UNBOUND,           // 1 = applies everywhere (ignores shape and blend distance)
+    PPV_VERSION = 15
+};
+enum GhostPostVolOverride
+{
+    PPVO_EXPOSURE = 1, PPVO_BLOOM = 2, PPVO_SSAO = 4, PPVO_SSGI = 8, PPVO_SSR = 16, PPVO_SHAFTS = 32, PPVO_TONE = 64
+};
+
+inline void GhostPostVolParams_Fix(GhostVolume& v)
+{
+    float* p = v.p;
+    auto cf = [](float x, float lo, float hi) { return x != x ? lo : (x < lo ? lo : (x > hi ? hi : x)); };
+    if (p[PPV_VERSION] < 0.5f)
+    {
+        p[PPV_WEIGHT] = 1.0f;  p[PPV_MASK] = (float)PPVO_EXPOSURE;  p[PPV_EXPOSURE] = -1.5f;
+        p[PPV_BLOOM_INTENSITY] = 0.5f;  p[PPV_BLOOM_THRESHOLD] = 1.0f;
+        p[PPV_SSAO_STRENGTH] = 1.0f;    p[PPV_SSAO_RADIUS] = 0.5f;
+        p[PPV_SSGI_INTENSITY] = 1.0f;   p[PPV_SSR_INTENSITY] = 1.0f;  p[PPV_SHAFT_INTENSITY] = 0.8f;
+        p[PPV_TONE_MODE] = 2.0f;        p[PPV_WHITE_POINT] = 4.0f;    p[PPV_UNBOUND] = 0.0f;
+        p[PPV_VERSION] = 1.0f;
+    }
+    p[PPV_WEIGHT] = cf(p[PPV_WEIGHT], 0.0f, 1.0f);
+    p[PPV_MASK] = (float)(int)(cf(p[PPV_MASK], 0.0f, 127.0f) + 0.5f);
+    p[PPV_EXPOSURE] = cf(p[PPV_EXPOSURE], -5.0f, 5.0f);
+    p[PPV_BLOOM_INTENSITY] = cf(p[PPV_BLOOM_INTENSITY], 0.0f, 10.0f);
+    p[PPV_BLOOM_THRESHOLD] = cf(p[PPV_BLOOM_THRESHOLD], 0.0f, 20.0f);
+    p[PPV_SSAO_STRENGTH] = cf(p[PPV_SSAO_STRENGTH], 0.0f, 1.0f);
+    p[PPV_SSAO_RADIUS] = cf(p[PPV_SSAO_RADIUS], 0.05f, 5.0f);
+    p[PPV_SSGI_INTENSITY] = cf(p[PPV_SSGI_INTENSITY], 0.0f, 5.0f);
+    p[PPV_SSR_INTENSITY] = cf(p[PPV_SSR_INTENSITY], 0.0f, 2.0f);
+    p[PPV_SHAFT_INTENSITY] = cf(p[PPV_SHAFT_INTENSITY], 0.0f, 10.0f);
+    p[PPV_TONE_MODE] = (float)(int)(cf(p[PPV_TONE_MODE], 0.0f, 3.0f) + 0.5f);
+    p[PPV_WHITE_POINT] = cf(p[PPV_WHITE_POINT], 1.0f, 16.0f);
+    p[PPV_UNBOUND] = p[PPV_UNBOUND] > 0.5f ? 1.0f : 0.0f;
+}
+
+
 inline void GhostVolume_Clamp(GhostVolume& v)
 {
     auto cf = [](float x, float lo, float hi) { return x != x ? lo : (x < lo ? lo : (x > hi ? hi : x)); };
@@ -792,6 +847,7 @@ inline void GhostVolume_Clamp(GhostVolume& v)
     for (int i = 0; i < GHOST_VOL_PARAMS; i++) if (v.p[i] != v.p[i]) v.p[i] = 0.0f;
     if (v.type == GHOST_VOL_REFLECTION) GhostProbeParams_Fix(v);
     else if (v.type == GHOST_VOL_FOG) GhostFogVolParams_Fix(v);
+    else if (v.type == GHOST_VOL_POST) GhostPostVolParams_Fix(v);
 }
 
 // ---- Post processing (scene settings) ----
@@ -1041,7 +1097,7 @@ inline GhostCamera* GhostScene_AddCamera(GhostScene& s)
 inline GhostVolume* GhostScene_AddVolume(GhostScene& s, int type)
 {
     if (type < 0 || type >= GHOST_VOL_COUNT || s.volumes.size() >= GHOST_MAX_VOLUMES) return nullptr;
-    static const char* names[GHOST_VOL_COUNT] = { "Reflection Capture", "Fog Volume" };
+    static const char* names[GHOST_VOL_COUNT] = { "Reflection Capture", "Fog Volume", "Post Process Volume" };
     GhostVolume v;
     v.id = s.nextId++;
     v.type = type;
@@ -1050,6 +1106,7 @@ inline GhostVolume* GhostScene_AddVolume(GhostScene& s, int type)
     else { v.shape = GHOST_VOLSHAPE_BOX; v.size = { 10, 5, 10 }; }
     if (type == GHOST_VOL_REFLECTION) GhostProbeParams_Fix(v);                 // defaults
     if (type == GHOST_VOL_FOG) GhostFogVolParams_Fix(v);
+    if (type == GHOST_VOL_POST) { GhostPostVolParams_Fix(v); v.blend = 3.0f; }       // post volumes want a wide, soft edge
     s.volumes.push_back(v);
     s.version++;
     return &s.volumes.back();

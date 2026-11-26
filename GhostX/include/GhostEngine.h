@@ -199,6 +199,7 @@ struct GhostSurfaceInfo
     float sssR, sssG, sssB, sssAmount;
     float mapTilingU, mapTilingV, mapOffsetU, mapOffsetV;
     float wpoSway, wpoSpeed, wpoMid;
+    float sssTransmission, sssDensity, sssThickness;   // NEW (keep last)
 };
 
 struct GhostTileMapInfo
@@ -225,7 +226,7 @@ struct GhostPaintInfo
 
 struct GhostVolumeInfo
 {
-    int   id, type, shape, enabled, priority;   // type: 0 reflection capture, 1 fog.  shape: 0 box, 1 sphere
+    int   id, type, shape, enabled, priority;   // type: 0 reflection capture, 1 fog, 2 post process.  shape: 0 box, 1 sphere
     float px, py, pz;
     float rx, ry, rz;                           // degrees
     float sx, sy, sz;                           // box size
@@ -244,6 +245,26 @@ struct GhostWorldStatsInfo
     int   cells, resident, slotsTotal, starved, loadsLast, cellsDrawn, bandsDrawn, bandsCulled, trisDrawn, objectsCulled;
     float lastLoadMs;
 };
+
+struct GhostFoliageLayerInfo
+{
+    int   id, kind, meshId, enabled;
+    int   billboard, alphaClip, unlit, pixelArt;
+    int   cols, rows, animated;
+    float animFps;
+    float sizeMin, sizeMax, yawRange, tiltRandom, alignToNormal, slopeMax;
+    float scatterRadius;
+    int   amount;
+    float minSpacing, heightOffset;
+    int   restOnGround;
+    float cullDistance, fadeLength, colorVariation, normalUp;
+    int   castShadows, shadowLightId, receiveShadows;
+    float shadowDistance;
+    int   instanceCount, chunkCount;     // read-only
+};
+struct GhostFoliageBrushInfo { int active, erase, onLandscape, onObjects, eraseAll, activeLayerId; };
+struct GhostFoliageStatsInfo { int layers, chunks, instances, chunksDrawn, instancesDrawn, shadowChunks; };
+
 
 extern "C"
 {
@@ -491,6 +512,18 @@ extern "C"
     GHOST_API void  GhostEngine_SetTAAJitterSpeed(float speed);    // 0.05 .. 4, default 1
     GHOST_API float GhostEngine_GetTAAJitterSpeed();
 
+    GHOST_API void GhostEngine_SetSMAA(int on);            // 1 = SMAA (forces MSAA and TAA off)
+    GHOST_API int  GhostEngine_GetSMAA();
+    GHOST_API void GhostEngine_SetSMAAQuality(int q);      // 0 low, 1 medium, 2 high (default), 3 ultra
+    GHOST_API int  GhostEngine_GetSMAAQuality();
+    GHOST_API int  GhostEngine_GetSMAAAvailable();         // 1 if the SMAA shaders compiled
+
+    GHOST_API void GhostEngine_SetFXAA(int on);            // 1 = FXAA (forces MSAA, TAA and SMAA off)
+    GHOST_API int  GhostEngine_GetFXAA();
+    GHOST_API void GhostEngine_SetFXAAQuality(int q);      // 0 low, 1 default, 2 high
+    GHOST_API int  GhostEngine_GetFXAAQuality();
+    GHOST_API int  GhostEngine_GetFXAAAvailable();         // 1 if the FXAA shader compiled
+
     // ---- Particle systems ----
     GHOST_API int  GhostEngine_AddParticleSystem(int type, int screenX, int screenY);   // 0 fire, 1 snow, 2 custom
     GHOST_API int  GhostEngine_AddParticleAt(int type, float x, float y, float z);
@@ -569,5 +602,31 @@ extern "C"
     GHOST_API void GhostEngine_GetWorldSettings(GhostWorldInfo* out);
     GHOST_API void GhostEngine_SetWorldSettings(const GhostWorldInfo* in);
     GHOST_API void GhostEngine_GetWorldStats(GhostWorldStatsInfo* out);
+
+    // ---- Foliage ----
+    GHOST_API int  GhostEngine_AddFoliageLayer(int kind, int source);          // kind 0 mesh (source = mesh id), 1 sprite (source = texture id). New id, 0 = failed
+    GHOST_API int  GhostEngine_RemoveFoliageLayer(int id);
+    GHOST_API int  GhostEngine_GetFoliageLayerIds(int* outIds, int maxCount);
+    GHOST_API int  GhostEngine_GetFoliageLayer(int id, GhostFoliageLayerInfo* out);
+    GHOST_API void GhostEngine_SetFoliageLayer(const GhostFoliageLayerInfo* in);
+    GHOST_API int  GhostEngine_SetFoliageSource(int id, int meshId);
+    GHOST_API int  GhostEngine_GetFoliageLayerName(int id, char* buf, int bufSize);
+    GHOST_API void GhostEngine_SetFoliageLayerName(int id, const char* utf8);
+    GHOST_API void GhostEngine_ClearFoliageLayer(int id);
+    GHOST_API int  GhostEngine_GetFoliageFaceCount(int id);
+    GHOST_API int  GhostEngine_GetFoliageFaceName(int id, int face, char* buf, int bufSize);
+    GHOST_API int  GhostEngine_GetFoliageActiveLayer();
+    GHOST_API void GhostEngine_SetFoliageActiveLayer(int id);
+    GHOST_API void GhostEngine_GetFoliageBrush(GhostFoliageBrushInfo* out);
+    GHOST_API void GhostEngine_SetFoliageBrush(const GhostFoliageBrushInfo* in);
+    GHOST_API int  GhostEngine_GetFoliageMaterial(int id, int face, GhostMaterialInfo* out);
+    GHOST_API void GhostEngine_SetFoliageMaterial(int id, int face, const GhostMaterialInfo* in);
+    GHOST_API int  GhostEngine_GetFoliageMap(int id, int face, int slot, GhostMapInfo* out);
+    GHOST_API void GhostEngine_SetFoliageMap(int id, int face, int slot, const GhostMapInfo* in);
+    GHOST_API int  GhostEngine_GetFoliageSurface(int id, int face, GhostSurfaceInfo* out);
+    GHOST_API void GhostEngine_SetFoliageSurface(int id, int face, const GhostSurfaceInfo* in);
+    GHOST_API void GhostEngine_SetFoliagePaintMode(int on);       // defined in the engine glue (Phase 2)
+    GHOST_API int  GhostEngine_GetFoliagePaintMode();
+    GHOST_API void GhostEngine_GetFoliageStats(GhostFoliageStatsInfo* out);
 
 }

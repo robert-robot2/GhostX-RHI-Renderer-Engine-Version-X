@@ -129,6 +129,21 @@
     <ClInclude Include="include\GhostWorldPart.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="include\AreaTex.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="include\SearchTex.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="include\GhostFoliage.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="include\GhostSMAA.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="include\GhostFXAA.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\GhostPipeline.cpp">
@@ -206,6 +221,15 @@
     <ClCompile Include="src\GhostLightShafts.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\GhostFoliage.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\GhostSMAA.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\GhostFXAA.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <None Include="shaders\GhostVS.hlsl">
@@ -218,6 +242,12 @@
       <Filter>Shaders</Filter>
     </None>
     <None Include="shaders\GhostShafts.hlsl">
+      <Filter>Shaders</Filter>
+    </None>
+    <None Include="shaders\SMAA.hlsl">
+      <Filter>Shaders</Filter>
+    </None>
+    <None Include="GhostSMAA.hlsl">
       <Filter>Shaders</Filter>
     </None>
   </ItemGroup>

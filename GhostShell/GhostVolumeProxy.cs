@@ -15,8 +15,12 @@ namespace GhostShell
         protected readonly int Id;
         protected delegate void VolChange(ref GhostVolumeInfo v);
 
-        public static VolumeProxy Create(int id, int type) =>
-            type == 0 ? (VolumeProxy)new ReflectionCaptureProxy(id) : new FogVolumeProxy(id);
+        public static VolumeProxy Create(int id, int type) => type switch
+        {
+            0 => new ReflectionCaptureProxy(id),
+            2 => new PostProcessVolumeProxy(id),
+            _ => new FogVolumeProxy(id),
+        };
 
         protected VolumeProxy(int id)
         {
@@ -38,7 +42,7 @@ namespace GhostShell
         }
 
         [Category("Details")] public string Name => GhostNames.Of(Id);
-        [Category("Details")] public string Type => Get().type == 0 ? "Reflection Capture" : "Fog Volume";
+        [Category("Details")] public string Type => Get().type switch { 0 => "Reflection Capture", 2 => "Post Process Volume", _ => "Fog Volume" };
 
         [Category("Volume")]
         public bool Enabled
@@ -204,6 +208,76 @@ namespace GhostShell
         public float WindZ { get => P(9); set => SetP(9, value); }
 
         [Category("Details")] public string Info => "Adds to the global fog. Use Blend Distance for soft edges.";
+    }
+
+    internal sealed class PostProcessVolumeProxy : VolumeProxy
+    {
+        private const int O_EXPOSURE = 1, O_BLOOM = 2, O_SSAO = 4, O_SSGI = 8, O_SSR = 16, O_SHAFTS = 32, O_TONE = 64;
+
+        public PostProcessVolumeProxy(int id) : base(id) { }
+
+        private float P(int i) => Get().p[i];
+        private void SetP(int i, float x) => Change((ref GhostVolumeInfo v) => v.p[i] = x);
+        private bool Bit(int b) => (((int)(P(1) + 0.5f)) & b) != 0;
+        private void SetBit(int b, bool on) => Change((ref GhostVolumeInfo v) =>
+        {
+            int m = (int)(v.p[1] + 0.5f);
+            m = on ? (m | b) : (m & ~b);
+            v.p[1] = m;
+        });
+
+        [Category("Post Process"), DisplayName("Blend Weight (0-1)")]
+        public float Weight { get => P(0); set => SetP(0, value); }
+
+        [Category("Post Process"), DisplayName("Unbound (whole scene, ignores shape and blend distance)")]
+        public bool Unbound { get => P(12) > 0.5f; set => SetP(12, value ? 1f : 0f); }
+
+        [Category("Exposure"), DisplayName("Override Exposure")]
+        public bool OverrideExposure { get => Bit(O_EXPOSURE); set => SetBit(O_EXPOSURE, value); }
+        [Category("Exposure"), DisplayName("Exposure (EV stops, -5 to 5)")]
+        public float Exposure { get => P(2); set => SetP(2, value); }
+
+        [Category("Bloom"), DisplayName("Override Bloom")]
+        public bool OverrideBloom { get => Bit(O_BLOOM); set => SetBit(O_BLOOM, value); }
+        [Category("Bloom"), DisplayName("Intensity (0 = off, 0-10)")]
+        public float BloomIntensity { get => P(3); set => SetP(3, value); }
+        [Category("Bloom"), DisplayName("Threshold (linear, after exposure)")]
+        public float BloomThreshold { get => P(4); set => SetP(4, value); }
+
+        [Category("Ambient Occlusion (SSAO)"), DisplayName("Override SSAO")]
+        public bool OverrideSsao { get => Bit(O_SSAO); set => SetBit(O_SSAO, value); }
+        [Category("Ambient Occlusion (SSAO)"), DisplayName("Strength (0 = off, 0-1)")]
+        public float SsaoStrength { get => P(5); set => SetP(5, value); }
+        [Category("Ambient Occlusion (SSAO)"), DisplayName("Radius (world units)")]
+        public float SsaoRadius { get => P(6); set => SetP(6, value); }
+
+        [Category("Global Illumination (SSGI)"), DisplayName("Override SSGI")]
+        public bool OverrideSsgi { get => Bit(O_SSGI); set => SetBit(O_SSGI, value); }
+        [Category("Global Illumination (SSGI)"), DisplayName("Intensity (0 = off, 0-5)")]
+        public float SsgiIntensity { get => P(7); set => SetP(7, value); }
+
+        [Category("Reflections (SSR)"), DisplayName("Override SSR")]
+        public bool OverrideSsr { get => Bit(O_SSR); set => SetBit(O_SSR, value); }
+        [Category("Reflections (SSR)"), DisplayName("Intensity (0 = off, 0-2)")]
+        public float SsrIntensity { get => P(8); set => SetP(8, value); }
+
+        [Category("Light Shafts"), DisplayName("Override Light Shafts")]
+        public bool OverrideShafts { get => Bit(O_SHAFTS); set => SetBit(O_SHAFTS, value); }
+        [Category("Light Shafts"), DisplayName("Intensity (0 = off, 0-10)")]
+        public float ShaftIntensity { get => P(9); set => SetP(9, value); }
+
+        [Category("Tone Mapping"), DisplayName("Override Tone Mapping (curve switches at weight 0.5)")]
+        public bool OverrideTone { get => Bit(O_TONE); set => SetBit(O_TONE, value); }
+        [Category("Tone Mapping"), DisplayName("Tone Mapping"), TypeConverter(typeof(ToneMapConverter))]
+        public string ToneMapping
+        {
+            get => ToneMapConverter.Names[System.Math.Clamp((int)(P(10) + 0.5f), 0, ToneMapConverter.Names.Length - 1)];
+            set { int i = System.Array.IndexOf(ToneMapConverter.Names, value); if (i >= 0) SetP(10, i); }
+        }
+        [Category("Tone Mapping"), DisplayName("White Point (Reinhard, 1-16)")]
+        public float WhitePoint { get => P(11); set => SetP(11, value); }
+
+        [Category("Details")] public string Info => "Tick an Override box to use that group. Applies while the camera is inside the volume (soft edge = Blend Distance).";
     }
 
     internal class ProbeModeConverter : FixedListConverter
