@@ -762,7 +762,7 @@ void GhostEngine_ClearScene()
     g_scene.shadowStrength = 1.0f;
     g_scene.shadowRes = 1024;
     g_scene.shadowFilter = 2; g_scene.shadowSoftness = 1.0f; g_scene.shadowBias = 1.0f;
-    g_scene.shadowNormalBias = 1.0f; g_scene.shadowDistance = 30.0f;
+    g_scene.shadowNormalBias = 1.0f; g_scene.shadowDistance = 30.0f; g_scene.shadowFilterLod = false; g_scene.shadowFilterLodFrac = 0.45f;
     g_scene.nextId = 1;
     g_scene.music.clear(); g_scene.ambience.clear();
     g_scene.selectedId = 0;
@@ -2782,7 +2782,8 @@ void GhostEngine_SetShadowResolution(int size) { g_scene.shadowRes = GhostShadow
 void GhostEngine_GetShadowTuning(GhostShadowTuning* out)
 {
     if (!out) return;
-    *out = { g_scene.shadowFilter, g_scene.shadowSoftness, g_scene.shadowBias, g_scene.shadowNormalBias, g_scene.shadowDistance };
+    *out = { g_scene.shadowFilter, g_scene.shadowSoftness, g_scene.shadowBias, g_scene.shadowNormalBias, g_scene.shadowDistance,
+          g_scene.shadowFilterLod ? 1 : 0, g_scene.shadowFilterLodFrac };
 }
 
 void GhostEngine_SetShadowTuning(const GhostShadowTuning* in)
@@ -2795,6 +2796,8 @@ void GhostEngine_SetShadowTuning(const GhostShadowTuning* in)
     g_scene.shadowNormalBias = cf(in->normalBias, 0.0f, 8.0f);
     const float d = cf(in->distance, 0.0f, 1000.0f);
     g_scene.shadowDistance = (d > 0.0f && d < 2.0f) ? 2.0f : d;        // 0 = whole scene, otherwise at least 2
+    g_scene.shadowFilterLod = (in->filterLod != 0);
+    g_scene.shadowFilterLodFrac = cf(in->filterLodFrac, 0.05f, 1.0f);
 }
 
 
@@ -2803,7 +2806,7 @@ int GhostEngine_GetTileMap(int id, GhostTileMapInfo* out)
     GhostObject* o = FindObject(id);
     if (!o || !out || !o->tileMap.enabled) return 0;
     const GhostTileMap& t = o->tileMap;
-    *out = { o->id, t.tileSize, t.gridX, t.gridY, t.gridZ, t.direction, o->receiveShadows ? 1 : 0, t.shadowLightId, t.layerCount, t.subdiv, t.autoCollider ? 1 : 0 };
+    *out = { o->id, t.tileSize, t.gridX, t.gridY, t.gridZ, t.direction, o->receiveShadows ? 1 : 0, t.shadowLightId, t.layerCount, t.subdiv, t.autoCollider ? 1 : 0, t.flatShade ? 1 : 0, t.skirts ? 1 : 0 };
     return 1;
 }
 
@@ -2820,6 +2823,8 @@ void GhostEngine_SetTileMap(const GhostTileMapInfo* in)
     t.direction = in->direction;
     t.subdiv = in->subdiv;
     t.autoCollider = (in->autoCollider != 0);
+    t.flatShade = (in->flatShade != 0);
+    t.skirts = (in->skirts != 0);
     t.shadowLightId = 0;                                                    // only a real directional light is accepted
     if (in->shadowLightId != 0)
         for (const GhostLight& l : g_scene.lights)

@@ -161,7 +161,7 @@ struct GhostSoundInfo
 
 typedef int(__cdecl* GhostFontProviderFn)(const char* utf8AbsPath);   // returns a font slot, 0 = failed
 typedef void(__cdecl* GhostLoadProgressFn)(const char* utf8Kind, const char* utf8Name);
-struct GhostShadowTuning { int filter; float softness, bias, normalBias, distance; };
+struct GhostShadowTuning { int filter; float softness, bias, normalBias, distance; int filterLod; float filterLodFrac; };
 struct GhostMapInfo { int textureId; float amount; int channel; int invert; };
 
 struct GhostPostInfo
@@ -213,6 +213,8 @@ struct GhostTileMapInfo
     int   layerCount;           // read-only here: use Add / RemoveTileLayer
     int   subdiv;               // terrain quads per tile side
     int   autoCollider;
+    int   flatShade;            // 0 smooth, 1 flat
+    int   skirts;               // 0 off, 1 on
 };
 struct GhostPaintInfo
 {

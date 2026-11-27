@@ -603,7 +603,17 @@ float4 PSMain(PSInput input, bool isFront : SV_IsFrontFace) : SV_TARGET
     const bool usePbr = pbrB.w > 0.5f;
     float3 N = normalize(input.worldNormal);
     if (!isFront) N = -N;
-
+    // Tile Map "Shade Flat": the face normal from screen-space derivatives (tileP[0].w is set by the engine)
+    if (tileP[0].w > 0.5f)
+    {
+        float3 fn = cross(ddx(input.worldPos), ddy(input.worldPos));
+        const float fl = length(fn);
+        if (fl > 1e-12f)
+        {
+            fn /= fl;
+            N = (dot(fn, N) < 0.0f) ? -fn : fn;      // face the same way as the vertex normal, whatever the winding
+        }
+    }
     // ---- Tile Map weight map: how much of this layer the pixel shows (layers are drawn as additive passes) ----
     float splatW = 1.0f;
     if (tileP[0].x > 0.5f)

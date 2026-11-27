@@ -171,6 +171,8 @@ namespace GhostShell
     {
         public int filter;
         public float softness, bias, normalBias, distance;
+        public int filterLod;
+        public float filterLodFrac;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -198,6 +200,8 @@ namespace GhostShell
         public int layerCount;
         public int subdiv;
         public int autoCollider;
+        public int flatShade, skirts;
+
     }
     [StructLayout(LayoutKind.Sequential)]
     internal struct GhostPaintInfo

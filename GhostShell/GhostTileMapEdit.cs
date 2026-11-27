@@ -73,7 +73,7 @@ namespace GhostShell
     }
     internal sealed class TerrainDetailConverter : FixedListConverter
     {
-        public static readonly string[] Names = { "1 (coarse)", "2", "4 (default)", "8 (fine)" };
+        public static readonly string[] Names = { "1 (default)", "2", "4 (fine)", "8 (very fine)" };
         public static readonly int[] Values = { 1, 2, 4, 8 };
         protected override string[] Items => Names;
     }
@@ -84,6 +84,14 @@ namespace GhostShell
             { "(choose)", "Flatten Terrain (all heights = 0)", "Reset Paint (Layer 0 everywhere)", "Reset Both" };
         protected override string[] Items => Names;
     }
+
+    internal sealed class TileShadingConverter : FixedListConverter
+    {
+        public static readonly string[] Names = { "Smooth", "Flat" };
+        protected override string[] Items => Names;
+    }
+
+
     // ============================================================
     //  A Tile Map with no material layers yet
     // ============================================================
@@ -173,7 +181,7 @@ namespace GhostShell
         [TypeConverter(typeof(TerrainDetailConverter))]
         public string TerrainDetail
         {
-            get { int i = Array.IndexOf(TerrainDetailConverter.Values, Get().subdiv); return TerrainDetailConverter.Names[i < 0 ? 2 : i]; }
+            get { int i = Array.IndexOf(TerrainDetailConverter.Values, Get().subdiv); return TerrainDetailConverter.Names[i < 0 ? 0 : i]; }
             set { int i = Array.IndexOf(TerrainDetailConverter.Names, value); if (i >= 0) { var t = Get(); t.subdiv = TerrainDetailConverter.Values[i]; Set(t); } }
         }
 
@@ -183,6 +191,21 @@ namespace GhostShell
         {
             get => TerrainActionConverter.Names[0];
             set { int i = Array.IndexOf(TerrainActionConverter.Names, value); if (i > 0) GhostEngine.GhostEngine_ResetTerrain(_id, i); }   // 1 heights, 2 weights, 3 both
+        }
+
+        [Category("Terrain"), DisplayName("Edge Skirts (hides LOD cracks between cells)")]
+        public bool EdgeSkirts
+        {
+            get => Get().skirts != 0;
+            set { var t = Get(); t.skirts = value ? 1 : 0; Set(t); }
+        }
+
+        [Category("Terrain"), DisplayName("Shading")]
+        [TypeConverter(typeof(TileShadingConverter))]
+        public string Shading
+        {
+            get => Get().flatShade != 0 ? "Flat" : "Smooth";
+            set { int i = Array.IndexOf(TileShadingConverter.Names, value); if (i >= 0) { var t = Get(); t.flatShade = i; Set(t); } }
         }
 
         // ---- Material layers ----

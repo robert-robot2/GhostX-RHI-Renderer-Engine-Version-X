@@ -121,7 +121,6 @@ static bool       g_dragging = false;
 static int        g_dragId = 0;
 static GhostVec3  g_dragOffset;
 static GhostVec3  g_dragPlanePoint;
-static const float kShadowFilterLodFrac = 0.9f;   // soft filtering only within this fraction of the shadow-fit radius
 
 // ---- Paint mode (P): sculpt and paint the selected Tile Map (the code is further down, next to the Tile Map mesh code) ----
 struct PaintBrush { int tool = 0; float radius = 2.0f, strength = 0.5f, fade = 0.6f, setHeight = 0.0f; };
@@ -229,6 +228,7 @@ struct TileInst
     bool  seen = false;
     // ---- world partition ----
     unsigned int neighSig = 0;                            // signature of the neighbouring cells the border normals were built from
+    bool skirts = false;
     float dist = 1e30f;                                   // distance to the nearest streaming focus (last tick)
     int   state = 0;                                      // 0 not wanted, 1 resident, 2 wanted but waiting for a slot
     unsigned int visFrame = 0xFFFFFFFFu;                  // last frame it was drawn
@@ -249,6 +249,8 @@ static bool g_tileBurst = true;                           // first update after 
 static const int kTileBandRows = 16;                      // terrain rows per cull band
 static const int kMaxTileMapObjects = 256;
 static void TileAxes(int dir, GhostVec3& U, GhostVec3& V, GhostVec3& N);      // defined with the Tile Map code below                   // weight map texture ids that can be reused
+
+
 
 // 0 = every light shadows the surface, n = only light n-1 of the scene does (the Tile Map's "Directional Light")
 static int ShadowLightSelector(const GhostObject& o)
@@ -1718,7 +1720,7 @@ static void RenderShadowPass(GhostSceneCB& cb, const GhostVec3& eye, const Ghost
     if (jobs.empty()) return;
 
     cb.shadowGlobal[0] = g_scene.shadowStrength;
-    cb.shadowGlobal[2] = fit ? R * kShadowFilterLodFrac : 0.0f;
+    cb.shadowGlobal[2] = (fit && g_scene.shadowFilterLod) ? g_scene.shadowDistance * g_scene.shadowFilterLodFrac : 0.0f;
     GhostShadowBegin(g_rhi, g_pipeline);
     for (const Job& j : jobs)
     {
@@ -2879,7 +2881,10 @@ static bool TileBuildRuns(const GhostObject& o, TileInst& T, const GhostVec3& ey
         idxCount += count;
     }
     if (!any) return false;
+
+   
     if (T.skirtCount[lod] > 0) { runs.push_back({ T.skirtFirst[lod], T.skirtCount[lod] }); idxCount += T.skirtCount[lod]; }
+
     g_wstats.trisDrawn += (int)(idxCount / 3u);
     return !runs.empty();
 }
@@ -2987,6 +2992,7 @@ static void DrawSceneColor(const GhostMat4& view, const GhostMat4& proj, const G
                 cb.opacityP[1] = (float)ShadowLightSelector(o);
                 cb.tileP[4] = (float)o.tileMap.gridX; cb.tileP[5] = (float)o.tileMap.gridY;
                 cb.tileP[6] = (o.tileMap.layerCount == 0) ? 1.0f : 0.0f;
+                cb.tileP[3] = o.tileMap.flatShade ? 1.0f : 0.0f;       // PS: tileP[0].w
                 if (layers > 1 && T.splatA > 0) { cb.tileP[0] = (float)T.splatA; cb.tileP[1] = (float)T.splatB; cb.tileP[2] = (float)L; }
                 GhostUpdateObjectCB(g_pipeline, slot, &cb);
                 for (const TileRun& r : runs)                                   // one constant buffer slot, several index ranges
@@ -3885,6 +3891,8 @@ struct UndoSnap
     bool  shadowsEnabled = true;
     int   shadowRes = 1024, shadowFilter = 2;
     float shadowSoftness = 1.0f, shadowBias = 1.0f, shadowNormalBias = 1.0f, shadowDistance = 30.0f;
+    bool  shadowFilterLod = false;
+    float shadowFilterLodFrac = 0.45f;
     std::string music, ambience;
     int   activeCameraId = 0, gameStartCameraId = 0, nextId = 1;
     std::vector<GhostVolume> volumes;
@@ -3907,6 +3915,7 @@ static void UndoCapture(UndoSnap& s)
     s.shadowsEnabled = g_scene.shadowsEnabled;
     s.shadowRes = g_scene.shadowRes; s.shadowFilter = g_scene.shadowFilter; s.shadowSoftness = g_scene.shadowSoftness;
     s.shadowBias = g_scene.shadowBias; s.shadowNormalBias = g_scene.shadowNormalBias; s.shadowDistance = g_scene.shadowDistance;
+    s.shadowFilterLod = g_scene.shadowFilterLod; s.shadowFilterLodFrac = g_scene.shadowFilterLodFrac;
     s.activeCameraId = g_scene.activeCameraId; s.gameStartCameraId = g_scene.gameStartCameraId; s.nextId = g_scene.nextId;
     s.music = g_scene.music; s.ambience = g_scene.ambience;
     s.volumes = g_scene.volumes;
@@ -3952,6 +3961,7 @@ static void UndoRestore(const UndoSnap& s)
     g_scene.shadowsEnabled = s.shadowsEnabled;
     g_scene.shadowRes = s.shadowRes; g_scene.shadowFilter = s.shadowFilter; g_scene.shadowSoftness = s.shadowSoftness;
     g_scene.shadowBias = s.shadowBias; g_scene.shadowNormalBias = s.shadowNormalBias; g_scene.shadowDistance = s.shadowDistance;
+    g_scene.shadowFilterLod = s.shadowFilterLod; g_scene.shadowFilterLodFrac = s.shadowFilterLodFrac;
     g_scene.music = s.music; g_scene.ambience = s.ambience;
     g_scene.activeCameraId = s.activeCameraId; g_scene.gameStartCameraId = s.gameStartCameraId;
     g_scene.volumes = s.volumes;
@@ -4089,8 +4099,9 @@ static void BuildTileMeshLod(const GhostObject& o, std::vector<GhostVertex>& v, 
             return TileNeighborHeight(o, p, q, h);
         };
 
+    const bool skirts = t.skirts;
     const size_t mainCount = (size_t)vx * (size_t)vy;
-    const size_t skirtVerts = (size_t)(2 * (nx + 1) + 2 * (ny + 1));
+    const size_t skirtVerts = skirts ? (size_t)(2 * (nx + 1) + 2 * (ny + 1)) : 0;
     v.resize(mainCount + skirtVerts);
 
     float hMin = 1e30f, hMax = -1e30f;
@@ -4127,8 +4138,12 @@ static void BuildTileMeshLod(const GhostObject& o, std::vector<GhostVertex>& v, 
             v[dst] = g;
         };
     const unsigned int sb = (unsigned int)mainCount;
-    for (int p = 0; p <= nx; p++) { skirtOf(sb + (size_t)p, (size_t)p);               skirtOf(sb + (size_t)(nx + 1) + p, (size_t)ny * vx + p); }
-    for (int q = 0; q <= ny; q++) { skirtOf(sb + (size_t)(2 * (nx + 1)) + q, (size_t)q * vx); skirtOf(sb + (size_t)(2 * (nx + 1) + (ny + 1)) + q, (size_t)q * vx + nx); }
+    if (skirts)
+    {
+
+        for (int p = 0; p <= nx; p++) { skirtOf(sb + (size_t)p, (size_t)p);               skirtOf(sb + (size_t)(nx + 1) + p, (size_t)ny * vx + p); }
+        for (int q = 0; q <= ny; q++) { skirtOf(sb + (size_t)(2 * (nx + 1)) + q, (size_t)q * vx); skirtOf(sb + (size_t)(2 * (nx + 1) + (ny + 1)) + q, (size_t)q * vx + nx); }
+    }
 
     // ---- LOD levels: stride 1 / 2 / 4, only where the grid divides evenly ----
     int maxLod = 0;
@@ -4154,15 +4169,18 @@ static void BuildTileMeshLod(const GhostObject& o, std::vector<GhostVertex>& v, 
                 quad(i00, i00 + s, i00 + (unsigned int)(s * vx), i00 + (unsigned int)(s * vx) + s);
             }
         ti.skirtFirst[lod] = (unsigned int)idx.size();
-        for (int p = 0; p < nx; p += s)
+        if (skirts)
         {
-            quad(p, p + s, sb + p, sb + p + s);                                                                     // q = 0
-            quad(ny * vx + p, ny * vx + p + s, sb + (nx + 1) + p, sb + (nx + 1) + p + s);                          // q = ny
-        }
-        for (int q = 0; q < ny; q += s)
-        {
-            quad(q * vx, (q + s) * vx, sb + 2 * (nx + 1) + q, sb + 2 * (nx + 1) + q + s);                          // p = 0
-            quad(q * vx + nx, (q + s) * vx + nx, sb + 2 * (nx + 1) + (ny + 1) + q, sb + 2 * (nx + 1) + (ny + 1) + q + s);  // p = nx
+            for (int p = 0; p < nx; p += s)
+            {
+                quad(p, p + s, sb + p, sb + p + s);                                                                     // q = 0
+                quad(ny * vx + p, ny * vx + p + s, sb + (nx + 1) + p, sb + (nx + 1) + p + s);                          // q = ny
+            }
+            for (int q = 0; q < ny; q += s)
+            {
+                quad(q * vx, (q + s) * vx, sb + 2 * (nx + 1) + q, sb + 2 * (nx + 1) + q + s);                          // p = 0
+                quad(q * vx + nx, (q + s) * vx + nx, sb + 2 * (nx + 1) + (ny + 1) + q, sb + 2 * (nx + 1) + (ny + 1) + q + s);  // p = nx
+            }
         }
         ti.skirtCount[lod] = (unsigned int)idx.size() - ti.skirtFirst[lod];
     }
@@ -4317,7 +4335,7 @@ static bool LoadTileCell(GhostObject& o, TileInst& ti, int slot)
     ti.slot = slot;
     ti.tileSize = t.tileSize; ti.gx = t.gridX; ti.gy = t.gridY; ti.dir = t.direction;
     ti.sub = GhostTileMap_EffSub(t.gridX, t.gridY, t.subdiv);
-    ti.hStamp = t.hStamp;
+    ti.hStamp = t.hStamp; ti.skirts = t.skirts;
     ti.neighSig = TileNeighborSig(o);
     return true;
 }
@@ -4426,7 +4444,7 @@ static void UpdateTileMaps()
         const int sub = GhostTileMap_EffSub(t.gridX, t.gridY, t.subdiv);
         const unsigned int nsig = g_painting ? ti.neighSig : TileNeighborSig(o);         // neighbours wait until the stroke ends
         if (ti.hStamp != t.hStamp || ti.tileSize != t.tileSize || ti.gx != t.gridX || ti.gy != t.gridY ||
-            ti.dir != t.direction || ti.sub != sub || ti.neighSig != nsig)
+            ti.dir != t.direction || ti.sub != sub || ti.neighSig != nsig || ti.skirts != t.skirts)
         {
             if (!LoadTileCell(o, ti, ti.slot)) continue;
         }

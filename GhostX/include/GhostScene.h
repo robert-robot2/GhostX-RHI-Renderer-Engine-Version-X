@@ -300,8 +300,10 @@ struct GhostTileMap
     int   direction = 1;                    // axis the grid faces: 0 X (wall), 1 Y (floor), 2 Z (wall toward the default camera)
     int   shadowLightId = 0;                // 0 = every light shadows the landscape, otherwise only this directional light
     int   layerCount = 0;                   // material layers in use (materials are GhostObject::faces[0 .. layerCount-1])
-    int   subdiv = 4;                       // terrain quads per tile side (lowered automatically for big maps)
+    int   subdiv = 1;                       // terrain quads per tile side (lowered automatically for big maps)
     bool  autoCollider = true;              // collider box follows the terrain bounds
+    bool  skirts = false;                   // wall around the cell edge that hides LOD cracks
+    bool  flatShade = false;                // false = Shade Smooth, true = Shade Flat
     std::vector<float> height;              // (gridX*sub+1) * (gridY*sub+1), row = V. Displacement along the facing axis, object units
     std::vector<unsigned char> splat;       // splatW * splatH * 8: weight of layers 0..7 per texel (sums to 255)
     int   splatW = 0, splatH = 0;           // the size 'splat' was built for
@@ -1035,6 +1037,8 @@ struct GhostScene
     float        shadowBias = 1.0f;       // depth bias multiplier (0 .. 8), 1 = the old fixed bias
     float        shadowNormalBias = 1.0f; // normal-offset multiplier (0 .. 8), 1 = the old fixed offset
     float        shadowDistance = 30.0f;  // directional light: how far from the camera shadows reach (0 = whole scene)
+    bool         shadowFilterLod = false;   // soft filtering near the camera, one cheap tap far away
+    float        shadowFilterLodFrac = 0.45f; // where the cheap zone starts, as a fraction of shadowDistance
     std::string  music, ambience;       // names from Content/Audio/Sounds.ghostaudio, "" = none
     unsigned int version = 0;         // bumps on any structural change
 };

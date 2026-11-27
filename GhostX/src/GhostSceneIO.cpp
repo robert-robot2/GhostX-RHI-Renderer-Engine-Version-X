@@ -343,7 +343,8 @@ bool GhostScene_Save(const GhostScene& s, const std::string& root, const std::st
         j["ambient"] = amb;
         j["shadows"] = json{ { "enabled", s.shadowsEnabled },{ "strength", s.shadowStrength },{ "resolution", s.shadowRes },
             { "filter", s.shadowFilter },{ "softness", s.shadowSoftness },{ "bias", s.shadowBias },
-            { "normalBias", s.shadowNormalBias },{ "distance", s.shadowDistance } };
+          { "normalBias", s.shadowNormalBias },{ "distance", s.shadowDistance },
+{ "filterLod", s.shadowFilterLod },{ "filterLodFrac", s.shadowFilterLodFrac } };
         j["audio"] = json{ { "music", s.music },{ "ambience", s.ambience } };
         j["post"] = json{ { "toneMode", s.post.toneMode },{ "exposure", s.post.exposureEV },{ "whitePoint", s.post.whitePoint },
          { "bloom", json{ { "enabled", s.post.bloomEnabled },{ "threshold", s.post.bloomThreshold },{ "knee", s.post.bloomKnee },
@@ -452,7 +453,7 @@ bool GhostScene_Save(const GhostScene& s, const std::string& root, const std::st
                 const GhostTileMap& t = o.tileMap;
                 json jt = json{ { "tileSize", t.tileSize },{ "gridX", t.gridX },{ "gridY", t.gridY },{ "gridZ", t.gridZ },
                                 { "direction", t.direction },{ "shadowLight", t.shadowLightId },{ "layers", t.layerCount },
-                                { "subdiv", t.subdiv },{ "autoCollider", t.autoCollider } };
+                            { "subdiv", t.subdiv },{ "autoCollider", t.autoCollider },{ "skirts", t.skirts },{ "flatShade", t.flatShade } };
                 std::vector<unsigned char> rle;
                 bool flat = true;
                 for (float h : t.height) if (h != 0.0f) { flat = false; break; }
@@ -789,6 +790,8 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
         s.shadowsEnabled = true;
         s.shadowStrength = 1.0f;
         s.shadowRes = 1024; s.shadowFilter = 2; s.shadowSoftness = 1.0f; s.shadowBias = 1.0f; s.shadowNormalBias = 1.0f; s.shadowDistance = 30.0f;
+        s.shadowFilterLod = false; s.shadowFilterLodFrac = 0.45f;
+
         if (j.contains("shadows") && j["shadows"].is_object())
         {
             s.shadowsEnabled = j["shadows"].value("enabled", true);
@@ -801,6 +804,8 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
             s.shadowBias = cf(j["shadows"].value("bias", 1.0f), 0.0f, 8.0f);
             s.shadowNormalBias = cf(j["shadows"].value("normalBias", 1.0f), 0.0f, 8.0f);
             s.shadowDistance = cf(j["shadows"].value("distance", 30.0f), 0.0f, 1000.0f);
+            s.shadowFilterLod = j["shadows"].value("filterLod", false);
+            s.shadowFilterLodFrac = cf(j["shadows"].value("filterLodFrac", 0.45f), 0.05f, 1.0f);
         }
 
         s.music.clear(); s.ambience.clear();
@@ -1010,6 +1015,8 @@ bool GhostScene_Load(GhostScene& s, const std::string& root, const std::string& 
                     t.layerCount = jt.value("layers", 0);
                     t.subdiv = jt.value("subdiv", 4);
                     t.autoCollider = jt.value("autoCollider", true);
+                    t.skirts = jt.value("skirts", false);
+                    t.flatShade = jt.value("flatShade", false);
                     GhostTileMap_Clamp(t);
                     GhostTileMap_EnsureTiles(t);
 
@@ -1370,7 +1377,7 @@ unsigned int GhostScene_Hash(const GhostScene& s)
 
     I(s.activeCameraId);
     I(s.gameStartCameraId);
-    I(s.shadowsEnabled ? 1 : 0); F(s.shadowStrength); I(s.shadowRes); I(s.shadowFilter); F(s.shadowSoftness); F(s.shadowBias); F(s.shadowNormalBias); F(s.shadowDistance);
+    I(s.shadowsEnabled ? 1 : 0); F(s.shadowStrength); I(s.shadowRes); I(s.shadowFilter); F(s.shadowSoftness); F(s.shadowBias); F(s.shadowNormalBias); F(s.shadowDistance); I(s.shadowFilterLod ? 1 : 0); F(s.shadowFilterLodFrac);
     S(s.music); S(s.ambience);
     F(s.ambientColor[0]); F(s.ambientColor[1]); F(s.ambientColor[2]); F(s.ambientIntensity);
     I(s.post.toneMode); F(s.post.exposureEV); F(s.post.whitePoint);
@@ -1403,8 +1410,8 @@ unsigned int GhostScene_Hash(const GhostScene& s)
         I(o.shadowMode); I(o.shadowLightId); I(o.receiveShadows ? 1 : 0);
         I(o.tileMap.enabled ? 1 : 0); F(o.tileMap.tileSize); I(o.tileMap.gridX); I(o.tileMap.gridY);
         I(o.tileMap.gridZ); I(o.tileMap.direction); I(o.tileMap.shadowLightId);
-
-        I(o.tileMap.layerCount); I(o.tileMap.subdiv); I((int)o.tileMap.hStamp); I((int)o.tileMap.sStamp);
+        I(o.tileMap.layerCount); I(o.tileMap.subdiv); I(o.tileMap.skirts ? 1 : 0); I(o.tileMap.flatShade ? 1 : 0);
+        I((int)o.tileMap.hStamp); I((int)o.tileMap.sStamp);
 
         I(o.locked ? 1 : 0); S(o.link); V(o.pathOffset); F(o.moveSpeed); F(o.movePause);
         F(o.timeOffset);

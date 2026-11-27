@@ -1750,6 +1750,20 @@ namespace GhostShell
         [Category("Shadows"), DisplayName("Shadow Distance (m, 0 = whole scene)")]
         public float ShadowDistance { get => GetTune().distance; set { var t = GetTune(); t.distance = value; SetTune(t); } }
 
+        [Category("Shadows"), DisplayName("Distance Filter LOD (soft near, 1 cheap tap far)")]
+        public bool ShadowFilterLod
+        {
+            get => GetTune().filterLod != 0;
+            set { var t = GetTune(); t.filterLod = value ? 1 : 0; SetTune(t); }
+        }
+
+        [Category("Shadows"), DisplayName("Soft Range (0.05-1, fraction of Shadow Distance)")]
+        public float ShadowFilterLodRange
+        {
+            get => GetTune().filterLodFrac;
+            set { var t = GetTune(); t.filterLodFrac = value; SetTune(t); }
+        }
+
         private static GhostPostInfo GetPost() { GhostEngine.GhostEngine_GetPostSettings(out var p); return p; }
         private static void SetPost(GhostPostInfo p) => GhostEngine.GhostEngine_SetPostSettings(ref p);
 
